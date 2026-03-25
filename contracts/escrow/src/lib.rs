@@ -81,12 +81,23 @@ pub struct Milestone {
     pub released: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorization {
+    ClientOnly,
+    ArbiterOnly,
+    ClientAndArbiter,
+    MultiSig,
+}
+
 /// Stored escrow state for a single agreement.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowContractData {
     pub client: Address,
     pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub release_auth: ReleaseAuthorization,
     pub milestones: Vec<Milestone>,
     pub total_amount: i128,
     pub funded_amount: i128,
@@ -147,15 +158,7 @@ pub struct TreasuryConfig {
     pub fee_basis_points: u32,
 }
 
-/// Escrow contract structure
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EscrowContract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub total_amount: i128,
-    pub milestone_count: u32,
-}
+// (EscrowContract struct was deleted)
 
 /// Custom errors for the escrow contract
 #[contracterror]
@@ -209,14 +212,7 @@ pub enum EscrowError {
     InvalidMilestoneId = 23,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    ClientOnly,
-    ArbiterOnly,
-    ClientAndArbiter,
-    MultiSig,
-}
+// (ReleaseAuthorization enum moved)
 
 /// Full on-chain state of an escrow contract.
 #[contracttype]
@@ -430,6 +426,8 @@ impl Escrow {
         let contract_data = EscrowContractData {
             client: client.clone(),
             freelancer: freelancer.clone(),
+            arbiter,
+            release_auth,
             milestones,
             total_amount,
             funded_amount: 0,
@@ -450,7 +448,7 @@ impl Escrow {
         Self::ensure_not_paused(&env);
         caller.require_auth();
 
-        let contract: EscrowContract = env
+        let contract: EscrowContractData = env
             .storage()
             .persistent()
             .get(&symbol_short!("contract"))
@@ -499,7 +497,7 @@ impl Escrow {
         Self::ensure_not_paused(&env);
         caller.require_auth();
 
-        let mut contract: EscrowContract = env
+        let mut contract: EscrowContractData = env
             .storage()
             .persistent()
             .get(&symbol_short!("contract"))
@@ -540,8 +538,6 @@ impl Escrow {
         {
             panic!("Milestone already approved by this address");
         }
-        Self::ensure_valid_milestones(&milestone_amounts)?;
-
         let mut updated_milestone = milestone;
         updated_milestone.approved_by = Some(caller);
         updated_milestone.approval_timestamp = Some(env.ledger().timestamp());
@@ -555,12 +551,16 @@ impl Escrow {
     }
 
     /// Release a milestone payment to the freelancer after proper authorization.
-    pub fn release_milestone(env: Env, contract_id: u32, milestone_id: u32) -> bool {
+    pub fn release_milestone(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_id: u32,
+    ) -> bool {
         Self::ensure_not_paused(&env);
-        // ... (stub or proper call check here, typically caller config)
-        let _caller = env.invoker();
+        caller.require_auth();
 
-        let mut _contract: EscrowContract = env
+        let mut contract: EscrowContractData = env
             .storage()
             .persistent()
             .get(&symbol_short!("contract"))
@@ -636,13 +636,7 @@ impl Escrow {
         true
     }
 
-    /// Get the admin address.
-    pub fn get_admin(env: Env) -> Result<Address, EscrowError> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(EscrowError::Unauthorized)
-    }
+    // get_admin already defined above
 
     /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
