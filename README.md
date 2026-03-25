@@ -4,7 +4,8 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 
 ## What's in this repo
 
-- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, reputation credential issuance, and emergency pause controls.
+- **Escrow docs** (`docs/escrow`): Escrow operations, security notes, and pause/emergency threat model.
 
 ## Security model
 
@@ -50,11 +51,11 @@ cd talenttrust-contracts
 # Build
 cargo build
 
-# Run tests
+# Run tests (includes 95%+ coverage negative path testing for escrow)
 cargo test
 
-# Optional coverage snapshot for the escrow crate
-cargo llvm-cov -p escrow --html
+# Run escrow performance/gas baseline tests only
+cargo test test::performance
 
 # Check formatting
 cargo fmt --all -- --check
@@ -62,6 +63,17 @@ cargo fmt --all -- --check
 # Format code
 cargo fmt --all
 ```
+
+## Escrow Emergency Controls
+
+The escrow contract now supports critical-incident response with admin-managed controls:
+
+- `initialize(admin)` (one-time setup)
+- `pause()` and `unpause()`
+- `activate_emergency_pause()` and `resolve_emergency()`
+- `is_paused()` and `is_emergency()`
+
+When paused, mutating escrow operations are blocked.
 
 ## Contributing
 
@@ -82,12 +94,15 @@ On every push and pull request to `main`, GitHub Actions:
 
 Ensure these pass locally before pushing.
 
-## Security review checklist
+## Escrow Performance and Security
 
-- Read the escrow threat model in [docs/escrow/README.md](/home/christopher/drips_projects/Talenttrust-Contracts/docs/escrow/README.md).
-- Validate that any escrow state transition preserves the documented invariants.
-- Validate that governed parameter changes are auth-protected, range-checked, and exercised by tests.
-- Extend tests for both happy-path and failure-path changes before modifying funding or release logic.
+- Performance/gas baseline tests for key flows are in `contracts/escrow/src/test/performance.rs`.
+- Functional and failure-path coverage is split by module:
+  - `contracts/escrow/src/test/flows.rs`
+  - `contracts/escrow/src/test/security.rs`
+- Contract-specific reviewer docs:
+  - `docs/escrow/performance-baselines.md`
+  - `docs/escrow/security.md`
 
 ## License
 
