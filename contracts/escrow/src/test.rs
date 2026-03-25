@@ -1,4 +1,4 @@
-//! Comprehensive test suite for the TalentTrust escrow contract.
+﻿//! Comprehensive test suite for the TalentTrust escrow contract.
 //!
 //! # Coverage strategy
 //! Tests are grouped by functional area and cover:
@@ -68,7 +68,7 @@ fn test_checklist_initialized_on_create() {
     let id = client.create_contract(&ca, &fa, &milestones);
     let checklist = client.get_release_checklist(&id);
 
-    // Deployment phase: contract_created ✔, funds_deposited ✘
+    // Deployment phase: contract_created Γ£ö, funds_deposited Γ£ÿ
     assert!(checklist.contract_created);
     assert!(!checklist.funds_deposited);
     // Verification phase: both true
@@ -87,7 +87,7 @@ fn test_create_contract_panics_with_too_many_milestones() {
     let client = EscrowClient::new(&env, &cid);
     let ca = Address::generate(&env);
     let fa = Address::generate(&env);
-    // 21 milestones — exceeds MAX_MILESTONES (20).
+    // 21 milestones ΓÇö exceeds MAX_MILESTONES (20).
     let mut amounts = vec![&env, 100_0000000_i128];
     for _ in 0..20 {
         amounts.push_back(100_0000000_i128);
@@ -108,7 +108,7 @@ fn test_create_contract_panics_with_zero_milestones() {
 }
 
 // ---------------------------------------------------------------------------
-// is_release_ready — pre-deposit (false)
+// is_release_ready ΓÇö pre-deposit (false)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -191,7 +191,7 @@ fn test_deposit_unknown_contract_panics() {
 }
 
 // ---------------------------------------------------------------------------
-// release_milestone — enforcement tests
+// release_milestone ΓÇö enforcement tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -204,7 +204,7 @@ fn test_release_blocked_before_deposit() {
     let fa = Address::generate(&env);
     let milestones = vec![&env, 100_0000000_i128];
     let id = client.create_contract(&ca, &fa, &milestones);
-    // No deposit — checklist incomplete — must panic.
+    // No deposit ΓÇö checklist incomplete ΓÇö must panic.
     client.release_milestone(&id, &0);
 }
 
@@ -308,7 +308,7 @@ fn test_issue_reputation_unknown_contract_panics() {
 }
 
 // ---------------------------------------------------------------------------
-// is_post_deploy_complete — full end-to-end
+// is_post_deploy_complete ΓÇö full end-to-end
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -332,7 +332,7 @@ fn test_is_post_deploy_complete_full_lifecycle() {
 }
 
 // ---------------------------------------------------------------------------
-// get_release_checklist — state progression
+// get_release_checklist ΓÇö state progression
 // ---------------------------------------------------------------------------
 
 #[test]
