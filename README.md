@@ -41,6 +41,17 @@ cargo fmt --all
    - `cargo build`
 3. Open a pull request. CI runs `cargo fmt --all -- --check`, `cargo build`, and `cargo test` on push/PR to `main`.
 
+## Contract status transition guardrails
+
+Escrow contract status transitions are enforced using a guarded matrix to prevent invalid state changes. Supported transitions:
+
+- `Created` -> `Funded`
+- `Funded` -> `Completed`
+- `Funded` -> `Disputed`
+- `Disputed` -> `Completed`
+
+Invalid transitions cause a contract panic during execution.
+
 ## CI/CD
 
 On every push and pull request to `main`, GitHub Actions:
