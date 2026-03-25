@@ -7,6 +7,17 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, reputation credential issuance, and emergency pause controls.
 - **Escrow docs** (`docs/escrow`): Escrow operations, security notes, and pause/emergency threat model.
 
+## Security model
+
+The escrow contract now enforces a minimal on-chain state machine instead of placeholder return values:
+
+- Contract creation requires client authorization and validates immutable milestone inputs.
+- Funding is accepted exactly once and must match the total milestone amount.
+- Milestones can be released once each and only by the recorded client.
+- Reputation entries are gated behind completed-contract credits and are treated as informational data.
+
+Reviewer-focused contract notes and the formal threat model live in [docs/escrow/README.md](/home/christopher/drips_projects/Talenttrust-Contracts/docs/escrow/README.md).
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (stable, 1.75+)

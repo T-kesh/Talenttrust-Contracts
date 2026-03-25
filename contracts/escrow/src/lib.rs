@@ -4,6 +4,13 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Symbol, Vec,
 };
 
+/// Persistent lifecycle state for an escrow agreement.
+///
+/// Security notes:
+/// - Only `Created -> Funded -> Completed` transitions are currently supported.
+/// - `Disputed` is reserved for future dispute resolution flows and is not reachable
+///   in the current implementation.
+
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
@@ -13,8 +20,12 @@ pub enum ContractStatus {
     Disputed = 3,
 }
 
+/// Individual milestone tracked inside an escrow agreement.
+///
+/// Invariant:
+/// - `released == true` is irreversible.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
     pub amount: i128,
     pub released: bool,
@@ -67,6 +78,37 @@ enum DataKey {
     Admin,
     Paused,
     EmergencyPaused,
+}
+
+/// Stored escrow state for a single agreement.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowContractData {
+    pub client: Address,
+    pub freelancer: Address,
+    pub milestones: Vec<Milestone>,
+    pub total_amount: i128,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub status: ContractStatus,
+}
+
+/// Reputation state derived from completed escrow contracts.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReputationRecord {
+    pub completed_contracts: u32,
+    pub total_rating: i128,
+    pub last_rating: i128,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    NextContractId,
+    Contract(u32),
+    Reputation(Address),
+    PendingReputationCredits(Address),
 }
 
 #[contract]
@@ -449,6 +491,68 @@ impl Escrow {
     /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
+    }
+
+    /// Returns the stored contract state.
+    pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
+        Self::load_contract(&env, contract_id)
+    }
+
+    /// Returns the stored reputation record for a freelancer, if present.
+    pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Reputation(freelancer))
+    }
+
+    /// Returns the number of pending reputation updates that can be claimed.
+    pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingReputationCredits(freelancer))
+            .unwrap_or(0)
+    }
+}
+
+impl Escrow {
+    fn next_contract_id(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1)
+    }
+
+    fn load_contract(env: &Env, contract_id: u32) -> EscrowContractData {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| panic!("contract not found"))
+    }
+
+    fn save_contract(env: &Env, contract_id: u32, contract: &EscrowContractData) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), contract);
+    }
+
+    fn add_pending_reputation_credit(env: &Env, freelancer: &Address) {
+        let key = DataKey::PendingReputationCredits(freelancer.clone());
+        let current = env.storage().persistent().get::<_, u32>(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + 1));
+    }
+
+    fn all_milestones_released(milestones: &Vec<Milestone>) -> bool {
+        let mut index = 0_u32;
+        while index < milestones.len() {
+            let milestone = milestones
+                .get(index)
+                .unwrap_or_else(|| panic!("missing milestone"));
+            if !milestone.released {
+                return false;
+            }
+            index += 1;
+        }
+        true
     }
 }
 
