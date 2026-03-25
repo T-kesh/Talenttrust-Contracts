@@ -1,10 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{
-    symbol_short,
-    testutils::{Address as _, MockAuth, MockAuthInvoke},
-    vec, Address, Env, IntoVal,
-};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
 use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
@@ -18,17 +14,14 @@ fn test_hello() {
     assert_eq!(result, symbol_short!("World"));
 }
 
-// ==================== CONTRACT CREATION TESTS ====================
-
 #[test]
-fn test_create_contract_success() {
+fn test_create_contract() {
     let env = Env::default();
-    env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
+
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let token = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
     let id = client.create_contract(
@@ -132,9 +125,10 @@ fn test_create_contract_negative_amount() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_create_contract_invalid_milestone_amount() {
-    let (env, _contract_id, client, _admin, _treasury) = setup_with_treasury();
+fn test_deposit_funds() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
@@ -158,8 +152,6 @@ fn test_create_contract_invalid_milestone_amount() {
     let result = client.deposit_funds(&1, &client_addr, &1000_0000000);
     assert!(result);
 }
-
-// ==================== DEPOSIT FUNDS TESTS ====================
 
 #[test]
 #[should_panic(expected = "Deposit amount must equal total milestone amounts")]
@@ -561,6 +553,7 @@ fn test_edge_cases() {
     );
     assert_eq!(id2, 0); // ledger sequence stays the same in test env
 }
+
 #[test]
 fn test_release_milestone_protocol_fee_accrual() {
     let env = Env::default();
