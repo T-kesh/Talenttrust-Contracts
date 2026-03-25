@@ -1,29 +1,38 @@
-# Escrow Error Taxonomy Security Notes
+# Escrow Pause/Emergency Threat Model
 
 ## Scope
 
-This note covers security assumptions and threat scenarios for structured error handling in the escrow contract.
+This model covers pause and emergency controls in `contracts/escrow/src/lib.rs`.
 
-## Security Assumptions
+## Assumptions
 
-- Callers rely on explicit error semantics for off-chain orchestration.
-- Input validation failures should fail fast and fail closed.
-- Contract IDs, amounts, ratings, and participant roles are externally supplied and untrusted.
+- The admin key is securely managed.
+- Soroban address authentication behaves as expected.
+- Off-chain operators monitor incidents and invoke controls quickly.
 
-## Threat Scenarios and Controls
+## Threat Scenarios and Mitigations
 
-1. Silent failure masking with boolean returns.
-Control: return `EscrowError` variants for each validation class.
+1. Unauthorized pause/unpause/emergency calls.
+Mitigation: `require_admin` gate with address auth on all control endpoints.
 
-2. Invalid or malformed funding/release requests.
-Control: reject zero contract IDs and invalid milestone IDs.
+2. Re-initialization to seize control.
+Mitigation: `initialize` is single-use and returns `AlreadyInitialized` on repeat calls.
 
-3. Business-rule bypass through malformed values.
-Control: enforce positive amounts, bounded rating range, and non-empty milestones.
+3. Partial recovery from emergency state.
+Mitigation: `unpause` returns `EmergencyActive` while emergency flag is set.
 
-4. Role confusion in contract setup.
-Control: reject creation where client equals freelancer.
+4. State-changing execution during incident containment.
+Mitigation: all critical mutating endpoints check `ensure_not_paused`.
 
-## Residual Risk
+## Residual Risks
 
-- Escrow state persistence and authorization logic are still placeholder-level in this module and should be expanded in later hardening work.
+- Admin key compromise can still misuse pause controls.
+- No timelock/multi-sig enforced in this contract version.
+- Emergency actions are not event-logged in this baseline implementation.
+
+## Recommended Next Hardening Steps
+
+1. Move admin to a multi-sig account.
+2. Add role separation for `pauser` and `resolver`.
+3. Add on-chain event emission for pause state transitions.
+4. Add optional time-delayed unpause for high-severity incidents.

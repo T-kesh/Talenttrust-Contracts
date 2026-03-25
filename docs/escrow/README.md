@@ -1,33 +1,47 @@
-# Escrow Contract Docs
+# Escrow Contract Documentation
 
-## Purpose
+This document describes escrow-specific controls and operational guidance.
 
-This contract currently provides a baseline escrow API and demonstrates structured error handling with an explicit error taxonomy.
+## Emergency Pause Controls
 
-## Error-First Convention
+The escrow contract includes admin-managed incident response controls:
 
-Mutating or validating endpoints now return `Result<_, EscrowError>` instead of plain booleans.
+- `initialize(admin)`: Sets the admin address once.
+- `pause()`: Temporarily pauses state-changing functions.
+- `unpause()`: Re-enables operations after a normal pause.
+- `activate_emergency_pause()`: Activates emergency mode and hard-pauses operations.
+- `resolve_emergency()`: Clears emergency mode and unpauses the contract.
+- `is_paused()`: Read-only pause status.
+- `is_emergency()`: Read-only emergency status.
 
-Benefits:
+### Guarded Functions
 
-- Deterministic failure semantics for integrators.
-- Better auditability and incident triage.
-- More precise tests for expected failure modes.
+While paused, these state-changing flows revert with `ContractPaused`:
 
-## Public Error Codes
+- `create_contract`
+- `deposit_funds`
+- `release_milestone`
+- `issue_reputation`
 
-- `1` `InvalidContractId`
-- `2` `InvalidMilestoneId`
-- `3` `InvalidAmount`
-- `4` `InvalidRating`
-- `5` `EmptyMilestones`
-- `6` `InvalidParticipant`
+### Error Codes
 
-## Validation Rules
+- `1` `AlreadyInitialized`
+- `2` `NotInitialized`
+- `3` `ContractPaused`
+- `4` `NotPaused`
+- `5` `EmergencyActive`
 
-- Contract id must be non-zero for operational calls.
-- Amounts must be strictly positive.
-- Rating must be in `1..=5`.
-- Milestone list cannot be empty.
-- Client and freelancer must be distinct addresses.
-- `u32::MAX` milestone id is reserved as invalid in this placeholder implementation.
+## Security Notes
+
+- Admin-only controls: pause and emergency operations require authenticated admin.
+- One-time initialization: admin cannot be replaced accidentally by repeated init calls.
+- Emergency lock discipline: `unpause` is blocked while emergency mode is active.
+- Fail-closed behavior: guarded functions revert whenever `paused == true`.
+
+## Operational Playbook
+
+1. Detect incident and call `activate_emergency_pause`.
+2. Investigate and remediate root cause.
+3. Validate mitigations in test/staging.
+4. Call `resolve_emergency` to restore service.
+5. Publish incident summary for ecosystem transparency.

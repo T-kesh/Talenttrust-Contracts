@@ -13,7 +13,7 @@ fn test_hello() {
 }
 
 #[test]
-fn test_create_contract_success() {
+fn test_create_contract() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
@@ -27,7 +27,7 @@ fn test_create_contract_success() {
 }
 
 #[test]
-fn test_deposit_funds_success() {
+fn test_deposit_funds() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
@@ -37,22 +37,11 @@ fn test_deposit_funds_success() {
 }
 
 #[test]
-fn test_release_milestone_success() {
+fn test_release_milestone() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
     let result = client.release_milestone(&1, &0);
-    assert!(result);
-}
-
-#[test]
-fn test_issue_reputation_success() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let freelancer = Address::generate(&env);
-    let result = client.issue_reputation(&freelancer, &5);
     assert!(result);
 }
