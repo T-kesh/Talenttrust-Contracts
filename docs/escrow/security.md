@@ -1,14 +1,15 @@
-# Escrow Pause/Emergency Threat Model
+# Escrow Security Notes
 
-## Scope
+This document summarizes security assumptions and threat scenarios for access-control enforcement.
 
-This model covers pause and emergency controls in `contracts/escrow/src/lib.rs`.
+## Security Controls
 
-## Assumptions
-
-- The admin key is securely managed.
-- Soroban address authentication behaves as expected.
-- Off-chain operators monitor incidents and invoke controls quickly.
+- Explicit role checks on all mutating methods.
+- Mandatory auth calls (`require_auth`) for role-bearing callers.
+- Role-aware release gating based on `ReleaseAuthorization`.
+- Strict state transition validation (`Created` -> `Funded` -> `Completed`).
+- Defensive checks for invalid milestone IDs and duplicate actions.
+- Checked arithmetic for milestone total and reputation accumulation.
 
 ## Threat Scenarios and Mitigations
 

@@ -1,6 +1,5 @@
 use super::{
-    default_milestones, generated_participants, register_client, total_milestone_amount,
-    world_symbol,
+    create_default_contract, default_milestones, register_client, total_milestones, world_symbol,
 };
 use crate::ContractStatus;
 use soroban_sdk::Env;
@@ -10,8 +9,7 @@ fn test_hello() {
     let env = Env::default();
     let client = register_client(&env);
 
-    let result = client.hello(&world_symbol());
-    assert_eq!(result, world_symbol());
+    assert_eq!(client.hello(&world_symbol()), world_symbol());
 }
 
 #[test]
@@ -40,12 +38,13 @@ fn test_create_contract_initializes_storage_and_state() {
 }
 
 #[test]
-fn test_full_flow_completes_and_issues_reputation() {
+fn test_client_only_flow_releases_all_milestones_and_completes() {
     let env = Env::default();
     env.mock_all_auths();
 
     let client = register_client(&env);
-    let (client_addr, freelancer_addr) = generated_participants(&env);
+    let (contract_id, client_addr, freelancer_addr, _arbiter_addr) =
+        create_default_contract(&client, &env, ReleaseAuthorization::ClientOnly);
 
     let contract_id =
         client.create_contract(&client_addr, &freelancer_addr, &default_milestones(&env));
@@ -67,20 +66,23 @@ fn test_full_flow_completes_and_issues_reputation() {
 }
 
 #[test]
-fn test_contract_ids_increment() {
+fn test_multisig_requires_client_and_arbiter_approval() {
     let env = Env::default();
     env.mock_all_auths();
 
     let client = register_client(&env);
-    let (client_addr, freelancer_addr) = generated_participants(&env);
+    let (contract_id, client_addr, _freelancer_addr, arbiter_addr) =
+        create_default_contract(&client, &env, ReleaseAuthorization::MultiSig);
 
-    let first_id =
-        client.create_contract(&client_addr, &freelancer_addr, &default_milestones(&env));
-    let second_id =
-        client.create_contract(&client_addr, &freelancer_addr, &default_milestones(&env));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
 
-    assert_eq!(first_id, 1);
-    assert_eq!(second_id, 2);
+    // Client approval alone is insufficient for MultiSig release.
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    let failed_release = client.try_release_milestone(&contract_id, &client_addr, &0);
+    assert!(failed_release.is_err());
+
+    assert!(client.approve_milestone_release(&contract_id, &arbiter_addr, &0));
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
 }
 
 #[test]

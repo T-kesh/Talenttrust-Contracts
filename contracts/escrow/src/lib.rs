@@ -66,13 +66,14 @@ pub enum EscrowError {
 /// Carefully review the threat model associated with each scheme.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum DataKey {
-    Admin,
-    Paused,
-    EmergencyPaused,
+pub struct Milestone {
+    pub amount: i128,
+    pub released: bool,
+    pub approved_by_client: bool,
+    pub approved_by_arbiter: bool,
+    pub last_approval_timestamp: Option<u64>,
 }
 
-/// Stored escrow state for a single agreement.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowContractData {
@@ -83,6 +84,7 @@ pub struct EscrowRecord {
     pub client: Address,
     /// The party performing work and receiving funds.
     pub freelancer: Address,
+    pub arbiter: Option<Address>,
     pub milestones: Vec<Milestone>,
     pub milestone_count: u32,
     pub total_amount: i128,
@@ -933,6 +935,7 @@ mod tests {
         // Should not panic
         Escrow::check_contract_invariants(state);
     }
+}
 
     #[test]
     #[should_panic(expected = "total_contract_value < total_funded")]
@@ -967,6 +970,8 @@ mod tests {
 
         Escrow::check_contract_invariants(state);
     }
+    Ok(())
+}
 
     #[test]
     fn test_contract_invariants_fully_released() {
@@ -1001,6 +1006,7 @@ mod tests {
         // Should not panic
         Escrow::check_contract_invariants(state);
     }
+}
 
     // ============================================================================
     // CONTRACT CREATION TESTS
@@ -1027,6 +1033,7 @@ mod tests {
 
         Escrow::create_contract(env.clone(), client, freelancer, milestones);
     }
+}
 
     #[test]
     #[should_panic(expected = "Milestone amounts must be positive")]

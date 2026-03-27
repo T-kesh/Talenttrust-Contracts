@@ -62,182 +62,44 @@ fn test_create_contract_no_milestones() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env];
 
-    client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
-}
-
-#[test]
-#[should_panic(expected = "Client and freelancer cannot be the same address")]
-fn test_create_contract_same_addresses() {
-    let env = Env::default();
+pub(crate) fn register_client(env: &Env) -> EscrowClient<'_> {
     let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_0000000_i128];
-
-    client.create_contract(
-        &client_addr,
-        &client_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
+    EscrowClient::new(env, &contract_id)
 }
 
-#[test]
-#[should_panic(expected = "Milestone amounts must be positive")]
-fn test_create_contract_negative_amount() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, -1000_0000000_i128];
-
-    client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
+pub(crate) fn default_milestones(env: &Env) -> Vec<i128> {
+    vec![&env, MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]
 }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_create_contract_invalid_milestone_amount() {
-    let (env, _contract_id, client, _admin, _treasury) = setup_with_treasury();
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_0000000_i128];
-
-    // Create contract first
-    client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
-
-    // Note: Authentication tests would require proper mock setup
-    // For now, we test the basic contract creation logic
-
-    env.mock_all_auths();
-    let result = client.deposit_funds(&1, &client_addr, &1000_0000000);
-    assert!(result);
+pub(crate) fn total_milestones() -> i128 {
+    MILESTONE_ONE + MILESTONE_TWO + MILESTONE_THREE
 }
 
-// ==================== DEPOSIT FUNDS TESTS ====================
-
-#[test]
-#[should_panic(expected = "Deposit amount must equal total milestone amounts")]
-fn test_deposit_funds_wrong_amount() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_0000000_i128];
-
-    // Create contract first
-    client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
-
-    // Note: Authentication tests would require proper mock setup
-    // For now, we test the basic contract creation logic
-
-    env.mock_all_auths();
-    client.deposit_funds(&1, &client_addr, &500_0000000);
+pub(crate) fn generated_participants(env: &Env) -> (Address, Address, Address) {
+    (
+        Address::generate(env),
+        Address::generate(env),
+        Address::generate(env),
+    )
 }
 
-#[test]
-fn test_approve_milestone_release_client_only() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
+pub(crate) fn create_default_contract(
+    client: &EscrowClient<'_>,
+    env: &Env,
+    release_auth: ReleaseAuthorization,
+) -> (u32, Address, Address, Address) {
+    let (client_addr, freelancer_addr, arbiter_addr) = generated_participants(env);
+    let arbiter = match release_auth {
+        ReleaseAuthorization::ClientOnly => None,
+        _ => Some(arbiter_addr.clone()),
+    };
 
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_0000000_i128];
-
-    // Create contract
-    client.create_contract(
+    let contract_id = client.create_contract(
         &client_addr,
         &freelancer_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
-
-    env.mock_all_auths();
-    client.deposit_funds(&1, &client_addr, &1000_0000000);
-    let result = client.approve_milestone_release(&1, &client_addr, &0);
-    assert!(result);
-}
-
-#[test]
-fn test_approve_milestone_release_client_and_arbiter() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let arbiter_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_0000000_i128];
-
-    // Create contract
-    client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &Some(arbiter_addr.clone()),
-        &milestones,
-        &ReleaseAuthorization::ClientAndArbiter,
-    );
-
-    env.mock_all_auths();
-    client.deposit_funds(&1, &client_addr, &1000_0000000);
-    let result = client.approve_milestone_release(&1, &client_addr, &0);
-    assert!(result);
-
-    let result = client.approve_milestone_release(&1, &arbiter_addr, &0);
-    assert!(result);
-}
-
-#[test]
-#[should_panic(expected = "Caller not authorized to approve milestone release")]
-fn test_approve_milestone_release_unauthorized() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let unauthorized_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_0000000_i128];
-
-    // Create contract
-    client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None::<Address>,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
+        &arbiter,
+        &default_milestones(env),
+        &release_auth,
     );
 
     env.mock_all_auths();

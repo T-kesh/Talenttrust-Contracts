@@ -51,8 +51,8 @@ cargo build
 # Run tests
 cargo test
 
-# Run escrow performance/gas baseline tests only
-cargo test test::performance
+# Run access-control focused tests
+cargo test access_control
 
 # Run upgradeable storage planning tests only
 cargo test test::storage
