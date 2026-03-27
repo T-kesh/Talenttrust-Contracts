@@ -4,58 +4,33 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 
 ## What's in this repo
 
-<<<<<<< feature/contracts-27-contract-ownership-transfer
-- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, and includes a two-party client identity migration flow with explicit confirmations.
-
-## Current Escrow Capabilities
-
-- Stateful escrow creation with stored client, freelancer, milestone schedule, and aggregate funding state.
-- Milestone funding and release controls gated by the current client address.
-- Safe client identity migration:
-  - Current client requests migration to a new address.
-  - Proposed client explicitly confirms acceptance.
-  - Current client explicitly finalizes the handover.
-  - Pending migrations cannot be overwritten and may be cancelled before finalization.
-
-## Reviewer Guide
-
-- Contract entrypoints live in [contracts/escrow/src/lib.rs](/home/json/Desktop/Drips/Talenttrust-Contracts/contracts/escrow/src/lib.rs).
-- The test suite is organized by behavior in [contracts/escrow/src/test.rs](/home/json/Desktop/Drips/Talenttrust-Contracts/contracts/escrow/src/test.rs) and `contracts/escrow/src/test/*`.
-- Escrow-specific implementation notes and threat assumptions are documented in:
-  - [docs/escrow/README.md](/home/json/Desktop/Drips/Talenttrust-Contracts/docs/escrow/README.md)
-  - [docs/escrow/security.md](/home/json/Desktop/Drips/Talenttrust-Contracts/docs/escrow/security.md)
-=======
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, reputation credential issuance, and emergency pause controls.
 - **Escrow docs** (`docs/escrow`): Escrow operations, security notes, and pause/emergency threat model.
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
+- **Escrow docs** (`docs/escrow`): Upgradeable storage layout strategy, migration safety notes, and security assumptions.
 
-## Security model
+### Release Readiness Checklist
 
-The escrow contract now enforces a minimal on-chain state machine instead of placeholder return values:
+The escrow contract includes an on-chain **release readiness checklist** that automatically tracks and enforces deployment, verification, and post-deploy monitoring gates:
 
-- Contract creation requires client authorization and validates immutable milestone inputs.
-- Funding is accepted exactly once and must match the total milestone amount.
-- Milestones can be released once each and only by the recorded client.
-- Reputation entries are gated behind completed-contract credits and are treated as informational data.
-- Protocol-wide validation parameters can be guarded by a governance admin and updated through audited state transitions.
+| Phase | Items |
+|---|---|
+| Deployment | Contract created, funds deposited |
+| Verification | Parties authenticated, milestones defined |
+| Post-Deploy Monitoring | All milestones released, reputation issued |
 
-Reviewer-focused contract notes and the formal threat model live in [docs/escrow/README.md](/home/christopher/drips_projects/Talenttrust-Contracts/docs/escrow/README.md).
+`release_milestone` is **hard-blocked** until all Deployment and Verification items are satisfied.  
+Query checklist state with `get_release_checklist`, `is_release_ready`, and `is_post_deploy_complete`.
 
-## Protocol governance
+See [docs/escrow/release-readiness-checklist.md](docs/escrow/release-readiness-checklist.md) for full details, function reference, error codes, and security model.
 
-The escrow contract supports guarded protocol parameter updates for live validation logic:
+### Input Sanitization Hardening
 
-- A one-time governance initialization assigns the first protocol admin.
-- The admin can update protocol parameters such as minimum milestone amount, maximum milestones per contract, and permitted reputation rating bounds.
-- Admin transfer is two-step: current admin proposes, pending admin accepts.
-- Before governance is initialized, the contract uses safe built-in defaults so existing flows remain available.
+The escrow contract rejects malformed contract-creation inputs before any state is written:
 
-Current defaults:
-
-- `min_milestone_amount = 1`
-- `max_milestones = 16`
-- `min_reputation_rating = 1`
-- `max_reputation_rating = 5`
->>>>>>> main
+- `client` and `freelancer` must be different addresses.
+- Every milestone amount must be strictly positive (`> 0`).
+- Milestone count must be between `1` and `MAX_MILESTONES` (`20`).
 
 ## Prerequisites
 
@@ -73,16 +48,15 @@ cd talenttrust-contracts
 # Build
 cargo build
 
-# Run tests (includes 95%+ coverage negative path testing for escrow)
+# Run tests
 cargo test
 
-<<<<<<< feature/contracts-27-contract-ownership-transfer
-# Run escrow contract tests only
-cargo test -p escrow
-=======
 # Run escrow performance/gas baseline tests only
 cargo test test::performance
->>>>>>> main
+
+# Run upgradeable storage planning tests only
+cargo test test::storage
+
 
 # Check formatting
 cargo fmt --all -- --check
@@ -91,16 +65,36 @@ cargo fmt --all -- --check
 cargo fmt --all
 ```
 
-## Escrow Emergency Controls
+## Escrow contract — acceptance handshake
 
-The escrow contract now supports critical-incident response with admin-managed controls:
+Before a client can fund an escrow contract, the assigned freelancer must explicitly accept the terms. This two-party handshake ensures no funds are committed without mutual agreement.
 
-- `initialize(admin)` (one-time setup)
-- `pause()` and `unpause()`
-- `activate_emergency_pause()` and `resolve_emergency()`
-- `is_paused()` and `is_emergency()`
+### State machine
 
-When paused, mutating escrow operations are blocked.
+```
+Created ──► Accepted ──► Funded ──► Completed
+                                └──► Disputed
+```
+
+| Status      | Meaning                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `Created`   | Contract created by the client; awaiting freelancer response. |
+| `Accepted`  | Freelancer has signed off; client may now deposit funds.      |
+| `Funded`    | Funds are held in escrow; milestones may be released.         |
+| `Completed` | All milestones released; engagement concluded.                |
+| `Disputed`  | Under dispute resolution.                                     |
+
+### Key functions
+
+| Function            | Caller     | Requires status | Resulting status |
+| ------------------- | ---------- | --------------- | ---------------- |
+| `create_contract`   | client     | —               | `Created`        |
+| `accept_contract`   | freelancer | `Created`       | `Accepted`       |
+| `deposit_funds`     | client     | `Accepted`      | `Funded`         |
+| `release_milestone` | client     | `Funded`        | `Funded`         |
+| `get_status`        | anyone     | —               | —                |
+
+See [`docs/escrow/README.md`](docs/escrow/README.md) for the full contract reference.
 
 ## Contributing
 
@@ -121,14 +115,15 @@ On every push and pull request to `main`, GitHub Actions:
 
 Ensure these pass locally before pushing.
 
-## Escrow Performance and Security
+## Upgradeable Storage Planning
 
-- Performance/gas baseline tests for key flows are in `contracts/escrow/src/test/performance.rs`.
-- Functional and failure-path coverage is split by module:
+- Versioned storage metadata and key namespaces are implemented in `contracts/escrow/src/lib.rs`.
+- Dedicated storage planning tests are in:
+  - `contracts/escrow/src/test/storage.rs`
   - `contracts/escrow/src/test/flows.rs`
   - `contracts/escrow/src/test/security.rs`
-- Contract-specific reviewer docs:
-  - `docs/escrow/performance-baselines.md`
+- Contract-specific documentation:
+  - `docs/escrow/upgradeable-storage.md`
   - `docs/escrow/security.md`
 
 ## License
