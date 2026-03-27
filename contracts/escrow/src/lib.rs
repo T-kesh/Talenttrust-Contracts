@@ -416,6 +416,14 @@ impl Escrow {
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
     }
+
+    /// Getter for milestones (useful for verification and UI)
+    pub fn get_milestones(env: Env) -> Vec<Milestone> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Milestones)
+            .unwrap_or(Vec::new(&env))
+    }
 }
 
 fn ensure_storage_layout(env: &Env) -> Result<(), EscrowError> {
