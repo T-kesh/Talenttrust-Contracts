@@ -398,5 +398,51 @@ fn save_contract(env: &Env, contract_id: u32, record: &EscrowRecord) {
         .set(&DataKey::V1(V1Key::Contract(contract_id)), record);
 }
 
+// Helper functions
+
+fn get_next_contract_id(env: &Env) -> u32 {
+    let mut next_id = env
+        .storage()
+        .persistent()
+        .get(&NEXT_CONTRACT_ID)
+        .unwrap_or(1u32);
+    let current_id = next_id;
+    next_id += 1;
+    env.storage().persistent().set(&NEXT_CONTRACT_ID, &next_id);
+    current_id
+}
+
+fn get_next_dispute_id(env: &Env) -> u32 {
+    let mut next_id = env
+        .storage()
+        .persistent()
+        .get(&NEXT_DISPUTE_ID)
+        .unwrap_or(1u32);
+    let current_id = next_id;
+    next_id += 1;
+    env.storage().persistent().set(&NEXT_DISPUTE_ID, &next_id);
+    current_id
+}
+
+fn get_contracts_map(env: &Env) -> Map<u32, EscrowContract> {
+    env.storage()
+        .persistent()
+        .get(&CONTRACTS)
+        .unwrap_or(Map::new(env))
+}
+
+fn get_disputes_map(env: &Env) -> Map<u32, Dispute> {
+    env.storage()
+        .persistent()
+        .get(&DISPUTES)
+        .unwrap_or(Map::new(env))
+}
+
+fn require_contract_status(contract: &EscrowContract, expected_status: ContractStatus) {
+    if contract.status != expected_status {
+        panic!("invalid contract status");
+    }
+}
+
 #[cfg(test)]
 mod test;
