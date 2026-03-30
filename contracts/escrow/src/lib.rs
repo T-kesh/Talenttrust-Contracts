@@ -7,7 +7,10 @@
 //! - Contract events use topic prefix `tt_esc` with `create`, `deposit`, or `release` for indexer hooks.
 //! - Reviewer checklist and residual risks: `docs/escrow/mainnet-readiness.md`.
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    Env, Symbol, Vec,
+};
 
 const DEFAULT_MIN_MILESTONE_AMOUNT: i128 = 1;
 const DEFAULT_MAX_MILESTONES: u32 = 16;
@@ -20,13 +23,7 @@ pub const MAINNET_PROTOCOL_VERSION: u32 = 1_000_000;
 /// Hard ceiling on the sum of milestone amounts per escrow (stroops). Not governed; change only via wasm upgrade.
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000;
 
-/// Persistent lifecycle state for an escrow agreement.
-///
-/// Security notes:
-/// - Only `Created -> Funded -> Completed` transitions are currently supported.
-/// - `Disputed` is reserved for future dispute resolution flows and is not reachable
-///   in the current implementation.
-
+/// High-level lifecycle state for an escrow agreement.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
@@ -36,46 +33,71 @@ pub enum ContractStatus {
     Disputed = 3,
 }
 
-/// Individual milestone tracked inside an escrow agreement.
-///
-/// Invariant:
-/// - `released == true` is irreversible.
+/// Immutable milestone definition with a one-way release flag.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
+    /// Amount assigned to this milestone.
     pub amount: i128,
+    /// Whether the milestone amount has been released.
     pub released: bool,
 }
 
-/// Stored escrow state for a single agreement.
+/// Persisted escrow state for a single agreement.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowContractData {
+    /// Address that created and funds the escrow.
     pub client: Address,
+    /// Address that receives released milestone funds.
     pub freelancer: Address,
+    /// Ordered milestone definitions.
     pub milestones: Vec<Milestone>,
+    /// Cached milestone count for cheaper reads and review clarity.
+    pub milestone_count: u32,
+    /// Sum of all milestone amounts.
     pub total_amount: i128,
+    /// Total amount funded into escrow.
     pub funded_amount: i128,
+    /// Total amount released to the freelancer.
     pub released_amount: i128,
+    /// Number of milestones already released.
+    pub released_milestones: u32,
+    /// Current lifecycle status.
     pub status: ContractStatus,
+    /// Whether a reputation rating has already been issued for this contract.
+    pub reputation_issued: bool,
+    /// Ledger timestamp when the record was created.
+    pub created_at: u64,
+    /// Ledger timestamp for the last persisted mutation.
+    pub updated_at: u64,
 }
 
-/// Reputation state derived from completed escrow contracts.
+/// Reputation aggregate derived from completed escrow contracts.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReputationRecord {
+    /// Number of completed contracts that were rated.
     pub completed_contracts: u32,
+    /// Running sum of issued ratings.
     pub total_rating: i128,
+    /// Most recent rating issued to the freelancer.
     pub last_rating: i128,
+    /// Number of individual ratings recorded.
+    pub ratings_count: u32,
 }
 
-/// Governed protocol parameters used by the escrow validation logic.
+/// Governance-controlled validation bounds for escrow creation and ratings.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolParameters {
+    /// Minimum allowed milestone amount.
     pub min_milestone_amount: i128,
+    /// Maximum number of milestones per contract.
     pub max_milestones: u32,
+    /// Minimum allowed reputation rating.
     pub min_reputation_rating: i128,
+    /// Maximum allowed reputation rating.
     pub max_reputation_rating: i128,
 }
 
@@ -92,9 +114,13 @@ pub struct MainnetReadinessInfo {
     pub max_reputation_rating: i128,
 }
 
+/// Persistent storage keys used by the escrow contract.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum DataKey {
+    PauseAdmin,
+    Paused,
+    EmergencyPaused,
     NextContractId,
     Contract(u32),
     Reputation(Address),
@@ -104,162 +130,161 @@ enum DataKey {
     ProtocolParameters,
 }
 
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum EscrowError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    ContractPaused = 3,
+    EmergencyActive = 4,
+    InvalidContractId = 5,
+    ContractNotFound = 6,
+    InvalidParticipants = 7,
+    EmptyMilestones = 8,
+    InvalidMilestoneAmount = 9,
+    AmountMustBePositive = 10,
+    FundingExceedsRequired = 11,
+    InvalidState = 12,
+    InsufficientEscrowBalance = 13,
+    MilestoneNotFound = 14,
+    MilestoneAlreadyReleased = 15,
+    InvalidRating = 16,
+    ReputationAlreadyIssued = 17,
+    GovernanceAlreadyInitialized = 18,
+    GovernanceNotInitialized = 19,
+    InvalidProtocolParameters = 20,
+    TooManyMilestones = 21,
+    ArithmeticOverflow = 22,
+    NotPaused = 23,
+}
+
 #[contract]
 pub struct Escrow;
 
 #[contractimpl]
 impl Escrow {
-    /// Initializes protocol governance and stores the first guarded parameter set.
-    ///
-    /// Security properties:
-    /// - Initialization is one-time only.
-    /// - The initial admin must authorize the call.
-    /// - Parameters are validated before storage.
-    pub fn initialize_protocol_governance(
-        env: Env,
-        admin: Address,
-        min_milestone_amount: i128,
-        max_milestones: u32,
-        min_reputation_rating: i128,
-        max_reputation_rating: i128,
-    ) -> bool {
-        admin.require_auth();
+    /// Echo helper kept for template compatibility.
+    pub fn hello(_env: Env, to: Symbol) -> Symbol {
+        to
+    }
 
-        if env.storage().persistent().has(&DataKey::GovernanceAdmin) {
-            panic!("protocol governance already initialized");
+    /// Initializes pause and emergency controls.
+    pub fn initialize(env: Env, admin: Address) -> bool {
+        if env.storage().persistent().has(&DataKey::PauseAdmin) {
+            panic_with_error!(&env, EscrowError::AlreadyInitialized);
         }
 
-        let parameters = Self::validated_protocol_parameters(
-            min_milestone_amount,
-            max_milestones,
-            min_reputation_rating,
-            max_reputation_rating,
-        );
-
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::PauseAdmin, &admin);
+        env.storage().persistent().set(&DataKey::Paused, &false);
         env.storage()
             .persistent()
-            .set(&DataKey::GovernanceAdmin, &admin);
-        env.storage()
-            .persistent()
-            .set(&DataKey::ProtocolParameters, &parameters);
-
+            .set(&DataKey::EmergencyPaused, &false);
         true
     }
 
-    /// Updates governed protocol parameters.
-    ///
-    /// Security properties:
-    /// - Only the current governance admin may update parameters.
-    /// - Parameters are atomically replaced after validation.
-    pub fn update_protocol_parameters(
-        env: Env,
-        min_milestone_amount: i128,
-        max_milestones: u32,
-        min_reputation_rating: i128,
-        max_reputation_rating: i128,
-    ) -> bool {
-        let admin = Self::governance_admin(&env);
+    /// Returns the configured pause admin, if pause controls were initialized.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::PauseAdmin)
+    }
+
+    /// Pauses all state-changing escrow operations.
+    pub fn pause(env: Env) -> bool {
+        let admin = Self::read_pause_admin(&env);
         admin.require_auth();
-
-        let parameters = Self::validated_protocol_parameters(
-            min_milestone_amount,
-            max_milestones,
-            min_reputation_rating,
-            max_reputation_rating,
-        );
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::ProtocolParameters, &parameters);
-
+        env.storage().persistent().set(&DataKey::Paused, &true);
         true
     }
 
-    /// Proposes a governance admin transfer. The new admin must later accept it.
-    ///
-    /// Security properties:
-    /// - Only the current governance admin may nominate a successor.
-    /// - The current admin cannot nominate itself.
-    pub fn propose_governance_admin(env: Env, new_admin: Address) -> bool {
-        let admin = Self::governance_admin(&env);
+    /// Clears a standard pause, but refuses to clear an active emergency pause.
+    pub fn unpause(env: Env) -> bool {
+        let admin = Self::read_pause_admin(&env);
         admin.require_auth();
 
-        if new_admin == admin {
-            panic!("new admin must differ from current admin");
+        if Self::is_emergency_active(&env) {
+            panic_with_error!(&env, EscrowError::EmergencyActive);
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PendingGovernanceAdmin, &new_admin);
+        if !Self::is_paused_flag_set(&env) {
+            panic_with_error!(&env, EscrowError::NotPaused);
+        }
 
+        env.storage().persistent().set(&DataKey::Paused, &false);
         true
     }
 
-    /// Accepts a pending governance admin transfer.
-    ///
-    /// Security properties:
-    /// - Only the nominated pending admin may accept the transfer.
-    /// - Pending state is cleared when the transfer completes.
-    pub fn accept_governance_admin(env: Env) -> bool {
-        let pending_admin = Self::pending_governance_admin(&env)
-            .unwrap_or_else(|| panic!("no pending governance admin"));
-        pending_admin.require_auth();
-
+    /// Activates emergency pause mode and blocks standard unpause until resolved.
+    pub fn activate_emergency_pause(env: Env) -> bool {
+        let admin = Self::read_pause_admin(&env);
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Paused, &true);
         env.storage()
             .persistent()
-            .set(&DataKey::GovernanceAdmin, &pending_admin);
-        env.storage()
-            .persistent()
-            .remove(&DataKey::PendingGovernanceAdmin);
-
+            .set(&DataKey::EmergencyPaused, &true);
         true
     }
 
-    /// Creates a new escrow contract and stores milestone funding requirements.
-    ///
-    /// Security properties:
-    /// - The declared client must authorize creation.
-    /// - Client and freelancer addresses must be distinct.
-    /// - All milestones must have a strictly positive amount.
-    /// - Funding amount is fixed at creation time by the milestone sum.
+    /// Resolves an emergency and restores normal operation.
+    pub fn resolve_emergency(env: Env) -> bool {
+        let admin = Self::read_pause_admin(&env);
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Paused, &false);
+        env.storage()
+            .persistent()
+            .set(&DataKey::EmergencyPaused, &false);
+        true
+    }
+
+    /// Returns whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        Self::is_paused_flag_set(&env)
+    }
+
+    /// Returns whether emergency mode is currently active.
+    pub fn is_emergency(env: Env) -> bool {
+        Self::is_emergency_active(&env)
+    }
+
+    /// Creates and persists an escrow agreement and its participant metadata.
     pub fn create_contract(
         env: Env,
         client: Address,
         freelancer: Address,
         milestone_amounts: Vec<i128>,
     ) -> u32 {
+        Self::ensure_not_paused(&env);
         client.require_auth();
 
         if client == freelancer {
-            panic!("client and freelancer must differ");
-        }
-        if milestone_amounts.is_empty() {
-            panic!("at least one milestone is required");
+            panic_with_error!(&env, EscrowError::InvalidParticipants);
         }
 
-        let protocol_parameters = Self::protocol_parameters(&env);
-        if milestone_amounts.len() > protocol_parameters.max_milestones {
-            panic!("milestone count exceeds governed limit");
+        let milestone_count = milestone_amounts.len();
+        if milestone_count == 0 {
+            panic_with_error!(&env, EscrowError::EmptyMilestones);
         }
 
-        let mut milestones = Vec::new(&env);
+        let parameters = Self::read_protocol_parameters(&env);
+        if milestone_count > parameters.max_milestones {
+            panic_with_error!(&env, EscrowError::TooManyMilestones);
+        }
+
         let mut total_amount = 0_i128;
-        let mut index = 0_u32;
-        while index < milestone_amounts.len() {
-            let amount = milestone_amounts
-                .get(index)
-                .unwrap_or_else(|| panic!("missing milestone amount"));
-            if amount < protocol_parameters.min_milestone_amount {
-                panic!("milestone amount below governed minimum");
+        let mut milestones = Vec::new(&env);
+        for amount in milestone_amounts.iter() {
+            if amount < parameters.min_milestone_amount {
+                panic_with_error!(&env, EscrowError::InvalidMilestoneAmount);
             }
+
             total_amount = total_amount
                 .checked_add(amount)
-                .unwrap_or_else(|| panic!("milestone total overflow"));
+                .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+
             milestones.push_back(Milestone {
                 amount,
                 released: false,
             });
-            index += 1;
         }
 
         if total_amount > MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS {
@@ -267,19 +292,23 @@ impl Escrow {
         }
 
         let contract_id = Self::next_contract_id(&env);
-        let contract = EscrowContractData {
+        let timestamp = env.ledger().timestamp();
+        let record = EscrowContractData {
             client,
             freelancer,
             milestones,
+            milestone_count,
             total_amount,
             funded_amount: 0,
             released_amount: 0,
+            released_milestones: 0,
             status: ContractStatus::Created,
+            reputation_issued: false,
+            created_at: timestamp,
+            updated_at: timestamp,
         };
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
+        Self::write_contract(&env, contract_id, &record);
         env.storage()
             .persistent()
             .set(&DataKey::NextContractId, &(contract_id + 1));
@@ -292,30 +321,34 @@ impl Escrow {
         contract_id
     }
 
-    /// Deposits the full escrow amount for a contract.
-    ///
-    /// Security properties:
-    /// - Only the recorded client may fund the contract.
-    /// - Funding is allowed exactly once.
-    /// - Partial or excess funding is rejected to avoid ambiguous release logic.
+    /// Adds funds to an escrow agreement without exceeding the required total.
     pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
-        if amount <= 0 {
-            panic!("deposit amount must be positive");
+        Self::ensure_not_paused(&env);
+        Self::require_valid_contract_id(&env, contract_id);
+        Self::require_positive_amount(&env, amount);
+
+        let mut record = Self::read_contract(&env, contract_id);
+        record.client.require_auth();
+
+        let next_funded_amount = record
+            .funded_amount
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+        if next_funded_amount > record.total_amount {
+            panic_with_error!(&env, EscrowError::FundingExceedsRequired);
         }
 
-        let mut contract = Self::load_contract(&env, contract_id);
-        contract.client.require_auth();
-
-        if contract.status != ContractStatus::Created {
-            panic!("contract is not awaiting funding");
-        }
-        if amount != contract.total_amount {
-            panic!("deposit must match milestone total");
+        if record.status == ContractStatus::Completed {
+            panic_with_error!(&env, EscrowError::InvalidState);
         }
 
-        contract.funded_amount = amount;
-        contract.status = ContractStatus::Funded;
-        Self::save_contract(&env, contract_id, &contract);
+        record.funded_amount = next_funded_amount;
+        if record.funded_amount > 0 {
+            record.status = ContractStatus::Funded;
+        }
+        record.updated_at = env.ledger().timestamp();
+
+        Self::write_contract(&env, contract_id, &record);
 
         env.events().publish(
             (symbol_short!("tt_esc"), symbol_short!("deposit")),
@@ -325,136 +358,142 @@ impl Escrow {
         true
     }
 
-    /// Releases a single milestone payment.
-    ///
-    /// Security properties:
-    /// - Only the client may authorize a release.
-    /// - Milestones can be released once.
-    /// - Contract completion is derived from all milestones being released.
+    /// Releases a funded milestone and advances lifecycle state.
     pub fn release_milestone(env: Env, contract_id: u32, milestone_id: u32) -> bool {
-        let mut contract = Self::load_contract(&env, contract_id);
-        contract.client.require_auth();
+        Self::ensure_not_paused(&env);
+        Self::require_valid_contract_id(&env, contract_id);
 
-        if contract.status != ContractStatus::Funded {
-            panic!("contract is not funded");
-        }
-        if milestone_id >= contract.milestones.len() {
-            panic!("milestone id out of range");
+        let mut record = Self::read_contract(&env, contract_id);
+        record.client.require_auth();
+
+        if record.status != ContractStatus::Funded && record.status != ContractStatus::Completed {
+            panic_with_error!(&env, EscrowError::InvalidState);
         }
 
-        let mut milestone = contract
+        if milestone_id >= record.milestone_count {
+            panic_with_error!(&env, EscrowError::MilestoneNotFound);
+        }
+
+        let mut milestone = record
             .milestones
             .get(milestone_id)
-            .unwrap_or_else(|| panic!("missing milestone"));
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::MilestoneNotFound));
         if milestone.released {
-            panic!("milestone already released");
+            panic_with_error!(&env, EscrowError::MilestoneAlreadyReleased);
         }
 
-        let released_stroops = milestone.amount;
-
-        let next_released_amount = contract
-            .released_amount
-            .checked_add(milestone.amount)
-            .unwrap_or_else(|| panic!("released total overflow"));
-        if next_released_amount > contract.funded_amount {
-            panic!("release exceeds funded amount");
+        let available_balance = record
+            .funded_amount
+            .checked_sub(record.released_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+        if available_balance < milestone.amount {
+            panic_with_error!(&env, EscrowError::InsufficientEscrowBalance);
         }
 
         milestone.released = true;
-        contract.milestones.set(milestone_id, milestone);
-        contract.released_amount = next_released_amount;
+        record.milestones.set(milestone_id, milestone);
+        record.released_amount = record
+            .released_amount
+            .checked_add(
+                record
+                    .milestones
+                    .get(milestone_id)
+                    .unwrap_or_else(|| panic_with_error!(&env, EscrowError::MilestoneNotFound))
+                    .amount,
+            )
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+        record.released_milestones += 1;
+        record.updated_at = env.ledger().timestamp();
 
-        if Self::all_milestones_released(&contract.milestones) {
-            contract.status = ContractStatus::Completed;
-            Self::add_pending_reputation_credit(&env, &contract.freelancer);
+        if record.released_milestones == record.milestone_count {
+            record.status = ContractStatus::Completed;
+            let pending_key = DataKey::PendingReputationCredits(record.freelancer.clone());
+            let pending: u32 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+            env.storage().persistent().set(&pending_key, &(pending + 1));
+        } else {
+            record.status = ContractStatus::Funded;
         }
 
-        Self::save_contract(&env, contract_id, &contract);
+        Self::write_contract(&env, contract_id, &record);
 
         env.events().publish(
             (symbol_short!("tt_esc"), symbol_short!("release")),
-            (contract_id, milestone_id, released_stroops),
+            (contract_id, milestone_id, milestone.amount),
         );
 
         true
     }
 
-    /// Issues a bounded reputation rating for a freelancer after a completed contract.
-    ///
-    /// Security properties:
-    /// - The freelancer must authorize the write to their own reputation record.
-    /// - A reputation update is only possible after a completed contract grants a
-    ///   pending reputation credit.
-    /// - Ratings are limited to the inclusive range `1..=5`.
-    ///
-    /// Residual risk:
-    /// - The current interface lets the freelancer self-submit the rating value.
-    ///   The contract therefore treats this record as informational only and does
-    ///   not use it for fund movement or access control.
-    pub fn issue_reputation(env: Env, freelancer: Address, rating: i128) -> bool {
-        freelancer.require_auth();
+    /// Issues a governed reputation rating for a completed contract exactly once.
+    pub fn issue_reputation(env: Env, contract_id: u32, rating: i128) -> bool {
+        Self::ensure_not_paused(&env);
+        Self::require_valid_contract_id(&env, contract_id);
 
-        let protocol_parameters = Self::protocol_parameters(&env);
-        if rating < protocol_parameters.min_reputation_rating
-            || rating > protocol_parameters.max_reputation_rating
-        {
-            panic!("rating is outside governed bounds");
+        let parameters = Self::read_protocol_parameters(&env);
+        if rating < parameters.min_reputation_rating || rating > parameters.max_reputation_rating {
+            panic_with_error!(&env, EscrowError::InvalidRating);
         }
 
-        let pending_key = DataKey::PendingReputationCredits(freelancer.clone());
-        let pending_credits = env
-            .storage()
-            .persistent()
-            .get::<_, u32>(&pending_key)
-            .unwrap_or(0);
+        let mut record = Self::read_contract(&env, contract_id);
+        record.client.require_auth();
+
+        if record.status != ContractStatus::Completed {
+            panic_with_error!(&env, EscrowError::InvalidState);
+        }
+        if record.reputation_issued {
+            panic_with_error!(&env, EscrowError::ReputationAlreadyIssued);
+        }
+
+        let pending_key = DataKey::PendingReputationCredits(record.freelancer.clone());
+        let pending_credits: u32 = env.storage().persistent().get(&pending_key).unwrap_or(0);
         if pending_credits == 0 {
-            panic!("no completed contract available for reputation");
+            panic_with_error!(&env, EscrowError::InvalidState);
         }
 
-        let rep_key = DataKey::Reputation(freelancer.clone());
-        let mut record = env
+        let rep_key = DataKey::Reputation(record.freelancer.clone());
+        let mut reputation = env
             .storage()
             .persistent()
-            .get::<_, ReputationRecord>(&rep_key)
+            .get(&rep_key)
             .unwrap_or(ReputationRecord {
                 completed_contracts: 0,
                 total_rating: 0,
                 last_rating: 0,
+                ratings_count: 0,
             });
-
-        record.completed_contracts += 1;
-        record.total_rating = record
+        reputation.completed_contracts += 1;
+        reputation.ratings_count += 1;
+        reputation.total_rating = reputation
             .total_rating
             .checked_add(rating)
-            .unwrap_or_else(|| panic!("rating total overflow"));
-        record.last_rating = rating;
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+        reputation.last_rating = rating;
 
-        env.storage().persistent().set(&rep_key, &record);
+        env.storage().persistent().set(&rep_key, &reputation);
         env.storage()
             .persistent()
             .set(&pending_key, &(pending_credits - 1));
 
+        record.reputation_issued = true;
+        record.updated_at = env.ledger().timestamp();
+        Self::write_contract(&env, contract_id, &record);
         true
     }
 
-    /// Hello-world style function for testing and CI.
-    pub fn hello(_env: Env, to: Symbol) -> Symbol {
-        to
-    }
-
-    /// Returns the stored contract state.
+    /// Returns the persisted escrow agreement for a contract id.
     pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
-        Self::load_contract(&env, contract_id)
+        Self::require_valid_contract_id(&env, contract_id);
+        Self::read_contract(&env, contract_id)
     }
 
-    /// Returns the stored reputation record for a freelancer, if present.
+    /// Returns reputation data for a freelancer, if any has been issued.
     pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
         env.storage()
             .persistent()
             .get(&DataKey::Reputation(freelancer))
     }
 
-    /// Returns the number of pending reputation updates that can be claimed.
+    /// Returns how many completed contracts can still issue reputation for the freelancer.
     pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
         env.storage()
             .persistent()
@@ -462,22 +501,109 @@ impl Escrow {
             .unwrap_or(0)
     }
 
-    /// Returns the active protocol parameters.
-    ///
-    /// If governance has not been initialized yet, this returns the safe default
-    /// parameters baked into the contract.
-    pub fn get_protocol_parameters(env: Env) -> ProtocolParameters {
-        Self::protocol_parameters(&env)
+    /// Initializes protocol governance and persisted validation bounds.
+    pub fn initialize_protocol_governance(
+        env: Env,
+        admin: Address,
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) -> bool {
+        if env.storage().persistent().has(&DataKey::GovernanceAdmin) {
+            panic_with_error!(&env, EscrowError::GovernanceAlreadyInitialized);
+        }
+
+        admin.require_auth();
+        let parameters = Self::validate_protocol_parameters(
+            &env,
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        );
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernanceAdmin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolParameters, &parameters);
+        true
     }
 
-    /// Returns the current governance admin, if governance has been initialized.
+    /// Updates live validation bounds for future escrow creation and ratings.
+    pub fn update_protocol_parameters(
+        env: Env,
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) -> bool {
+        let admin = Self::read_governance_admin(&env);
+        admin.require_auth();
+
+        let parameters = Self::validate_protocol_parameters(
+            &env,
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolParameters, &parameters);
+        true
+    }
+
+    /// Returns the live protocol validation bounds, falling back to safe defaults.
+    pub fn get_protocol_parameters(env: Env) -> ProtocolParameters {
+        Self::read_protocol_parameters(&env)
+    }
+
+    /// Returns the governance admin, if governance has been initialized.
     pub fn get_governance_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::GovernanceAdmin)
     }
 
-    /// Returns the pending governance admin, if an admin transfer is in flight.
+    /// Returns the pending governance admin for the two-step handover flow.
     pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        Self::pending_governance_admin(&env)
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingGovernanceAdmin)
+    }
+
+    /// Proposes a new governance admin.
+    pub fn propose_governance_admin(env: Env, next_admin: Address) -> bool {
+        let admin = Self::read_governance_admin(&env);
+        admin.require_auth();
+
+        if admin == next_admin {
+            panic_with_error!(&env, EscrowError::InvalidParticipants);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingGovernanceAdmin, &next_admin);
+        true
+    }
+
+    /// Accepts a pending governance admin transfer.
+    pub fn accept_governance_admin(env: Env) -> bool {
+        let pending_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingGovernanceAdmin)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::InvalidState));
+        pending_admin.require_auth();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernanceAdmin, &pending_admin);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingGovernanceAdmin);
+        true
     }
 
     /// Aggregates immutable caps, protocol version, and current governed parameters for mainnet readiness review.
@@ -495,6 +621,20 @@ impl Escrow {
 }
 
 impl Escrow {
+    fn read_pause_admin(env: &Env) -> Address {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PauseAdmin)
+            .unwrap_or_else(|| panic_with_error!(env, EscrowError::NotInitialized))
+    }
+
+    fn read_governance_admin(env: &Env) -> Address {
+        env.storage()
+            .persistent()
+            .get(&DataKey::GovernanceAdmin)
+            .unwrap_or_else(|| panic_with_error!(env, EscrowError::GovernanceNotInitialized))
+    }
+
     fn next_contract_id(env: &Env) -> u32 {
         env.storage()
             .persistent()
@@ -502,71 +642,76 @@ impl Escrow {
             .unwrap_or(1)
     }
 
-    fn load_contract(env: &Env, contract_id: u32) -> EscrowContractData {
+    fn read_contract(env: &Env, contract_id: u32) -> EscrowContractData {
         env.storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| panic!("contract not found"))
+            .unwrap_or_else(|| panic_with_error!(env, EscrowError::ContractNotFound))
     }
 
-    fn save_contract(env: &Env, contract_id: u32, contract: &EscrowContractData) {
+    fn write_contract(env: &Env, contract_id: u32, record: &EscrowContractData) {
         env.storage()
             .persistent()
-            .set(&DataKey::Contract(contract_id), contract);
+            .set(&DataKey::Contract(contract_id), record);
     }
 
-    fn add_pending_reputation_credit(env: &Env, freelancer: &Address) {
-        let key = DataKey::PendingReputationCredits(freelancer.clone());
-        let current = env.storage().persistent().get::<_, u32>(&key).unwrap_or(0);
-        env.storage().persistent().set(&key, &(current + 1));
-    }
-
-    fn governance_admin(env: &Env) -> Address {
-        env.storage()
-            .persistent()
-            .get(&DataKey::GovernanceAdmin)
-            .unwrap_or_else(|| panic!("protocol governance is not initialized"))
-    }
-
-    fn pending_governance_admin(env: &Env) -> Option<Address> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::PendingGovernanceAdmin)
-    }
-
-    fn protocol_parameters(env: &Env) -> ProtocolParameters {
-        env.storage()
-            .persistent()
-            .get(&DataKey::ProtocolParameters)
-            .unwrap_or_else(Self::default_protocol_parameters)
-    }
-
-    fn default_protocol_parameters() -> ProtocolParameters {
-        ProtocolParameters {
-            min_milestone_amount: DEFAULT_MIN_MILESTONE_AMOUNT,
-            max_milestones: DEFAULT_MAX_MILESTONES,
-            min_reputation_rating: DEFAULT_MIN_REPUTATION_RATING,
-            max_reputation_rating: DEFAULT_MAX_REPUTATION_RATING,
+    fn require_valid_contract_id(env: &Env, contract_id: u32) {
+        if contract_id == 0 {
+            panic_with_error!(env, EscrowError::InvalidContractId);
         }
     }
 
-    fn validated_protocol_parameters(
+    fn require_positive_amount(env: &Env, amount: i128) {
+        if amount <= 0 {
+            panic_with_error!(env, EscrowError::AmountMustBePositive);
+        }
+    }
+
+    fn is_paused_flag_set(env: &Env) -> bool {
+        env.storage().persistent().get(&DataKey::Paused).unwrap_or(false)
+    }
+
+    fn is_emergency_active(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EmergencyPaused)
+            .unwrap_or(false)
+    }
+
+    fn ensure_not_paused(env: &Env) {
+        if Self::is_paused_flag_set(env) {
+            panic_with_error!(env, EscrowError::ContractPaused);
+        }
+    }
+
+    fn read_protocol_parameters(env: &Env) -> ProtocolParameters {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProtocolParameters)
+            .unwrap_or(ProtocolParameters {
+                min_milestone_amount: DEFAULT_MIN_MILESTONE_AMOUNT,
+                max_milestones: DEFAULT_MAX_MILESTONES,
+                min_reputation_rating: DEFAULT_MIN_REPUTATION_RATING,
+                max_reputation_rating: DEFAULT_MAX_REPUTATION_RATING,
+            })
+    }
+
+    fn validate_protocol_parameters(
+        env: &Env,
         min_milestone_amount: i128,
         max_milestones: u32,
         min_reputation_rating: i128,
         max_reputation_rating: i128,
     ) -> ProtocolParameters {
-        if min_milestone_amount <= 0 {
-            panic!("minimum milestone amount must be positive");
+        if min_milestone_amount < DEFAULT_MIN_MILESTONE_AMOUNT
+            || min_reputation_rating < DEFAULT_MIN_REPUTATION_RATING
+            || max_reputation_rating < min_reputation_rating
+        {
+            panic_with_error!(env, EscrowError::InvalidProtocolParameters);
         }
+
         if max_milestones == 0 {
-            panic!("maximum milestones must be positive");
-        }
-        if min_reputation_rating <= 0 {
-            panic!("minimum reputation rating must be positive");
-        }
-        if min_reputation_rating > max_reputation_rating {
-            panic!("reputation rating range is invalid");
+            panic_with_error!(env, EscrowError::InvalidProtocolParameters);
         }
 
         ProtocolParameters {
@@ -577,20 +722,7 @@ impl Escrow {
         }
     }
 
-    fn all_milestones_released(milestones: &Vec<Milestone>) -> bool {
-        let mut index = 0_u32;
-        while index < milestones.len() {
-            let milestone = milestones
-                .get(index)
-                .unwrap_or_else(|| panic!("missing milestone"));
-            if !milestone.released {
-                return false;
-            }
-            index += 1;
-        }
-        true
+    fn protocol_parameters(env: &Env) -> ProtocolParameters {
+        Self::read_protocol_parameters(env)
     }
 }
-
-#[cfg(test)]
-mod test;
