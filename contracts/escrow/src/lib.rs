@@ -42,10 +42,13 @@ impl ContractStatus {
 }
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Milestone {
     pub amount: i128,
     pub released: bool,
+    pub approved_by: Option<Address>,
+    pub approval_timestamp: Option<u64>,
+    pub protocol_fee: i128,
 }
 
 #[contracttype]
@@ -53,10 +56,8 @@ pub struct Milestone {
 pub struct EscrowContract {
     pub client: Address,
     pub freelancer: Address,
+    pub arbiter: Option<Address>,
     pub milestones: Vec<Milestone>,
-    pub total_amount: i128,
-    pub funded_amount: i128,
-    pub released_amount: i128,
     pub status: ContractStatus,
     /// Total amount deposited by the client so far.
     pub deposited_amount: i128,
@@ -109,25 +110,20 @@ pub struct ReleaseChecklist {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MainnetReadinessInfo {
-    pub protocol_version: u32,
-    pub max_escrow_total_stroops: i128,
-    pub min_milestone_amount: i128,
-    pub max_milestones: u32,
-    pub min_reputation_rating: i128,
-    pub max_reputation_rating: i128,
+pub enum Approval {
+    None = 0,
+    Client = 1,
+    Arbiter = 2,
+    Both = 3,
 }
 
 #[contracttype]
-#[derive(Clone)]
-enum DataKey {
-    NextContractId,
-    Contract(u32),
-    Reputation(Address),
-    PendingReputationCredits(Address),
-    GovernanceAdmin,
-    PendingGovernanceAdmin,
-    ProtocolParameters,
+#[derive(Clone, Debug)]
+pub struct MilestoneApproval {
+    pub milestone_id: u32,
+    pub approvals: Map<Address, bool>,
+    pub required_approvals: u32,
+    pub approval_status: Approval,
 }
 
 #[contract]
@@ -347,9 +343,16 @@ impl Escrow {
         env: Env,
         client: Address,
         freelancer: Address,
+        arbiter: Option<Address>,
         milestone_amounts: Vec<i128>,
+        release_auth: ReleaseAuthorization,
+        protocol_fee_bps: u32,
+        protocol_fee_account: Address,
     ) -> u32 {
-        client.require_auth();
+        // Validate inputs
+        if milestone_amounts.is_empty() {
+            panic!("At least one milestone required");
+        }
 
         if client == freelancer {
             panic!("client and freelancer must differ");
@@ -376,14 +379,17 @@ impl Escrow {
                 .checked_add(amount)
                 .unwrap_or_else(|| panic!("milestone total overflow"));
             milestones.push_back(Milestone {
-                amount,
+                amount: milestone_amounts.get(i).unwrap(),
                 released: false,
+                approved_by: None,
+                approval_timestamp: None,
+                protocol_fee: 0,
             });
-            index += 1;
         }
 
-        if total_amount > MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS {
-            panic!("total escrow exceeds mainnet hard cap");
+        // Create contract
+        if protocol_fee_bps > 10000 {
+            panic!("Protocol fee out of range");
         }
 
         let contract_id = Self::next_contract_id(&env);
@@ -422,17 +428,18 @@ impl Escrow {
 
         let mut contract = Self::load_contract(&env, contract_id);
 
+        // Verify contract status
         if contract.status != ContractStatus::Created {
-            panic!("contract is not awaiting funding");
+            panic!("Contract must be in Created status to deposit funds");
         }
 
         if amount != contract.total_amount {
             panic!("deposit must match milestone total");
         }
 
-        contract.funded_amount = amount;
-        contract.status = ContractStatus::Funded;
-        Self::save_contract(&env, contract_id, &contract);
+        if amount != total_required {
+            panic!("Deposit amount must equal total milestone amounts");
+        }
 
         true
     }
@@ -440,8 +447,16 @@ impl Escrow {
     pub fn release_milestone(env: Env, contract_id: u32, milestone_id: u32) -> bool {
         let mut contract = Self::load_contract(&env, contract_id);
 
+        // Retrieve contract
+        let mut contract: EscrowContract = env
+            .storage()
+            .persistent()
+            .get(&symbol_short!("contract"))
+            .unwrap_or_else(|| panic!("Contract not found"));
+
+        // Verify contract status
         if contract.status != ContractStatus::Funded {
-            panic!("contract is not funded");
+            panic!("Contract must be in Funded status to approve milestones");
         }
 
         if milestone_id >= contract.milestones.len() {
@@ -450,7 +465,7 @@ impl Escrow {
 
         let milestone = contract.milestones.get(milestone_id).unwrap();
         if milestone.released {
-            panic!("milestone already released");
+            panic!("Milestone already released");
         }
 
         let mut updated_milestone = milestone.clone();
@@ -497,37 +512,58 @@ impl Escrow {
         let pending_credits = env
             .storage()
             .persistent()
-            .get::<_, u32>(&pending_key)
-            .unwrap_or(0);
-        if pending_credits == 0 {
-            panic!("no completed contract available for reputation");
+            .get(&symbol_short!("contract"))
+            .unwrap_or_else(|| panic!("Contract not found"));
+
+        // Verify contract status
+        if contract.status != ContractStatus::Funded {
+            panic!("Contract must be in Funded status to release milestones");
         }
 
-        let rep_key = DataKey::Reputation(freelancer.clone());
-        let mut record = env
-            .storage()
-            .persistent()
-            .get::<_, ReputationRecord>(&rep_key)
-            .unwrap_or(ReputationRecord {
-                completed_contracts: 0,
-                total_rating: 0,
-                last_rating: 0,
-            });
+        // Validate milestone ID
+        if milestone_id >= contract.milestones.len() {
+            panic!("Invalid milestone ID");
+        }
 
-        record.completed_contracts += 1;
-        record.total_rating = record
-            .total_rating
-            .checked_add(rating)
-            .unwrap_or_else(|| panic!("rating total overflow"));
-        record.last_rating = rating;
+        let milestone = contract.milestones.get(milestone_id).unwrap();
 
-        env.storage().persistent().set(&rep_key, &record);
-        env.storage()
-            .persistent()
-            .set(&pending_key, &(pending_credits - 1));
+        // Check if milestone already released
+        if milestone.released {
+            panic!("Milestone already released");
+        }
 
-        true
-    }
+        // Check if milestone has sufficient approvals
+        let has_sufficient_approval = match contract.release_auth {
+            ReleaseAuthorization::ClientOnly => milestone
+                .approved_by
+                .clone()
+                .map_or(false, |addr| addr == contract.client),
+            ReleaseAuthorization::ArbiterOnly => {
+                contract.arbiter.clone().map_or(false, |arbiter| {
+                    milestone
+                        .approved_by
+                        .clone()
+                        .map_or(false, |addr| addr == arbiter)
+                })
+            }
+            ReleaseAuthorization::ClientAndArbiter => {
+                milestone.approved_by.clone().map_or(false, |addr| {
+                    addr == contract.client
+                        || contract
+                            .arbiter
+                            .clone()
+                            .map_or(false, |arbiter| addr == arbiter)
+                })
+            }
+            ReleaseAuthorization::MultiSig => {
+                // For multi-sig, we'd need to track multiple approvals
+                // Simplified: require client approval for now
+                milestone
+                    .approved_by
+                    .clone()
+                    .map_or(false, |addr| addr == contract.client)
+            }
+        };
 
     pub fn get_contract(env: Env, contract_id: u32) -> EscrowContract {
         Self::load_contract(&env, contract_id)
