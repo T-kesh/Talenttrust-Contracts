@@ -6,6 +6,7 @@ pub enum DataKey {
     Freelancer,
     Milestones,
     Initialized,
+    MilestoneFunded(u32),
 }
 
 #[contracterror]
@@ -17,6 +18,7 @@ pub enum Error {
     IndexOutOfBounds = 3,
     AlreadyReleased = 4,
     InvalidStatusTransition = 5,
+    InsufficientMilestoneFunding = 6,
 }
 
 #[contracttype]
@@ -34,4 +36,13 @@ pub struct Milestone {
     pub amount: i128,
     pub released: bool,
     pub work_evidence: Option<String>,
+    pub funded_amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MilestoneFunding {
+    pub contract_id: u32,
+    pub milestone_idx: u32,
+    pub funded_amount: i128,
 }

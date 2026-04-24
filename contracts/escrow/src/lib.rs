@@ -13,6 +13,7 @@ pub enum EscrowError {
     InvalidMilestoneAmount = 3,
     InvalidDepositAmount = 4,
     InvalidMilestone = 5,
+    InsufficientMilestoneFunding = 6,
 }
 
 #[contracttype]
@@ -21,6 +22,8 @@ pub struct ContractData {
     pub client: Address,
     pub freelancer: Address,
     pub milestones: Vec<i128>,
+    pub total_funded: i128,
+    pub total_released: i128,
 }
 
 #[contracttype]
@@ -28,6 +31,7 @@ pub struct ContractData {
 enum DataKey {
     NextId,
     Contract(u32),
+    MilestoneFunded(u32, u32),
 }
 
 #[contractimpl]
@@ -66,6 +70,8 @@ impl Escrow {
             client,
             freelancer,
             milestones,
+            total_funded: 0,
+            total_released: 0,
         };
 
         env.storage()
@@ -76,18 +82,100 @@ impl Escrow {
         id
     }
 
-    pub fn deposit_funds(env: Env, _contract_id: u32, amount: i128) -> bool {
+    pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidDepositAmount);
         }
+
+        let mut contract: ContractData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .expect("Contract not found");
+
+        let total_amount: i128 = contract.milestones.iter().sum();
+        if contract.total_funded + amount > total_amount {
+            env.panic_with_error(EscrowError::InvalidDepositAmount);
+        }
+
+        contract.total_funded += amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
         true
     }
 
     pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
-        let _ = (env, contract_id, milestone_index);
+        let mut contract: ContractData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .expect("Contract not found");
+
+        if milestone_index >= contract.milestones.len() {
+            env.panic_with_error(EscrowError::InvalidMilestone);
+        }
+
+        let milestone_amount = contract.milestones.get(milestone_index).unwrap();
+        let funded_key = DataKey::MilestoneFunded(contract_id, milestone_index);
+        let funded_amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&funded_key)
+            .unwrap_or(0);
+
+        if funded_amount < milestone_amount {
+            env.panic_with_error(EscrowError::InsufficientMilestoneFunding);
+        }
+
+        contract.total_released += milestone_amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        true
+    }
+
+    pub fn get_milestone_funded(env: Env, contract_id: u32, milestone_index: u32) -> i128 {
+        let funded_key = DataKey::MilestoneFunded(contract_id, milestone_index);
+        env.storage()
+            .persistent()
+            .get(&funded_key)
+            .unwrap_or(0)
+    }
+
+    pub fn set_milestone_funded(
+        env: Env,
+        contract_id: u32,
+        milestone_index: u32,
+        amount: i128,
+    ) -> bool {
+        if amount < 0 {
+            env.panic_with_error(EscrowError::InvalidDepositAmount);
+        }
+
+        let contract: ContractData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .expect("Contract not found");
+
+        if milestone_index >= contract.milestones.len() {
+            env.panic_with_error(EscrowError::InvalidMilestone);
+        }
+
+        let funded_key = DataKey::MilestoneFunded(contract_id, milestone_index);
+        env.storage()
+            .persistent()
+            .set(&funded_key, &amount);
+
         true
     }
 }
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_per_milestone_funding;
