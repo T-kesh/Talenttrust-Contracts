@@ -29,7 +29,7 @@ mod ttl_tests;
 
 #[test]
 fn test_hello() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -39,7 +39,7 @@ fn test_hello() {
 
 #[test]
 fn test_create_contract() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -57,7 +57,7 @@ fn test_create_contract() {
 
 #[test]
 fn test_deposit_funds() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -74,7 +74,7 @@ fn test_deposit_funds() {
 
 #[test]
 fn test_release_milestone() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 

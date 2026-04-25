@@ -21,6 +21,7 @@ pub struct Escrow;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
 pub enum EscrowError {
     InvalidParticipant = 1,
     EmptyMilestones = 2,
@@ -36,7 +37,7 @@ pub enum EscrowError {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractData {
+pub struct EscrowContractData {
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Option<Address>,
@@ -67,7 +68,6 @@ pub struct PendingMigration {
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
-    NextId,
     Contract(u32),
     MilestoneReleased(u32, u32),
     RefundableBalance(u32),
@@ -75,7 +75,6 @@ enum DataKey {
 
 #[contractimpl]
 impl Escrow {
-    /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
     }
@@ -87,6 +86,8 @@ impl Escrow {
         arbiter: Option<Address>,
         milestones: Vec<i128>,
     ) -> u32 {
+        client.require_auth();
+
         if client == freelancer {
             env.panic_with_error(EscrowError::InvalidParticipant);
         }
@@ -102,19 +103,27 @@ impl Escrow {
             env.panic_with_error(EscrowError::EmptyMilestones);
         }
 
-        for amount in milestones.iter() {
+        let mut total_amount: i128 = 0;
+        let mut milestones: Vec<Milestone> = Vec::new(&env);
+        for amount in milestone_amounts.iter() {
             if amount <= 0 {
                 env.panic_with_error(EscrowError::InvalidMilestoneAmount);
             }
+            total_amount += amount;
+            milestones.push_back(Milestone {
+                amount,
+                released: false,
+                refunded: false,
+            });
         }
 
-        let id = env
+        let id: u32 = env
             .storage()
             .persistent()
-            .get::<_, u32>(&DataKey::NextId)
-            .unwrap_or(0);
+            .get(&DataKey::ContractCount)
+            .unwrap_or(0u32);
 
-        let data = ContractData {
+        let data = EscrowContractData {
             client,
             freelancer,
             arbiter,
@@ -124,10 +133,11 @@ impl Escrow {
             released_amount: 0,
         };
 
+        env.storage().persistent().set(&DataKey::Contract(id), &data);
         env.storage()
             .persistent()
-            .set(&DataKey::Contract(id), &data);
-        env.storage().persistent().set(&DataKey::NextId, &(id + 1));
+            .set(&DataKey::Milestones(id), &milestones);
+        env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
 
         id
     }
@@ -289,3 +299,6 @@ impl Escrow {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod proptest;
