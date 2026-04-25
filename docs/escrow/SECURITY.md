@@ -458,7 +458,273 @@ The `cancel_contract` function implements six critical security guarantees:
 
 ## Version
 
-- **Version:** 0.2.0
-- **Last Updated:** 2026-03-24
-- **Threat Model:** Complete (updated for cancellation path)
+- **Version:** 0.3.0
+- **Last Updated:** 2026-04-24
+- **Threat Model:** Complete (updated for cancellation, refunds, disputes, and governance)
 - **Risk Assessment:** Mitigations adequate for production use with noted caveats.
+
+---
+
+## Refund Threat Model (v0.3.0)
+
+### Threat 9: Partial Refund Exploitation (Severity: MEDIUM)
+
+**Attack:** Client or attacker manipulates refund calculations to receive more funds than deposited or approved.
+
+**Scenarios:**
+1. Client requests partial refund for milestone not yet released.
+2. Client requests refund after partial milestone release with mismatched amounts.
+3. Arbiter processes refund that exceeds available escrow balance.
+
+**Mitigations:**
+
+1. **Release Check Before Refund:**
+   - Refund can only be processed for milestones where `released == false`.
+   - Prevents refunding work already delivered and approved.
+   - Panics with `"Milestone already released"` if attempt made.
+
+2. **Amount Validation:**
+   - Refund amount must not exceed milestone amount minus already released amount.
+   - Prevents over-refunding scenarios.
+   - Panics with `"Refund amount exceeds available balance"` if exceeded.
+
+3. **Arbiter Authorization:**
+   - Only authorized arbiter can process refunds in disputed state.
+   - Prevents unauthorized refunds by malicious actors.
+   - Requires proper role validation before processing.
+
+**Residual Risk:** If arbiter is colluding with client, refund could be processed unfairly. Both must cooperate, raising the bar significantly.
+
+---
+
+### Threat 10: Refund Double-Processing (Severity: MEDIUM)
+
+**Attack:** Same refund request processed twice, draining escrow.
+
+**Mitigations:**
+
+1. **Milestone State Lock:**
+   - Once refund is processed, milestone status changes to prevent re-processing.
+   - Refund flag set in storage prevents duplicate processing.
+
+2. **Atomic Transactions:**
+   - Soroban transaction atomicity ensures only one refund per block.
+   - No race conditions possible within single ledger.
+
+**Residual Risk:** Very low with proper integration layer handling.
+
+---
+
+## Dispute Threat Model (v0.3.0)
+
+### Threat 11: Premature Dispute Initiation (Severity: MEDIUM)
+
+**Attack:** Malicious actor initiates dispute without valid reason to disrupt contract.
+
+**Scenarios:**
+1. Freelancer initiates dispute immediately after contract creation.
+2. Attacker initiates dispute on contract they're not party to.
+3. Client initiates dispute after milestones are released to avoid payment.
+
+**Mitigations:**
+
+1. **Role-Based Dispute Initiation:**
+   - Only client, freelancer, or arbiter can initiate dispute.
+   - Unauthorized callers panic immediately.
+   - Prevents external attack surface.
+
+2. **Status Gate:**
+   - Dispute can only be initiated from `Created`, `Funded`, or `Completed` states.
+   - `Disputed` and `Cancelled` contracts cannot be disputed again.
+   - Prevents state confusion.
+
+3. **Event Emission for Monitoring:**
+   - `contract_disputed` event emitted for off-chain monitoring.
+   - Allows stakeholders to detect and respond to disputes.
+
+**Residual Risk:** Client can still abuse dispute process to delay payment. Off-chain governance/reputation should handle this.
+
+---
+
+### Threat 12: Dispute Resolution Collusion (Severity: HIGH)
+
+**Attack:** Arbiter colludes with one party to rule unfairly.
+
+**Mitigations:**
+
+1. **Transparent Dispute Timeline:**
+   - All dispute events are on-chain and auditable.
+   - Off-chain governance can review arbiter decisions.
+   - Reputation system can penalize biased arbiters.
+
+2. **Multi-Arbiter Support:**
+   - Contract supports multiple arbiters for high-value contracts.
+   - Prevents single point of failure.
+
+3. **Time-Bound Resolution:**
+   - Timeout mechanism ensures disputes don't linger indefinitely.
+   - Auto-resolution or escalation path available.
+
+**Residual Risk:** **HIGH** if arbiter selection is not properly decentralized. Choose arbiters carefully.
+
+---
+
+## Governance Threat Model (v0.3.0)
+
+### Threat 13: Governance Parameter Manipulation (Severity: HIGH)
+
+**Attack:** Attacker changes critical governance parameters (fees, timeouts, limits) to extract value.
+
+**Scenarios:**
+1. Attacker increases platform fee to drain user funds.
+2. Attacker extends timeout to indefinite period.
+3. Attacker removes all rate limits for spam attacks.
+
+**Mitigations:**
+
+1. **Multi-Sig Governance:**
+   - Critical parameter changes require multi-signature authorization.
+   - No single key can modify governance.
+   - Configurable threshold (e.g., 3-of-5 governors).
+
+2. **Parameter Bounds:**
+   - All parameters have minimum and maximum bounds.
+   - Prevents extreme values even with proper authorization.
+   - Panics with `"Invalid protocol parameters"` if exceeded.
+
+3. **Timelock for Changes:**
+   - Parameter changes have mandatory timelock period.
+   - Allows users to exit before unfavorable changes take effect.
+
+**Residual Risk:** If governance keys are compromised, all funds at risk. Use hardware wallets and secure key management.
+
+---
+
+### Threat 14: Governance Upgrade Attack (Severity: CRITICAL)
+
+**Attack:** Malicious upgrade replaces contract with backdoored version.
+
+**Mitigations:**
+
+1. **Upgrade Authorization:**
+   - Only authorized governance can propose upgrades.
+   - Upgrade requires multi-sig approval.
+   - Immediate upgrades blocked by timelock.
+
+2. **Integrity Verification:**
+   - Contract hash verified before upgrade.
+   - Upgrade fails if hash mismatch detected.
+
+3. **Emergency Pause:**
+   - Upgrade can be paused in case of detected attack.
+   - Emergency stop functionality for critical situations.
+
+**Residual Risk:** **CRITICAL** if governance is centralized. Ensure diverse, distributed governance for production.
+
+---
+
+## Cancellation Threat Model Updates (v0.3.0)
+
+### Threat 15: Cancellation After Significant Work (Severity: MEDIUM)
+
+**Attack:** Client cancels contract after freelancer has completed substantial work.
+
+**Scenarios:**
+1. Client cancels after 2 of 3 milestones released.
+2. Freelancer disputes cancellation claiming completed work.
+3. Arbiter must decide fair outcome.
+
+**Mitigations:**
+
+1. **Milestone-Based Cancellation Limits:**
+   - In `Funded` state, client can only cancel if zero milestones released.
+   - After releases, cancellation requires mutual consent or arbiter decision.
+
+2. **Refund Calculation:**
+   - Refund limited to unreleased milestone amounts.
+   - Released work is compensated appropriately.
+
+3. **Dispute Path:**
+   - Freelancer can initiate dispute if unfair cancellation.
+   - Arbiter adjudicates based on evidence.
+
+**Residual Risk:** Dispute resolution quality depends on arbiter. Choose arbiters with conflict resolution experience.
+
+---
+
+## Security Recommendations for Cancellation, Refunds, Disputes, and Governance
+
+### For Clients
+1. **Deposit Only When Ready:** Confirm milestones and terms off-chain before funding.
+2. **Release Milestones Actively:** Track work progress and release milestones as work is completed.
+3. **Use Refund Judiciously:** Request refunds only for valid reasons with documentation.
+4. **Participate in Governance:** Monitor governance proposals and vote on parameter changes.
+
+### For Freelancers
+1. **Document Work:** Keep evidence of completed milestones before requesting payment.
+2. **Monitor Contract State:** Watch for unauthorized cancellation via `contract_cancelled` events.
+3. **Use Dispute Process:** Initiate dispute if cancellation is unfair after work delivery.
+4. **Understand Governance:** Stay informed about platform fee and parameter changes.
+
+### For Arbiters
+1. **Remain Neutral:** Evaluate disputes based on evidence, not party pressure.
+2. **Document Decisions:** Record reasoning for dispute resolutions.
+3. **Escalate When Needed:** Flag complex cases for community review.
+
+### For Governance Participants
+1. **Verify Proposals:** Review all governance proposals thoroughly before voting.
+2. **Consider Timelock:** Use timelock period to alert users of upcoming changes.
+3. **Monitor Emergency Actions:** Track emergency pause usage and governance decisions.
+4. **Diversify Keys:** Use multi-sig for all governance operations.
+
+---
+
+## Off-Chain Integration Notes
+
+### Cancellation Off-Chain
+- Off-chain systems must listen for `contract_cancelled` events.
+- Payment processors should halt automated payments on cancellation.
+- Reputation impact depends on cancellation reason and context.
+
+### Refund Off-Chain
+- Payment processor must verify refund amount against on-chain escrow balance.
+- Refund should only be processed after on-chain confirmation.
+- Idempotency key should include `(contract_id, milestone_id)` to prevent duplicates.
+
+### Dispute Off-Chain
+- Dispute notification should be sent to all contract parties.
+- Time-bound response windows should be enforced off-chain.
+- Resolution must be atomic with on-chain state update.
+
+### Governance Off-Chain
+- Governance dashboard should display all proposals and voting status.
+- Notification system for timelock activations.
+- Emergency contact protocol for critical security events.
+
+---
+
+## Coverage Matrix
+
+| Lifecycle Operation | On-Chain Security | Off-Chain Requirement | Test Coverage |
+|---------------------|------------------|----------------------|---------------|
+| Create Contract | Participant validation, milestone validation | Off-chain agreement | **HIGH** |
+| Deposit Funds | Amount validation, authorization | Atomic transfer verification | **HIGH** |
+| Release Milestone | Released flag, authorization | Idempotent event processing | **HIGH** |
+| Complete Contract | All milestones released check | - | **HIGH** |
+| Issue Reputation | Completion gate, rating validation, single-issuance | Deduplication | **HIGH** |
+| Cancel Contract | Role-based, status check, release check | Event monitoring | **MEDIUM** |
+| Request Refund | Release check, amount bounds, arbiter auth | Idempotent processing | **MEDIUM** |
+| Initiate Dispute | Role-based, status gate | Notification, response window | **MEDIUM** |
+| Resolve Dispute | Arbiter authorization | Documentation, evidence | **MEDIUM** |
+| Governance Update | Multi-sig, bounds, timelock | Dashboard, notifications | **MEDIUM** |
+
+---
+
+## Assumptions for Off-Chain Integration
+
+1. **Asset Transfers:** Actual asset transfers (deposits, releases, refunds) happen off-chain and must be atomic with contract state updates.
+2. **Event Indexing:** All events are indexed by `(contract_id, event_type)` to prevent duplicate processing.
+3. **Arbiter Selection:** Arbiter selection happens off-chain with agreement from both parties.
+4. **Governance Security:** Governance keys are stored securely with multi-sig requirements.
+5. **Timeout Handling:** Off-chain timeout monitoring triggers escalation or auto-resolution.
+6. **Dispute Evidence:** Evidence submission happens off-chain; on-chain stores only resolution.
