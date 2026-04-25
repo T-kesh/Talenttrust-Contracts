@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, String};
+use soroban_sdk::{contracterror, contracttype, Bytes, String};
 
 #[contracttype]
 pub enum DataKey {
@@ -6,38 +6,7 @@ pub enum DataKey {
     Freelancer,
     Milestones,
     Initialized,
-    ReadinessChecklist,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReadinessChecklist {
-    pub caps_set: bool,
-    pub governed_params_set: bool,
-    pub emergency_controls_enabled: bool,
-    pub initialized: bool,
-}
-
-impl Default for ReadinessChecklist {
-    fn default() -> Self {
-        Self {
-            caps_set: false,
-            governed_params_set: false,
-            emergency_controls_enabled: false,
-            initialized: false,
-        }
-    }
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MainnetReadinessInfo {
-    pub caps_set: bool,
-    pub governed_params_set: bool,
-    pub emergency_controls_enabled: bool,
-    pub initialized: bool,
-    pub protocol_version: u32,
-    pub max_escrow_total_stroops: i128,
+    MilestoneFunded(u32),
 }
 
 #[contracterror]
@@ -49,6 +18,7 @@ pub enum Error {
     IndexOutOfBounds = 3,
     AlreadyReleased = 4,
     InvalidStatusTransition = 5,
+    InsufficientMilestoneFunding = 6,
 }
 
 #[contracttype]
@@ -58,6 +28,8 @@ pub enum ContractStatus {
     Funded = 1,
     Completed = 2,
     Disputed = 3,
+    Cancelled = 4,
+    Refunded = 5,
 }
 
 #[contracttype]
@@ -66,4 +38,14 @@ pub struct Milestone {
     pub amount: i128,
     pub released: bool,
     pub work_evidence: Option<String>,
+    pub funded_amount: i128,
 }
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MilestoneFunding {
+    pub contract_id: u32,
+    pub milestone_idx: u32,
+    pub funded_amount: i128,
+}
+
