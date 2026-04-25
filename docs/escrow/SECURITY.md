@@ -458,9 +458,9 @@ The `cancel_contract` function implements six critical security guarantees:
 
 ## Version
 
-- **Version:** 0.3.0
-- **Last Updated:** 2026-04-24
-- **Threat Model:** Complete (updated for cancellation, refunds, disputes, and governance)
+- **Version:** 0.4.0
+- **Last Updated:** 2026-04-25
+- **Threat Model:** Complete (updated for reputation issuance gating)
 - **Risk Assessment:** Mitigations adequate for production use with noted caveats.
 
 ---
@@ -728,3 +728,177 @@ The `cancel_contract` function implements six critical security guarantees:
 4. **Governance Security:** Governance keys are stored securely with multi-sig requirements.
 5. **Timeout Handling:** Off-chain timeout monitoring triggers escalation or auto-resolution.
 6. **Dispute Evidence:** Evidence submission happens off-chain; on-chain stores only resolution.
+
+---
+
+## Reputation Threat Model (v0.4.0)
+
+### Overview
+
+The `issue_reputation` function implements **five layered security constraints** to prevent premature, fraudulent, or duplicate reputation issuance. Each constraint is independently necessary; together they form a complete security gate.
+
+### Constraint 1: Completion Gate
+
+**Purpose:** Prevent reputation issuance before work is complete.
+
+**Implementation:**
+```rust
+if contract.status != ContractStatus::Completed {
+    env.panic_with_error(EscrowError::NotCompleted);
+}
+```
+
+**Threat Mitigated:** Freelancer issues reputation after partial work delivery.
+
+**Residual Risk:** None. The status transition to `Completed` requires all milestones to be released, which requires client approval for each milestone.
+
+---
+
+### Constraint 2: Milestone Resolution Gate
+
+**Purpose:** Ensure all milestones are released before reputation issuance.
+
+**Implementation:**
+- Contract transitions to `Completed` only when all milestones are released
+- Each milestone release requires explicit client approval
+- `release_milestone` function checks and sets milestone released flags
+
+**Threat Mitigated:** Client could otherwise call `issue_reputation` after releasing only some milestones.
+
+**Residual Risk:** None. The contract enforces this at the state transition level.
+
+---
+
+### Constraint 3: Single-Issuance Guard
+
+**Purpose:** Prevent double-issuance of reputation for the same contract.
+
+**Implementation:**
+```rust
+let reputation_issued_key = DataKey::ReputationIssued(contract_id);
+if env.storage().persistent().get::<_, bool>(&reputation_issued_key).unwrap_or(false) {
+    env.panic_with_error(EscrowError::ReputationAlreadyIssued);
+}
+env.storage().persistent().set(&reputation_issued_key, &true);
+```
+
+**Threat Mitigated:** Same reputation event issued twice, inflating freelancer's credential count.
+
+**Residual Risk:** Extremely low. The immutable flag is set before event emission (checks-effects-interactions pattern). Soroban transaction atomicity ensures no race conditions.
+
+---
+
+### Constraint 4: Freelancer Match
+
+**Purpose:** Prevent reputation issuance to wrong freelancer address.
+
+**Implementation:**
+```rust
+if freelancer != contract.freelancer {
+    env.panic_with_error(EscrowError::FreelancerMismatch);
+}
+```
+
+**Threat Mitigated:** Attacker issues reputation to their own address instead of the actual freelancer.
+
+**Residual Risk:** None. The freelancer address is set at contract creation and cannot be changed.
+
+---
+
+### Constraint 5: Rating Bounds
+
+**Purpose:** Ensure rating is within valid range [1, 5].
+
+**Implementation:**
+```rust
+if rating < 1 || rating > 5 {
+    env.panic_with_error(EscrowError::InvalidRating);
+}
+```
+
+**Threat Mitigated:** Invalid ratings (0, negative, or > 5) could corrupt reputation aggregates.
+
+**Residual Risk:** None. The bounds are hard-coded and cannot be bypassed.
+
+---
+
+### Threat 16: Unauthorized Reputation Issuance (Severity: HIGH)
+
+**Attack:** Non-client attempts to issue reputation.
+
+**Scenario:**
+1. Freelancer or third party calls `issue_reputation` without client authorization.
+2. Reputation is issued without client's consent.
+
+**Mitigations:**
+
+1. **Caller Authorization:**
+   - `caller.require_auth()` validates cryptographic signature.
+   - Only the client address stored in the contract can authorize.
+
+2. **Role Verification:**
+   - `if caller != contract.client { env.panic_with_error(EscrowError::UnauthorizedRole); }`
+   - Explicit check ensures only the client can issue reputation.
+
+**Residual Risk:** Very low. Requires client's private key to be compromised.
+
+---
+
+### Threat 17: Reputation Event Manipulation (Severity: MEDIUM)
+
+**Attack:** Attacker manipulates event data to confuse indexers.
+
+**Scenario:**
+1. Attacker triggers event with unexpected parameters.
+2. Off-chain indexers store corrupted data.
+
+**Mitigations:**
+
+1. **Event Schema Stability:**
+   - Event structure is fixed: `("reputation_issued", contract_id) -> (freelancer, rating, timestamp)`
+   - All parameters are validated before emission.
+
+2. **Atomic Emission:**
+   - Event is emitted only after all checks pass.
+   - Transaction reverts on any failure; no partial events.
+
+**Residual Risk:** Low. Indexers should validate event data against on-chain state.
+
+---
+
+### Reputation Event Schema
+
+The `reputation_issued` event follows this stable schema for indexers:
+
+```
+Topics: (Symbol::new("reputation_issued"), contract_id)
+Data: (freelancer: Address, rating: i128, timestamp: u64)
+```
+
+**Indexer Recommendations:**
+1. Deduplicate by `contract_id` - only the first event is valid.
+2. Validate `rating` is in [1, 5] before storing (defense in depth).
+3. Cross-check `freelancer` matches the contract's stored freelancer.
+4. Verify contract status is `Completed` before accepting reputation.
+
+---
+
+### Reputation Security Summary
+
+| Constraint | Threat | Defense | Severity |
+|------------|--------|---------|----------|
+| Completion Gate | Premature issuance | Status check | HIGH |
+| Milestone Resolution | Partial work credentialing | All milestones released | HIGH |
+| Single-Issuance | Double-counting | Immutable flag | CRITICAL |
+| Freelancer Match | Wrong recipient | Address verification | MEDIUM |
+| Rating Bounds | Invalid data | Range validation | LOW |
+| Caller Authorization | Unauthorized issuance | Cryptographic auth | HIGH |
+
+---
+
+## Version
+
+- **Version:** 0.4.0
+- **Last Updated:** 2026-04-25
+- **Threat Model:** Complete (updated for reputation issuance gating)
+- **Risk Assessment:** Mitigations adequate for production use with noted caveats.
