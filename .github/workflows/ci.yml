@@ -32,3 +32,12 @@ jobs:
 
       - name: Run tests
         run: cargo test
+
+      - name: Check no snapshot or artifact files were generated
+        run: |
+          DIRTY=$(git status --porcelain)
+          if [ -n "$DIRTY" ]; then
+            echo "::error::Tests generated untracked/modified files. Add them to .gitignore or fix the test."
+            echo "$DIRTY"
+            exit 1
+          fi
