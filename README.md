@@ -46,11 +46,12 @@ When paused, mutating escrow operations are blocked.
 ## Contributing
 
 1. Fork the repo and create a branch from `main`.
-2. Make changes; keep tests and formatting passing:
+2. Make changes; keep tests, lints, and formatting passing:
    - `cargo fmt --all`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo test`
    - `cargo build`
-3. Open a pull request. CI runs `cargo fmt --all -- --check`, `cargo build`, and `cargo test` on push/PR to `main`.
+3. Open a pull request. CI runs `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build`, and `cargo test` on push/PR to `main`.
 
 ## Contract status transition guardrails
 
@@ -74,6 +75,7 @@ Common commands:
 On every push and pull request to `main`, GitHub Actions:
 
 - Checks formatting (`cargo fmt --all -- --check`)
+- Lints with warnings denied (`cargo clippy --workspace --all-targets -- -D warnings`)
 - Builds the workspace (`cargo build`)
 - Runs tests (`cargo test`)
 
