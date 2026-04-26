@@ -30,6 +30,7 @@ pub enum ContractStatus {
     Disputed = 3,
     Cancelled = 4,
     Refunded = 5,
+    PartiallyFunded = 6,
 }
 
 #[contracttype]
@@ -49,3 +50,10 @@ pub struct MilestoneFunding {
     pub funded_amount: i128,
 }
 
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DepositMode {
+    ExactTotal = 0,
+    Incremental = 1,
+}

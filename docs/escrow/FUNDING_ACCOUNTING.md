@@ -349,3 +349,9 @@ If an invariant is violated:
 - [Soroban SDK Documentation](https://developers.stellar.org/docs/build/smart-contracts)
 - [Stellar Network Documentation](https://developers.stellar.org/)
 - [Rust Integer Types](https://doc.rust-lang.org/std/primitive.i128.html)
+
+## Deposit Strictness Modes
+
+Contracts enforce one of two strictness modes upon creation (`DepositMode`):
+- `ExactTotal`: Mandates that a single deposit matches the total milestone value exactly. Any partial payments or overpayments are rejected, and the contract immediately transitions from `Created` to `Funded`.
+- `Incremental`: Allows repeated smaller deposits until the total is reached. This leaves the contract in `PartiallyFunded` bridging state until the deposit threshold is fulfilled. Excess payments that would overshoot the total are strictly rejected to maintain invariants.

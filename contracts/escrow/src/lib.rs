@@ -12,7 +12,7 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
-use types::ContractStatus;
+use types::{ContractStatus, DepositMode};
 
 mod types;
 
@@ -41,12 +41,17 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 1
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
 
-mod types;
-pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
-use crate::types::DataKey as ReadinessDataKey;
+
 
 #[contract]
 pub struct Escrow;
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EscrowBounds {
+    pub max_milestones: u32,
+    pub max_total_escrow_stroops: i128,
+}
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,6 +67,9 @@ pub enum EscrowError {
     AlreadyCancelled = 8,
     ContractNotFound = 9,
     MilestonesAlreadyReleased = 10,
+    ExactDepositRequired = 11,
+    DepositWouldExceedTotal = 12,
+    TooManyMilestones = 13,
 }
 
 #[contracttype]
@@ -74,6 +82,7 @@ pub struct EscrowContractData {
     pub status: ContractStatus,
     pub total_deposited: i128,
     pub released_amount: i128,
+    pub deposit_mode: DepositMode,
 }
 
 #[contracttype]
@@ -100,22 +109,12 @@ enum DataKey {
     Contract(u32),
     MilestoneReleased(u32, u32),
     RefundableBalance(u32),
+    ContractCount,
+    Milestones(u32),
+    MilestoneApprovalTime(u32, u32),
 }
 
-fn update_readiness_checklist<F>(env: &Env, f: F)
-where
-    F: FnOnce(&mut ReadinessChecklist),
-{
-    let mut checklist: ReadinessChecklist = env
-        .storage()
-        .instance()
-        .get(&ReadinessDataKey::ReadinessChecklist)
-        .unwrap_or_default();
-    f(&mut checklist);
-    env.storage()
-        .instance()
-        .set(&ReadinessDataKey::ReadinessChecklist, &checklist);
-}
+
 
 #[contractimpl]
 impl Escrow {
@@ -138,8 +137,9 @@ impl Escrow {
         freelancer: Address,
         arbiter: Option<Address>,
         milestones: Vec<i128>,
-        terms_hash: Option<Bytes>,
+        terms_hash: Option<soroban_sdk::Bytes>,
         grace_period_seconds: Option<u64>,
+        deposit_mode: DepositMode,
     ) -> u32 {
         client.require_auth();
 
@@ -162,17 +162,11 @@ impl Escrow {
         }
 
         let mut total_amount: i128 = 0;
-        let mut milestones: Vec<Milestone> = Vec::new(&env);
-        for amount in milestone_amounts.iter() {
+        for amount in milestones.iter() {
             if amount <= 0 {
                 env.panic_with_error(EscrowError::InvalidMilestoneAmount);
             }
             total_amount += amount;
-            milestones.push_back(Milestone {
-                amount,
-                released: false,
-                refunded: false,
-            });
         }
 
         let id: u32 = env
@@ -185,10 +179,11 @@ impl Escrow {
             client,
             freelancer,
             arbiter,
-            milestones,
+            milestones: milestones.clone(),
             status: ContractStatus::Created,
             total_deposited: 0,
             released_amount: 0,
+            deposit_mode,
         };
 
         env.storage().persistent().set(&DataKey::Contract(id), &data);
@@ -209,18 +204,34 @@ impl Escrow {
         let mut contract = env
             .storage()
             .persistent()
-            .get::<_, ContractData>(&contract_key)
+            .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        contract.total_deposited += amount;
+        let mut total_amount: i128 = 0;
+        for m in contract.milestones.iter() {
+            total_amount += m;
+        }
 
-        // Update status to Funded if not already
-        if contract.status == ContractStatus::Created {
+        if contract.deposit_mode == DepositMode::ExactTotal {
+            if amount != total_amount || contract.total_deposited > 0 {
+                env.panic_with_error(EscrowError::ExactDepositRequired);
+            }
+            contract.total_deposited = amount;
             contract.status = ContractStatus::Funded;
+        } else {
+            let new_total = contract.total_deposited + amount;
+            if new_total > total_amount {
+                env.panic_with_error(EscrowError::DepositWouldExceedTotal);
+            }
+            contract.total_deposited = new_total;
+            if new_total == total_amount {
+                contract.status = ContractStatus::Funded;
+            } else {
+                contract.status = ContractStatus::PartiallyFunded;
+            }
         }
 
         env.storage().persistent().set(&contract_key, &contract);
-
         true
     }
 
@@ -239,7 +250,7 @@ impl Escrow {
         let mut contract = env
             .storage()
             .persistent()
-            .get::<_, ContractData>(&contract_key)
+            .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
         // Mark this milestone as released
@@ -257,10 +268,10 @@ impl Escrow {
     }
 
     /// Get contract details
-    pub fn get_contract(env: Env, contract_id: u32) -> ContractData {
+    pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
         env.storage()
             .persistent()
-            .get::<_, ContractData>(&DataKey::Contract(contract_id))
+            .get::<_, EscrowContractData>(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
     }
 
@@ -280,7 +291,7 @@ impl Escrow {
         let mut contract = env
             .storage()
             .persistent()
-            .get::<_, ContractData>(&contract_key)
+            .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
         // 3. Check if already cancelled (idempotency guard)
@@ -348,7 +359,7 @@ impl Escrow {
     }
 
     /// Helper: Calculate total released amount for a contract
-    fn calculate_released_amount(env: &Env, contract_id: u32, contract: &ContractData) -> i128 {
+    fn calculate_released_amount(env: &Env, contract_id: u32, contract: &EscrowContractData) -> i128 {
         let mut released = 0i128;
         for (idx, amount) in contract.milestones.iter().enumerate() {
             let milestone_key = DataKey::MilestoneReleased(contract_id, idx as u32);
@@ -370,3 +381,6 @@ mod test;
 
 #[cfg(test)]
 mod proptest;
+
+#[cfg(test)]
+mod test_deposit_strictness;
