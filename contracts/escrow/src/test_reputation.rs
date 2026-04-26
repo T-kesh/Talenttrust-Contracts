@@ -14,10 +14,12 @@ fn test_reputation_valid() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128];
 
-    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    client.deposit_funds(&escrow_id, &200_0000000_i128);
     client.release_milestone(&escrow_id, &0); // sets status to Completed
 
-    let res = client.issue_reputation(&escrow_id, &freelancer_addr, &5);
+    let res = client.issue_reputation(&escrow_id, &5);
     assert_eq!(res, true);
 }
 
@@ -31,15 +33,17 @@ fn test_reputation_invalid_rating() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128];
 
-    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    client.deposit_funds(&escrow_id, &200_0000000_i128);
     client.release_milestone(&escrow_id, &0); // triggers Completion
 
     // Try issuing with a 0 rating
-    let res_low = client.try_issue_reputation(&escrow_id, &freelancer_addr, &0);
+    let res_low = client.try_issue_reputation(&escrow_id, &0);
     assert_eq!(res_low, Err(Ok(EscrowError::InvalidRating)));
 
     // Try issuing with a > 5 rating
-    let res_high = client.try_issue_reputation(&escrow_id, &freelancer_addr, &6);
+    let res_high = client.try_issue_reputation(&escrow_id, &6);
     assert_eq!(res_high, Err(Ok(EscrowError::InvalidRating)));
 }
 
@@ -53,10 +57,11 @@ fn test_reputation_timing_fail() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128];
 
-    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     // Not releasing any milestone here, so contract status is Created or Funded
 
-    let res = client.try_issue_reputation(&escrow_id, &freelancer_addr, &5);
+    let res = client.try_issue_reputation(&escrow_id, &5);
     assert_eq!(res, Err(Ok(EscrowError::NotCompleted)));
 }
 
@@ -70,14 +75,16 @@ fn test_reputation_duplicate() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128];
 
-    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    client.deposit_funds(&escrow_id, &200_0000000_i128);
     client.release_milestone(&escrow_id, &0);
 
     // Initial valid issue
-    let res = client.issue_reputation(&escrow_id, &freelancer_addr, &5);
+    let res = client.issue_reputation(&escrow_id, &5);
     assert!(res);
 
     // Secondly issuing -> duplicate error expected
-    let res2 = client.try_issue_reputation(&escrow_id, &freelancer_addr, &4);
+    let res2 = client.try_issue_reputation(&escrow_id, &4);
     assert_eq!(res2, Err(Ok(EscrowError::DuplicateRating)));
 }

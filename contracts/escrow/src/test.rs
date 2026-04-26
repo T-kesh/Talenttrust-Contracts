@@ -17,7 +17,8 @@ fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) 
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    // Match signature: client, freelancer, arbiter, milestones, terms_hash, grace_period
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     (client_addr, freelancer_addr, contract_id)
 }
 
@@ -29,7 +30,7 @@ mod ttl_tests;
 
 #[test]
 fn test_hello() {
-    let env = new_env();
+    let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -39,7 +40,7 @@ fn test_hello() {
 
 #[test]
 fn test_create_contract() {
-    let env = new_env();
+    let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -47,7 +48,8 @@ fn test_create_contract() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    env.mock_all_auths();
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert_eq!(id, 0);
 
     // Verify contract was created with correct status
@@ -57,7 +59,7 @@ fn test_create_contract() {
 
 #[test]
 fn test_deposit_funds() {
-    let env = new_env();
+    let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -65,7 +67,9 @@ fn test_deposit_funds() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    
+    env.mock_all_auths();
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
 
     // Now deposit
     let result = client.deposit_funds(&id, &1_000_0000000);
@@ -74,7 +78,7 @@ fn test_deposit_funds() {
 
 #[test]
 fn test_release_milestone() {
-    let env = new_env();
+    let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -82,7 +86,9 @@ fn test_release_milestone() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    
+    env.mock_all_auths();
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     client.deposit_funds(&id, &1_000_0000000);
 
     // Now release milestone
@@ -100,10 +106,11 @@ fn test_withdraw_leftover_success() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128]; // Total: 600
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr)); // Deposit: 1000
-    assert!(client.release_milestone(&contract_id, &0, &client_addr)); // Release: 200
-    assert!(client.finalize_contract(&contract_id, &client_addr));
+    env.mock_all_auths();
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000)); // Deposit: 1000
+    assert!(client.release_milestone(&contract_id, &0)); // Release: 200
+    assert!(client.finalize_contract(&contract_id));
 
     // Leftover should be: 1000 - 200 = 800
     let withdrawn = client.withdraw_leftover(&contract_id, &client_addr);
@@ -121,9 +128,10 @@ fn test_withdraw_leftover_before_finalization() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
-    assert!(client.release_milestone(&contract_id, &0, &client_addr));
+    env.mock_all_auths();
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000));
+    assert!(client.release_milestone(&contract_id, &0));
 
     // Try to withdraw without finalization
     client.withdraw_leftover(&contract_id, &client_addr);
@@ -141,10 +149,11 @@ fn test_withdraw_leftover_unauthorized() {
     let unauthorized_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
-    assert!(client.release_milestone(&contract_id, &0, &client_addr));
-    assert!(client.finalize_contract(&contract_id, &client_addr));
+    env.mock_all_auths();
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000));
+    assert!(client.release_milestone(&contract_id, &0));
+    assert!(client.finalize_contract(&contract_id));
 
     // Try to withdraw as unauthorized user
     client.withdraw_leftover(&contract_id, &unauthorized_addr);
@@ -161,11 +170,12 @@ fn test_withdraw_leftover_no_funds() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128]; // Total: 600
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert!(client.deposit_funds(&contract_id, &600_0000000, &client_addr)); // Deposit exactly 600
-    assert!(client.release_milestone(&contract_id, &0, &client_addr)); // Release: 200
-    assert!(client.release_milestone(&contract_id, &1, &client_addr)); // Release: 400
-    assert!(client.finalize_contract(&contract_id, &client_addr));
+    env.mock_all_auths();
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    assert!(client.deposit_funds(&contract_id, &600_0000000)); // Deposit exactly 600
+    assert!(client.release_milestone(&contract_id, &0)); // Release: 200
+    assert!(client.release_milestone(&contract_id, &1)); // Release: 400
+    assert!(client.finalize_contract(&contract_id));
 
     // No leftover should remain
     client.withdraw_leftover(&contract_id, &client_addr);
@@ -182,10 +192,11 @@ fn test_withdraw_leftover_double_withdraw() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
-    assert!(client.release_milestone(&contract_id, &0, &client_addr));
-    assert!(client.finalize_contract(&contract_id, &client_addr));
+    env.mock_all_auths();
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000));
+    assert!(client.release_milestone(&contract_id, &0));
+    assert!(client.finalize_contract(&contract_id));
 
     // First withdrawal should succeed
     let _withdrawn = client.withdraw_leftover(&contract_id, &client_addr);

@@ -1,136 +1,207 @@
-# Escrow Contract Fee Model
+# Escrow Integration Guide
 
-This module adds configurable protocol fee settings for the escrow milestone model.
+This guide provides a precise, deterministic, and example-driven overview of the TalentTrust Escrow system. It is intended for integrators, auditors, and operators.
 
-## New features
+## 1. 🔁 Canonical Happy Path (PRIMARY FLOW)
 
-- `protocol_fee_bps` configurable in `create_contract` (0-10000 basis points).
-- `protocol_fee_account` set at creation time; only this account can withdraw fees and update fee rate.
-- Per-milestone fee accounting via `Milestone.protocol_fee` and `EscrowContract.protocol_fee_accrued`.
-- `get_protocol_fee_accrued` to query current fee balance.
-- `withdraw_protocol_fees` for controlled withdrawal.
-- `set_protocol_fee_bps` to update protocol fee rate with authorization.
+The full lifecycle of a successful escrow contract follows this sequence:
 
-## Security controls
+### Step: create
+**Function:** `create_contract`  
+**Caller:** Client  
+**Pre-state:** N/A  
+**Post-state:** `Created`  
+**Event:** `created { contract_id, client, freelancer, total_amount }`  
+**Example:**
+```rust
+escrow.create_contract(
+    &client_addr,
+    &freelancer_addr,
+    &Some(arbiter_addr),
+    &vec![&env, 500_0000000, 500_0000000], // 2 milestones
+    &None, // terms_hash
+    &Some(3600) // grace_period
+);
+```
 
-- Only the `protocol_fee_account` can adjust fee rate or withdraw accrued fees.
-- Fee account is authenticated with `caller.require_auth()`.
-- Fee bounds enforced at 0..=10000.
-- All protocol fee operations use persisted state and safe integer arithmetic.
+### Step: deposit
+**Function:** `deposit_funds`  
+**Caller:** Client  
+**Pre-state:** `Created`  
+**Post-state:** `Funded`  
+**Event:** `deposited { contract_id, amount, payer }`  
+**Example:**
+```rust
+escrow.deposit_funds(&contract_id, &1000_0000000);
+```
 
-## Behaviour on release
+### Step: approve
+**Function:** `approve_milestone`  
+**Caller:** Client  
+**Pre-state:** `Funded`  
+**Post-state:** `Funded` (Milestone marked as approved)  
+**Event:** `approved { contract_id, milestone_index }`  
+**Example:**
+```rust
+escrow.approve_milestone(&contract_id, &0);
+```
 
-On each milestone release:
-- Compute fee: `milestone.amount * protocol_fee_bps / 10000`.
-- Save fee to milestone object.
-- Increment `protocol_fee_accrued`.
-- Mark milestone released and contract status completed when all milestones done.
-# Escrow Contract Documentation
+### Step: release
+**Function:** `release_milestone`  
+**Caller:** Client / Arbiter  
+**Pre-state:** `Funded` (and approved)  
+**Post-state:** `Funded` or `Completed` (if last milestone)  
+**Event:** `released { contract_id, milestone_index, amount }`  
+**Example:**
+```rust
+escrow.release_milestone(&contract_id, &0);
+```
 
-**Mainnet readiness (limits, events, risks):** [mainnet-readiness.md](mainnet-readiness.md)
+### Step: complete
+**Trigger:** Final `release_milestone` or `refund_unreleased_milestones`  
+**Caller:** N/A (Internal transition)  
+**Pre-state:** `Funded`  
+**Post-state:** `Completed` or `Refunded`  
+**Event:** `completed { contract_id }` or `refunded { contract_id, amount }`  
 
-This document summarizes the reviewer-facing architecture for `contracts/escrow`.
+### Step: reputation
+**Function:** `issue_reputation`  
+**Caller:** Client  
+**Pre-state:** `Completed`  
+**Post-state:** `Completed` (Reputation credit consumed)  
+**Event:** `rated { contract_id, freelancer, rating }`  
+**Example:**
+```rust
+escrow.issue_reputation(&contract_id, &5);
+```
 
-## Scope
+---
 
-The contract persists:
+## 2. 🔐 Authorization Modes
 
-- escrow lifecycle state for each contract
-- participant metadata for the client and freelancer
-- milestone release state
-- funded and released accounting
-- pending and issued reputation aggregates
-- protocol governance parameters
-- pause and emergency flags
+| Function | Authorized Caller(s) | Rejection Behavior |
+|----------|----------------------|-------------------|
+| `create_contract` | Any (becomes Client) | N/A |
+| `deposit_funds` | Client | `UnauthorizedRole` |
+| `approve_milestone` | Client | `UnauthorizedRole` |
+| `release_milestone` | Client, Arbiter | `UnauthorizedRole` |
+| `cancel_contract` | Client, Freelancer, Arbiter | `UnauthorizedRole` (depends on state) |
+| `refund_unreleased_milestones` | Arbiter | `UnauthorizedRole` |
+| `finalize_contract` | Client | `UnauthorizedRole` |
+| `withdraw_leftover` | Client | `UnauthorizedRole` |
+| `issue_reputation` | Client | `UnauthorizedRole` |
 
-## Public Flows
+**Arbiter Override:** The arbiter can call `release_milestone` or `refund_unreleased_milestones` to resolve disputes or unstick funds.
 
-Core escrow endpoints:
+---
 
-- `create_contract(client, freelancer, milestone_amounts) -> u32`
-- `deposit_funds(contract_id, amount) -> bool`
-- `release_milestone(contract_id, milestone_id) -> bool`
-- `issue_reputation(contract_id, rating) -> bool`
-- `get_contract(contract_id) -> EscrowContractData`
-- `get_reputation(freelancer) -> Option<ReputationRecord>`
-- `get_pending_reputation_credits(freelancer) -> u32`
+## 3. 📣 Event Model
 
-Operational controls:
+Events are critical for off-chain indexers to track the state of escrow contracts.
 
-- `initialize(admin) -> bool`
-- `pause() -> bool`
-- `unpause() -> bool`
-- `activate_emergency_pause() -> bool`
-- `resolve_emergency() -> bool`
-- `is_paused() -> bool`
-- `is_emergency() -> bool`
+| Event Name | Payload Fields | Interpretation |
+|------------|----------------|----------------|
+| `created` | `contract_id, client, freelancer, total_amount` | New contract initialized in `Created` state. |
+| `deposited` | `contract_id, amount, payer` | Funds successfully moved into escrow. |
+| `approved` | `contract_id, milestone_index` | Work verified by client. |
+| `released` | `contract_id, milestone_index, amount` | Funds moved from escrow to freelancer. |
+| `completed` | `contract_id` | All milestones paid; reputation credit available. |
+| `refunded` | `contract_id, amount` | Funds returned to client by arbiter. |
+| `rated` | `contract_id, freelancer, rating` | Rating recorded; credit consumed. |
+| `cancelled` | `contract_id, caller, status, timestamp` | Contract terminated; remaining funds returned. |
+| `finalized` | `contract_id` | Contract closed for leftover withdrawals. |
+| `withdrawn` | `contract_id, amount, caller` | Leftover funds withdrawn by client. |
 
-Governance:
+*Note: All events include a ledger timestamp for ordering.*
 
-- `initialize_protocol_governance(admin, min_milestone_amount, max_milestones, min_reputation_rating, max_reputation_rating) -> bool`
-- `update_protocol_parameters(...) -> bool`
-- `propose_governance_admin(next_admin) -> bool`
-- `accept_governance_admin() -> bool`
-- `get_protocol_parameters() -> ProtocolParameters`
-- `get_governance_admin() -> Option<Address>`
-- `get_pending_governance_admin() -> Option<Address>`
+---
 
-The escrow tests are grouped into dedicated modules:
+## 4. ❌ Failure Modes & Edge Cases
 
-To prevent out-of-gas or infinite-loop denial of service attacks, the escrow contract enforces creation limits:
+| Scenario | Behavior | Error Returned |
+|----------|----------|----------------|
+| Double Deposit | Allowed (increments balance) | N/A |
+| Double Release | Blocked (milestone already released) | `AlreadyReleased` |
+| Unauthorized Release | Blocked (caller is not client/arbiter) | `UnauthorizedRole` |
+| Release in `Created` | Blocked (insufficient funds) | `ContractNotFound` (if wrong ID) |
+| Release in `Cancelled` | Blocked (terminal state) | `InvalidStatusTransition` |
+| Cancellation after Release| Allowed only for unreleased milestones | `MilestonesAlreadyReleased` (for client) |
+| Over-funding | Allowed (excess can be withdrawn after finalization) | N/A |
 
-- maximum milestone count is capped by `ProtocolParameters.max_milestones` (defaults to 16)
-- total escrow amount is bounded by the immutable mainnet cap (`MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS`)
+---
 
-## Lifecycle Model
+## 5. 🔄 Alternative Flows
 
-Supported lifecycle transitions:
+### A. Cancellation Flow
+**Paths:**
+1. `Created` → `Cancelled`: Either Client or Freelancer can trigger.
+2. `Funded` → `Cancelled`:
+   - Client (if zero milestones released)
+   - Freelancer (anytime, funds return to client)
+   - Arbiter (dispute resolution)
+**Funds:** All unreleased funds are returned to the client (accounting updated).
 
-- `Created -> Funded` after any positive deposit
-- `Funded -> Completed` after the final unreleased milestone is released
+### B. Refund Flow
+**Trigger:** `refund_unreleased_milestones` (Arbiter only)  
+**Condition:** Contract in `Funded` or `Disputed` state.  
+**Effect:** Specified milestones marked as `refunded`; funds marked as refundable to client.
 
-Operational invariants:
+### C. Dispute Flow
+**Sequence:** `Funded` → `Disputed` → `Arbiter Decision` → `Release/Refund`  
+**Initiation:** Either party calls `dispute_contract`.  
+**Arbiter Authority:** In `Disputed` state, the Arbiter has full authority to release or refund milestones.
 
-- client and freelancer addresses are immutable after creation
-- milestone amounts are immutable after creation
-- each milestone can transition from `released = false` to `released = true` exactly once
-- `released_amount` is the sum of released milestone amounts
-- `released_milestones` matches the number of released milestone flags
-- `reputation_issued` can only become `true` after `Completed`
+---
 
-## Incident Response
+## 6. 🧠 State Machine Summary
 
-### Emergency Response
+| From | To | Trigger |
+|------|----|---------|
+| `Created` | `Funded` | `deposit_funds` |
+| `Created` | `Cancelled` | `cancel_contract` |
+| `Funded` | `Completed` | Final `release_milestone` |
+| `Funded` | `Disputed` | `dispute_contract` |
+| `Funded` | `Cancelled` | `cancel_contract` |
+| `Funded` | `Refunded` | Final `refund_unreleased_milestones` |
+| `Disputed`| `Completed` | Arbiter `release_milestone` |
+| `Disputed`| `Cancelled` | Arbiter `cancel_contract` |
 
-1. Detect incident and call `activate_emergency_pause`.
-2. Investigate and remediate root cause.
-3. Validate mitigations in test/staging.
-4. Call `resolve_emergency` to restore service.
-5. Publish incident summary for ecosystem transparency.
+---
 
-## Persistence Notes
+## 7. 🔍 Integration Examples
 
-Each `EscrowContractData` record stores:
+### Full Lifecycle Example (Pseudo-code)
+```javascript
+// 1. Create
+const contractId = await escrow.create_contract(client, freelancer, null, [100, 200]);
 
-- participant addresses
-- milestone vector and cached milestone count
-- total escrow amount
-- funded and released balances
-- released milestone count
-- contract status
-- reputation issuance flag
-- creation and update timestamps
+// 2. Deposit
+await escrow.deposit_funds(contractId, 300);
 
-Detailed storage-key coverage is documented in [state-persistence.md](state-persistence.md).
+// 3. Work done... Approve & Release Milestone 1
+await escrow.approve_milestone(contractId, 0);
+await escrow.release_milestone(contractId, 0);
 
-## Test Coverage
+// 4. Work done... Release Milestone 2 (auto-completes)
+await escrow.release_milestone(contractId, 1);
 
-The escrow regression suite is split by concern:
+// 5. Issue Reputation
+await escrow.issue_reputation(contractId, 5);
+```
 
-- `flows.rs`: happy-path lifecycle and reputation aggregation
-- `lifecycle.rs`: state transition persistence
-- `persistence.rs`: storage round-trip assertions
-- `security.rs`: failure paths and validation checks
-- `governance.rs`: admin and parameter persistence
-- `pause_controls.rs` and `emergency_controls.rs`: operational safety controls
-- `performance.rs`: resource regression ceilings
+---
+
+## 8. 🔐 Security Notes
+
+- **Role Enforcement:** All state-changing functions use `require_auth()` to verify the caller's identity.
+- **State Transition Guarantees:** Transitions are governed by an explicit state machine; invalid transitions (e.g., `Completed` → `Cancelled`) are physically impossible.
+- **Idempotency:** Operations like `cancel_contract` check current state to prevent duplicate execution.
+- **Fund Safety:** Funds are only released to the freelancer address specified at creation or returned to the client.
+
+---
+
+## 9. ⚠️ Operational Notes
+
+- **Stuck States:** If a client refuses to release funds for completed work, the freelancer should trigger a dispute to involve the arbiter.
+- **Event Monitoring:** Systems should monitor `released` and `completed` events to trigger off-chain payouts or notifications.
+- **Finalization:** Clients must call `finalize_contract` after completion/cancellation to unlock `withdraw_leftover`.

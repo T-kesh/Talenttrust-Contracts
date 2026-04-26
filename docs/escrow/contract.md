@@ -1,140 +1,104 @@
-# Escrow Contract Documentation
+# Escrow Contract Specification
 
-## Overview
-The Escrow Contract is a Rust smart contract built for the Soroban platform. It provides a secure way for clients and freelancers to handle payments with milestones, ensuring that funds are released only when work is verified.
+This document defines the technical interface and state machine of the TalentTrust Escrow contract.
 
-This contract includes:
+## 1. Data Structures
 
-- Contract creation between a client and freelancer
-- Milestone-based payments
-- Secure fund deposit and release
-- Reputation issuance for freelancers
-- Automated unit tests to verify correctness
+### `ContractStatus` (Enum)
+- `Created`: Initial state after contract initialization.
+- `Funded`: Funds have been deposited by the client.
+- `Completed`: All milestones have been released; project finished.
+- `Disputed`: Active dispute resolution in progress.
+- `Cancelled`: Contract terminated; remaining funds returned to client.
+- `Refunded`: Funds returned to client without completion.
 
-## Contract Structure
-### Types
-ContractStatus: Represents the state of an escrow contract. Values:
-- Created – Contract created but not funded
-- Funded – Client has deposited funds
-- Completed – All milestones completed
-- Disputed – Issue flagged for dispute
-- Cancelled – Contract cancelled by authorized party
-- Refunded – Unreleased milestones refunded
+### `Milestone` (Struct)
+- `amount`: `i128` (Stroops)
+- `released`: `bool`
+- `refunded`: `bool`
 
-Milestone: Defines a payment milestone:
+---
 
-amount: i128 – payment amount  
-released: bool – whether the milestone has been paid
+## 2. Core Functions
 
-EscrowContract: Holds the full contract data:
+### `create_contract`
+Creates a new escrow agreement.
+- **Arguments:**
+  - `client`: `Address`
+  - `freelancer`: `Address`
+  - `arbiter`: `Option<Address>`
+  - `milestone_amounts`: `Vec<i128>`
+  - `terms_hash`: `Option<Bytes>`
+  - `grace_period_seconds`: `Option<u64>`
+- **Returns:** `u32` (contract_id)
+- **Authorization:** `client.require_auth()`
 
-client: Address – client address  
-freelancer: Address – freelancer address  
-arbiter: Option<Address> – optional arbiter for dispute resolution  
-milestones: Vec<i128> – milestone payment amounts  
-status: ContractStatus – current state  
-total_deposited: i128 – total amount deposited  
-released_amount: i128 – total amount released to freelancer
+### `deposit_funds`
+Deposits the total required amount for the contract.
+- **Arguments:**
+  - `contract_id`: `u32`
+  - `amount`: `i128`
+- **Returns:** `bool`
+- **Authorization:** `client.require_auth()`
 
-## Functions
-### create_contract(env, client, freelancer, arbiter, milestone_amounts) -> u32
-- Creates a new escrow contract.
-- Stores the client, freelancer, and optional arbiter addresses.
-- Sets up milestones with specified amounts.
-- Validates arbiter doesn't overlap with client or freelancer.
-- Returns a contract_id.
-- Initial status: Created
+### `approve_milestone`
+Signals client approval of a specific milestone's deliverables.
+- **Arguments:**
+  - `contract_id`: `u32`
+  - `milestone_index`: `u32`
+- **Returns:** `bool`
+- **Authorization:** `client.require_auth()`
 
-### deposit_funds(env, contract_id, token, client, amount) -> bool
-- Deposits funds into escrow.
-- Only the client can call this.
-- Updates contract status to Funded after success.
-- Returns true if successful.
+### `release_milestone`
+Transfers milestone funds to the freelancer.
+- **Arguments:**
+  - `contract_id`: `u32`
+  - `milestone_index`: `u32`
+- **Returns:** `bool`
+- **Authorization:** `client.require_auth()` or `arbiter.require_auth()`
 
-### release_milestone(env, contract_id, token, freelancer, amount) -> bool
-- Releases a milestone payment to the freelancer.
-- Only the freelancer can receive payments.
-- Updates contract status to Completed after success.
-- Returns true if successful.
+### `issue_reputation`
+Records a freelancer rating after contract completion.
+- **Arguments:**
+  - `contract_id`: `u32`
+  - `rating`: `u32` (1-5)
+- **Returns:** `bool`
+- **Authorization:** `client.require_auth()`
 
-### cancel_contract(env, contract_id, caller) -> bool
-- Cancels an escrow contract under strict authorization and state constraints.
-- Emits `contract_cancelled` event for indexer consumption.
+---
 
-**Authorization Rules:**
-- Created state: Client or Freelancer can cancel
-- Funded state: 
-  - Client (only if zero milestones released)
-  - Freelancer (economic deterrent - funds return to client)
-  - Arbiter (dispute resolution)
-- Disputed state: Arbiter only
+## 3. State Machine Summary
 
-**State Transitions:**
-- Created → Cancelled ✓
-- Funded → Cancelled ✓ (with conditions)
-- Disputed → Cancelled ✓ (arbiter only)
-- Completed → Cancelled ✗ (blocked - terminal state)
-- Cancelled → Cancelled ✗ (idempotent error)
+| Current Status | Action | Next Status | Note |
+|----------------|--------|-------------|------|
+| `Created` | `deposit_funds` | `Funded` | Requires exact or over-funding |
+| `Created` | `cancel_contract` | `Cancelled` | Client or Freelancer |
+| `Funded` | `release_milestone` (final) | `Completed` | All milestones must be released |
+| `Funded` | `dispute_contract` | `Disputed` | Either party |
+| `Funded` | `cancel_contract` | `Cancelled` | Restricted if milestones released |
+| `Disputed` | `resolve_dispute` | `Completed` / `Cancelled` | Arbiter only |
 
-**Event Emission:**
-Emits `contract_cancelled` event with:
-- Topics: `("contract_cancelled", contract_id)`
-- Data: `(caller: Address, status: ContractStatus, timestamp: u64)`
+---
 
-**Security Guarantees:**
-- Cryptographic authorization required (caller.require_auth())
-- Prevents retroactive cancellation of completed contracts
-- Prevents double-cancellation (idempotency guard)
-- Protects freelancer: client cannot cancel after milestone releases
-- Arbiter isolation: cannot overlap with client/freelancer
+## 4. Error Codes
 
-### issue_reputation(env, freelancer, rating) -> bool
-- Issues a reputation score for the freelancer after contract completion.
-- Returns true.
+| Code | Name | Description |
+|------|------|-------------|
+| 1 | `InvalidParticipant` | Client and Freelancer are the same address, or arbiter overlaps. |
+| 2 | `EmptyMilestones` | No milestones provided during creation. |
+| 3 | `InvalidMilestoneAmount` | Milestone amount is zero or negative. |
+| 4 | `InvalidDepositAmount` | Deposit amount is zero or negative. |
+| 5 | `InvalidMilestone` | Milestone index out of bounds. |
+| 6 | `UnauthorizedRole` | Caller does not have permission for the action. |
+| 7 | `InvalidStatusTransition` | Attempted action is not allowed in current state. |
+| 8 | `AlreadyCancelled` | Contract is already in `Cancelled` state. |
+| 9 | `ContractNotFound` | Provided `contract_id` does not exist. |
+| 10 | `MilestonesAlreadyReleased`| Cancellation blocked because funds were already released. |
 
-### hello(env, to) -> Symbol
-- Simple test function to verify contract interaction.
-- Returns the same symbol passed in.
+---
 
-## Security Considerations
-- Only the client can deposit funds.
-- Only the freelancer can receive milestone payments.
-- Milestone amounts must be greater than zero.
-- Handles non-existent contracts safely using Option.
-- Skips token transfers during unit tests to prevent errors.
-- Always validate addresses before calling contract functions.
-- Arbiter cannot be the same as client or freelancer.
-- Cancellation requires cryptographic authorization from eligible parties.
-- Completed contracts cannot be cancelled (prevents retroactive actions).
-- Double-cancellation is prevented with explicit error.
+## 5. Security Notes
 
-## Contract Lifecycle
-
-```
-Created ──────────────→ Funded ───────────→ Completed
-   │                      │                     │
-   │                      │                     ✗ (no cancellation)
-   ↓                      ↓
-Cancelled ←───────────────┘
-   │
-   ↓ (Disputed)
-Disputed ──────────────→ Cancelled (arbiter only)
-```
-
-**Key Transitions:**
-- Created → Funded: Client deposits funds
-- Created → Cancelled: Client or freelancer cancels
-- Funded → Cancelled: Client (no releases), freelancer, or arbiter cancels
-- Funded → Completed: All milestones released
-- Funded → Disputed: Dispute raised
-- Disputed → Cancelled: Arbiter cancels
-- Completed: Terminal state (no further transitions)
-
-## Testing
-All core functions are covered with unit tests.
-Tests include:
-- Contract creation
-- Fund deposit
-- Milestone release
-- Invalid deposit handling
-- Hello-world function check
+- **Fail-Closed:** Any unauthorized or invalid call results in an immediate panic, reverting all state changes.
+- **Authorization:** Every state-changing function enforces `require_auth()` on the appropriate participant.
+- **Immutability:** Once a contract is `Completed` or `Cancelled`, its core parameters and released funds cannot be modified.
