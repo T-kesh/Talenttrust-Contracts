@@ -266,7 +266,8 @@ To prevent out-of-gas or infinite-loop denial of service attacks, the escrow con
 
 Supported lifecycle transitions:
 
-- `Created -> Funded` after any positive deposit
+- `Created -> Accepted` after freelancer or arbiter accepts the contract terms
+- `Accepted -> Funded` after any positive deposit
 - `Funded -> Completed` after the final unreleased milestone is released
 
 Operational invariants:
