@@ -193,15 +193,152 @@ await escrow.issue_reputation(contractId, 5);
 
 ## 8. 🔐 Security Notes
 
-- **Role Enforcement:** All state-changing functions use `require_auth()` to verify the caller's identity.
-- **State Transition Guarantees:** Transitions are governed by an explicit state machine; invalid transitions (e.g., `Completed` → `Cancelled`) are physically impossible.
-- **Idempotency:** Operations like `cancel_contract` check current state to prevent duplicate execution.
-- **Fund Safety:** Funds are only released to the freelancer address specified at creation or returned to the client.
+- Only the `protocol_fee_account` can adjust fee rate or withdraw accrued fees.
+- Fee account is authenticated with `caller.require_auth()`.
+- Fee bounds enforced at 0..=10000.
+- All protocol fee operations use persisted state and safe integer arithmetic.
 
----
+## Behaviour on release
 
-## 9. ⚠️ Operational Notes
+On each milestone release:
+- Compute fee: `milestone.amount * protocol_fee_bps / 10000`.
+- Save fee to milestone object.
+- Increment `protocol_fee_accrued`.
+- Mark milestone released and contract status completed when all milestones done.
+# Escrow Contract Documentation
 
-- **Stuck States:** If a client refuses to release funds for completed work, the freelancer should trigger a dispute to involve the arbiter.
-- **Event Monitoring:** Systems should monitor `released` and `completed` events to trigger off-chain payouts or notifications.
-- **Finalization:** Clients must call `finalize_contract` after completion/cancellation to unlock `withdraw_leftover`.
+**Mainnet readiness (limits, events, risks):** [mainnet-readiness.md](mainnet-readiness.md)
+
+This document summarizes the reviewer-facing architecture for `contracts/escrow`.
+
+## Scope
+
+The contract persists:
+
+- escrow lifecycle state for each contract
+- participant metadata for the client and freelancer
+- milestone release state
+- funded and released accounting
+- pending and issued reputation aggregates
+- protocol governance parameters
+- pause and emergency flags
+
+## Public Flows
+
+Core escrow endpoints:
+
+- `create_contract(client, freelancer, milestone_amounts) -> u32`
+- `deposit_funds(contract_id, amount) -> bool`
+- `release_milestone(contract_id, milestone_id) -> bool`
+- `issue_reputation(contract_id, rating) -> bool`
+- `get_contract(contract_id) -> EscrowContractData`
+- `get_reputation(freelancer) -> Option<ReputationRecord>`
+- `get_pending_reputation_credits(freelancer) -> u32`
+
+Operational controls:
+
+- `initialize(admin) -> bool`
+- `pause() -> bool`
+- `unpause() -> bool`
+- `activate_emergency_pause() -> bool`
+- `resolve_emergency() -> bool`
+- `is_paused() -> bool`
+- `is_emergency() -> bool`
+
+Governance:
+
+- `initialize_protocol_governance(admin, min_milestone_amount, max_milestones, min_reputation_rating, max_reputation_rating) -> bool`
+- `update_protocol_parameters(...) -> bool`
+- `propose_governance_admin(next_admin) -> bool`
+- `accept_governance_admin() -> bool`
+- `get_protocol_parameters() -> ProtocolParameters`
+- `get_governance_admin() -> Option<Address>`
+- `get_pending_governance_admin() -> Option<Address>`
+
+The escrow tests are grouped into dedicated modules:
+
+To prevent out-of-gas or infinite-loop denial of service attacks, the escrow contract enforces creation limits:
+
+- maximum milestone count is capped by `ProtocolParameters.max_milestones` (defaults to 16)
+- total escrow amount is bounded by the immutable mainnet cap (`MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS`)
+
+## Lifecycle Model
+
+Supported lifecycle transitions:
+
+- `Created -> Funded` after any positive deposit
+- `Funded -> Completed` after the final unreleased milestone is released
+
+Operational invariants:
+
+- client and freelancer addresses are immutable after creation
+- milestone amounts are immutable after creation
+- each milestone can transition from `released = false` to `released = true` exactly once
+- `released_amount` is the sum of released milestone amounts
+- `released_milestones` matches the number of released milestone flags
+- `reputation_issued` can only become `true` after `Completed`
+
+## Incident Response
+
+### Emergency Response
+
+1. Detect incident and call `activate_emergency_pause`.
+2. Investigate and remediate root cause.
+3. Validate mitigations in test/staging.
+4. Call `resolve_emergency` to restore service.
+5. Publish incident summary for ecosystem transparency.
+
+## Persistence Notes
+
+Each `EscrowContractData` record stores:
+
+- participant addresses
+- milestone vector and cached milestone count
+- total escrow amount
+- funded and released balances
+- released milestone count
+- contract status
+- reputation issuance flag
+- creation and update timestamps
+
+Detailed storage-key coverage is documented in [state-persistence.md](state-persistence.md).
+
+## Test Coverage
+
+The escrow regression suite is split by concern:
+
+- `flows.rs`: happy-path lifecycle and reputation aggregation
+- `lifecycle.rs`: state transition persistence
+- `persistence.rs`: storage round-trip assertions
+- `security.rs`: failure paths and validation checks
+- `governance.rs`: admin and parameter persistence
+- `pause_controls.rs` and `emergency_controls.rs`: operational safety controls
+- `performance.rs`: resource regression ceilings
+
+## Deterministic Lifecycle Events (v1)
+
+Lifecycle operations now emit a standardized event shape to simplify indexing and alerting.
+
+- Topic tuple: `("escrow", "v1", operation, contract_id)`
+- Data tuple: `(status, amount, milestone_index, actor, timestamp)`
+
+Operation values:
+
+- `create`
+- `deposit`
+- `approve`
+- `release`
+- `cancel`
+
+Schema notes:
+
+- `status`: post-operation `ContractStatus`
+- `amount`: operation amount (or `0` when not applicable)
+- `milestone_index`: milestone index (or `0` when not applicable)
+- `actor`: `Some(Address)` when a caller identity is relevant, otherwise `None`
+- `timestamp`: ledger timestamp at emission
+
+Backwards compatibility:
+
+- Previous ad-hoc topics such as `("contract_cancelled", contract_id)` are replaced by the v1 lifecycle schema.
+- Indexers should migrate to the new topic/data tuples for deterministic parsing.
