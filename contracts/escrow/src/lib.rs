@@ -245,6 +245,16 @@ impl Escrow {
         env.storage().persistent().set(&DataKey::Contract(id), &data);
         env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
 
+        emit_lifecycle_event(
+            &env,
+            symbol_short!("create"),
+            id,
+            ContractStatus::Created,
+            total_amount,
+            0,
+            Some(client),
+        );
+
         id
     }
 
