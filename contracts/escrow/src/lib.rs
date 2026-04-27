@@ -83,16 +83,23 @@ pub enum EscrowError {
     ExceedsContractMaximum = 1004,
 }
 
+/// Per-contract storage record.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowContractData {
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Option<Address>,
-    pub milestones: Vec<i128>,
+    /// Milestone amounts (in stroops).  Index matches milestone index.
+    pub milestones: Vec<Milestone>,
     pub status: ContractStatus,
+    /// Cumulative amount deposited into escrow.
     pub total_deposited: i128,
+    /// Cumulative amount released to the freelancer.
     pub released_amount: i128,
+    /// Cumulative amount refunded to the client.
+    /// Invariant: total_deposited == released_amount + refunded_amount + available_balance
+    pub refunded_amount: i128,
 }
 
 /// Metadata stored when a dispute is raised.
@@ -232,6 +239,7 @@ impl Escrow {
             status: ContractStatus::Created,
             total_deposited: 0,
             released_amount: 0,
+            refunded_amount: 0,
         };
 
         env.storage().persistent().set(&DataKey::Contract(id), &data);
@@ -240,6 +248,8 @@ impl Escrow {
         id
     }
 
+    /// Deposit funds into the escrow.  Transitions status from Created → Funded
+    /// once the deposited amount reaches the sum of all milestone amounts.
     pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
         // Use centralized amount validation for deposit
         validate_deposit_amount(amount, 0, MAX_TOTAL_ESCROW_STROOPS)
@@ -288,7 +298,53 @@ impl Escrow {
         true
     }
 
-    pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
+    // ─── Partial-refund API ───────────────────────────────────────────────────
+
+    /// Refund one or more unreleased milestones back to the client.
+    ///
+    /// # Arguments
+    /// * `contract_id`   – the escrow contract to operate on.
+    /// * `milestone_ids` – non-empty, duplicate-free list of milestone indices
+    ///                     to refund.
+    ///
+    /// # Returns
+    /// The total amount refunded (sum of the refunded milestone amounts).
+    ///
+    /// # Panics / errors
+    /// * `EmptyRefundRequest`         – `milestone_ids` is empty.
+    /// * `DuplicateMilestoneInRefund` – the same index appears more than once.
+    /// * `InvalidMilestone`           – an index is out of bounds.
+    /// * `MilestoneAlreadyReleased`   – the milestone was already released.
+    /// * `MilestoneAlreadyRefunded`   – the milestone was already refunded.
+    /// * `InsufficientEscrowBalance`  – the escrow balance cannot cover the
+    ///                                  total refund amount.
+    ///
+    /// # Accounting invariant
+    /// After a successful call:
+    ///   `total_deposited == released_amount + refunded_amount + available_balance`
+    ///
+    /// # Status transitions
+    /// * If every milestone is now either released or refunded the contract
+    ///   status transitions to `ContractStatus::Refunded`.
+    pub fn refund_milestone(
+        env: Env,
+        contract_id: u32,
+        milestone_ids: Vec<u32>,
+    ) -> i128 {
+        if milestone_ids.is_empty() {
+            env.panic_with_error(EscrowError::EmptyRefundRequest);
+        }
+
+        // Duplicate-check: O(n²) but n ≤ MAX_MILESTONES = 10, so acceptable.
+        let len = milestone_ids.len();
+        for i in 0..len {
+            for j in (i + 1)..len {
+                if milestone_ids.get(i).unwrap() == milestone_ids.get(j).unwrap() {
+                    env.panic_with_error(EscrowError::DuplicateMilestoneInRefund);
+                }
+            }
+        }
+
         let contract_key = DataKey::Contract(contract_id);
         let mut contract = env
             .storage()
@@ -408,7 +464,7 @@ impl Escrow {
                     .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
             }
         }
-        released
+        true
     }
 
     /// Returns a stable, single-read summary of an escrow contract for off-chain indexers.
