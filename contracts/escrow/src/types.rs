@@ -37,6 +37,17 @@ pub enum ContractStatus {
 }
 
 #[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorizationMode {
+    /// Single-party approval: client can release milestones unilaterally
+    ClientOnly = 0,
+    /// Multi-party approval: requires both client and freelancer approval
+    ClientAndFreelancer = 1,
+    /// Arbiter approval: requires arbiter approval (if arbiter exists)
+    ArbiterOnly = 2,
+}
+
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct Milestone {
     pub amount: i128,

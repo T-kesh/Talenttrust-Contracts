@@ -10,7 +10,7 @@
 
 use soroban_sdk::{testutils::Address as _, testutils::Events as _, vec, Address, Env, Vec};
 
-use crate::{ContractStatus, Escrow, EscrowClient, EscrowError};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorizationMode};
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -40,7 +40,7 @@ fn create_default_contract(
     arbiter_addr: &Option<Address>,
 ) -> u32 {
     let milestones = vec![env, 100_i128, 200_i128, 300_i128];
-    client.create_contract(client_addr, freelancer_addr, arbiter_addr, &milestones)
+    client.create_contract(client_addr, freelancer_addr, arbiter_addr, &milestones, &ReleaseAuthorizationMode::ClientOnly, &None, &None)
 }
 
 /// Fund a contract with the full milestone amount (600 total).

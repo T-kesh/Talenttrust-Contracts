@@ -22,7 +22,7 @@ pub use amount_validation::{
 
 use types::ContractStatus;
 pub use crate::types::{
-    CONTRACT_SUMMARY_SCHEMA_VERSION, ContractSummary, MilestoneSummary,
+    CONTRACT_SUMMARY_SCHEMA_VERSION, ContractSummary, MilestoneSummary, ReleaseAuthorizationMode,
 };
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
@@ -75,6 +75,7 @@ pub enum EscrowError {
     ContractNotFound = 9,
     MilestonesAlreadyReleased = 10,
     TooManyMilestones = 11,
+    AlreadyApproved = 12,
     // Amount validation errors (1000+ to avoid conflicts)
     NonPositiveAmount = 1000,
     AmountExceedsMaximum = 1001,
@@ -93,6 +94,8 @@ pub struct EscrowContractData {
     /// Milestone amounts (in stroops).  Index matches milestone index.
     pub milestones: Vec<Milestone>,
     pub status: ContractStatus,
+    /// Authorization mode for releasing milestones
+    pub authorization_mode: ReleaseAuthorizationMode,
     /// Cumulative amount deposited into escrow.
     pub total_deposited: i128,
     /// Cumulative amount released to the freelancer.
@@ -157,14 +160,23 @@ pub struct PendingClientMigration {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Contract(u32),
     ContractCount,
     MilestoneReleased(u32, u32),
     RefundableBalance(u32),
-    ContractCount,
     MilestoneApprovalTime(u32, u32),
+    MilestoneApprovals(u32, u32),
+    PendingReputationCredits(Address),
 }
 
 
@@ -180,6 +192,7 @@ impl Escrow {
         freelancer: Address,
         arbiter: Option<Address>,
         milestone_amounts: Vec<i128>,
+        authorization_mode: ReleaseAuthorizationMode,
         terms_hash: Option<Bytes>,
         grace_period_seconds: Option<u64>,
     ) -> u32 {
@@ -249,6 +262,7 @@ impl Escrow {
             arbiter,
             milestones: milestone_amounts,
             status: ContractStatus::Created,
+            authorization_mode,
             total_deposited: 0,
             released_amount: 0,
             refunded_amount: 0,
@@ -317,6 +331,248 @@ impl Escrow {
         }
 
         env.storage().persistent().set(&contract_key, &contract);
+        true
+    }
+
+    /// Approve a milestone for release based on the contract's authorization mode.
+    ///
+    /// # Arguments
+    /// * `contract_id` – the escrow contract to operate on.
+    /// * `milestone_index` – the index of the milestone to approve.
+    /// * `caller` – the address of the caller (must be authorized party).
+    ///
+    /// # Returns
+    /// `true` if the approval was recorded successfully.
+    ///
+    /// # Panics / errors
+    /// * `ContractNotFound` – the contract does not exist.
+    /// * `InvalidMilestone` – the milestone index is out of bounds.
+    /// * `UnauthorizedRole` – the caller is not authorized to approve this milestone.
+    /// * `AlreadyApproved` – the caller has already approved this milestone.
+    /// * `MilestoneAlreadyReleased` – the milestone has already been released.
+    pub fn approve_milestone_release(
+        env: Env,
+        contract_id: u32,
+        milestone_index: u32,
+        caller: Address,
+    ) -> bool {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Validate milestone index
+        if milestone_index >= contract.milestones.len() {
+            env.panic_with_error(EscrowError::InvalidMilestone);
+        }
+
+        // Check if milestone is already released
+        let released_key = DataKey::MilestoneReleased(contract_id, milestone_index);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&released_key)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::MilestonesAlreadyReleased);
+        }
+
+        // Get or initialize approvals
+        let approvals_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
+        let mut approvals = env
+            .storage()
+            .persistent()
+            .get::<_, MilestoneApprovals>(&approvals_key)
+            .unwrap_or(MilestoneApprovals {
+                client_approved: false,
+                freelancer_approved: false,
+                arbiter_approved: false,
+            });
+
+        // Check authorization based on mode
+        let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
+        let is_arbiter = contract.arbiter.as_ref().is_some_and(|a| *a == caller);
+
+        match contract.authorization_mode {
+            ReleaseAuthorizationMode::ClientOnly => {
+                if !is_client {
+                    env.panic_with_error(EscrowError::UnauthorizedRole);
+                }
+                if approvals.client_approved {
+                    env.panic_with_error(EscrowError::AlreadyApproved);
+                }
+                approvals.client_approved = true;
+            }
+            ReleaseAuthorizationMode::ClientAndFreelancer => {
+                if is_client {
+                    if approvals.client_approved {
+                        env.panic_with_error(EscrowError::AlreadyApproved);
+                    }
+                    approvals.client_approved = true;
+                } else if is_freelancer {
+                    if approvals.freelancer_approved {
+                        env.panic_with_error(EscrowError::AlreadyApproved);
+                    }
+                    approvals.freelancer_approved = true;
+                } else {
+                    env.panic_with_error(EscrowError::UnauthorizedRole);
+                }
+            }
+            ReleaseAuthorizationMode::ArbiterOnly => {
+                if !is_arbiter {
+                    env.panic_with_error(EscrowError::UnauthorizedRole);
+                }
+                if approvals.arbiter_approved {
+                    env.panic_with_error(EscrowError::AlreadyApproved);
+                }
+                approvals.arbiter_approved = true;
+            }
+        }
+
+        // Save approvals
+        env.storage().persistent().set(&approvals_key, &approvals);
+
+        // Emit approval event
+        env.events().publish(
+            (Symbol::new(&env, "milestone_approved"), contract_id, milestone_index),
+            (caller, contract.authorization_mode, env.ledger().timestamp()),
+        );
+
+        true
+    }
+
+    /// Release a milestone to the freelancer after required approvals are obtained.
+    ///
+    /// # Arguments
+    /// * `contract_id` – the escrow contract to operate on.
+    /// * `milestone_index` – the index of the milestone to release.
+    /// * `caller` – the address of the caller (must be authorized to trigger release).
+    ///
+    /// # Returns
+    /// `true` if the milestone was released successfully.
+    ///
+    /// # Panics / errors
+    /// * `ContractNotFound` – the contract does not exist.
+    /// * `InvalidMilestone` – the milestone index is out of bounds.
+    /// * `MilestoneAlreadyReleased` – the milestone has already been released.
+    /// * `InsufficientEscrowBalance` – the escrow balance cannot cover the milestone amount.
+    /// * `UnauthorizedRole` – the caller is not authorized to trigger release.
+    /// * `MissingApprovals` – required approvals are not in place.
+    pub fn release_milestone(
+        env: Env,
+        contract_id: u32,
+        milestone_index: u32,
+        caller: Address,
+    ) -> bool {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Validate milestone index
+        if milestone_index >= contract.milestones.len() {
+            env.panic_with_error(EscrowError::InvalidMilestone);
+        }
+
+        // Check if milestone is already released
+        let released_key = DataKey::MilestoneReleased(contract_id, milestone_index);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&released_key)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::MilestonesAlreadyReleased);
+        }
+
+        // Check escrow balance
+        let milestone_amount = contract.milestones.get(milestone_index).unwrap().amount;
+        let available_balance = contract.total_deposited - contract.released_amount - contract.refunded_amount;
+        if available_balance < milestone_amount {
+            env.panic_with_error(EscrowError::InvalidDepositAmount); // Reusing error for insufficient balance
+        }
+
+        // Check approvals based on authorization mode
+        let approvals_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
+        let approvals = env
+            .storage()
+            .persistent()
+            .get::<_, MilestoneApprovals>(&approvals_key)
+            .unwrap_or(MilestoneApprovals {
+                client_approved: false,
+                freelancer_approved: false,
+                arbiter_approved: false,
+            });
+
+        let has_required_approvals = match contract.authorization_mode {
+            ReleaseAuthorizationMode::ClientOnly => approvals.client_approved,
+            ReleaseAuthorizationMode::ClientAndFreelancer => approvals.client_approved && approvals.freelancer_approved,
+            ReleaseAuthorizationMode::ArbiterOnly => {
+                if contract.arbiter.is_none() {
+                    env.panic_with_error(EscrowError::UnauthorizedRole); // No arbiter to approve
+                }
+                approvals.arbiter_approved
+            }
+        };
+
+        if !has_required_approvals {
+            env.panic_with_error(EscrowError::UnauthorizedRole); // Reusing error for missing approvals
+        }
+
+        // Check caller authorization for triggering release
+        let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
+        let is_arbiter = contract.arbiter.as_ref().is_some_and(|a| *a == caller);
+
+        let can_trigger_release = match contract.authorization_mode {
+            ReleaseAuthorizationMode::ClientOnly => is_client,
+            ReleaseAuthorizationMode::ClientAndFreelancer => is_client || is_freelancer,
+            ReleaseAuthorizationMode::ArbiterOnly => is_arbiter,
+        };
+
+        if !can_trigger_release {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        // Mark milestone as released
+        env.storage().persistent().set(&released_key, &true);
+
+        // Update released amount
+        contract.released_amount = safe_add_amounts(contract.released_amount, milestone_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        // Check if all milestones are released
+        let all_released = Self::all_milestones_released(&env, contract_id, &contract);
+        if all_released && contract.status == ContractStatus::Funded {
+            contract.status = ContractStatus::Completed;
+
+            // Increment pending reputation credits for the freelancer
+            let credits_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
+            let credits: u32 = env
+                .storage()
+                .persistent()
+                .get(&credits_key)
+                .unwrap_or(0);
+            env.storage().persistent().set(&credits_key, &(credits + 1));
+        }
+
+        env.storage().persistent().set(&contract_key, &contract);
+
+        // Emit release event
+        env.events().publish(
+            (Symbol::new(&env, "milestone_released"), contract_id, milestone_index),
+            (caller, milestone_amount, env.ledger().timestamp()),
+        );
+
         true
     }
 
