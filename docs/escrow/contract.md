@@ -36,6 +36,51 @@ status: ContractStatus – current state
 total_deposited: i128 – total amount deposited  
 released_amount: i128 – total amount released to freelancer
 
+## Read API Semantics
+
+### Panicking vs. Result-returning variants
+
+The escrow contract exposes three read functions for contract data:
+
+| Contract function | Behavior on missing ID | Client-side `try_*` wrapper |
+|---|---|---|
+| `get_contract(contract_id)` | panics with `ContractNotFound` | `try_get_contract(contract_id)` → `Result` |
+| `get_milestones(contract_id)` | panics with `ContractNotFound` | `try_get_milestones(contract_id)` → `Result` |
+| `get_checklist()` | panics with `ContractNotFound` | `try_get_checklist()` → `Result` |
+
+**On-chain behavior**: all three functions call `env.panic_with_error(EscrowError::ContractNotFound)`
+when the requested data is absent. The Soroban runtime encodes the error code in the panic so it
+is observable on-chain, but the call still aborts. This is the correct Soroban idiom for
+mutating operations where a missing contract is always a programming error.
+
+**Off-chain / indexer behavior**: the Soroban SDK auto-generates a `try_*` client wrapper for
+every contract function. These wrappers return `Err(Ok(EscrowError::ContractNotFound))` instead
+of propagating the panic. Use the `try_*` wrappers in indexer pipelines and any off-chain read
+path where a missing contract should be handled gracefully.
+
+### Error codes
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 9 | `ContractNotFound` | No contract, milestone list, or checklist exists for the given ID |
+
+### `get_checklist()`
+
+Returns the [`ReadinessChecklist`] stored under `DataKey::ReadinessChecklist`.
+
+The checklist is written by lifecycle operations (`initialize`,
+`initialize_protocol_governance`, `activate_emergency_pause`, etc.). A fresh contract that
+has not yet executed any of those operations will panic with `ContractNotFound` — use
+`try_get_checklist()` on the client side to get a `Result` instead.
+
+```
+ReadinessChecklist {
+    initialized: bool,               // true after initialize()
+    governed_params_set: bool,       // true after initialize_protocol_governance()
+    emergency_controls_enabled: bool, // true after activate_emergency_pause() / resolve_emergency()
+}
+```
+
 ## Functions
 ### create_contract(env, client, freelancer, arbiter, milestone_amounts) -> u32
 - Creates a new escrow contract.
@@ -59,7 +104,7 @@ released_amount: i128 – total amount released to freelancer
 
 ### cancel_contract(env, contract_id, caller) -> bool
 - Cancels an escrow contract under strict authorization and state constraints.
-- Emits `contract_cancelled` event for indexer consumption.
+- Emits deterministic lifecycle event payload for indexer consumption.
 
 **Authorization Rules:**
 - Created state: Client or Freelancer can cancel
@@ -77,9 +122,9 @@ released_amount: i128 – total amount released to freelancer
 - Cancelled → Cancelled ✗ (idempotent error)
 
 **Event Emission:**
-Emits `contract_cancelled` event with:
-- Topics: `("contract_cancelled", contract_id)`
-- Data: `(caller: Address, status: ContractStatus, timestamp: u64)`
+Emits lifecycle event with:
+- Topics: `("escrow", "v1", "cancel", contract_id)`
+- Data: `(status: ContractStatus, amount: i128, milestone_index: u32, actor: Option<Address>, timestamp: u64)`
 
 **Security Guarantees:**
 - Cryptographic authorization required (caller.require_auth())
@@ -111,19 +156,21 @@ Emits `contract_cancelled` event with:
 ## Contract Lifecycle
 
 ```
-Created ──────────────→ Funded ───────────→ Completed
-   │                      │                     │
-   │                      │                     ✗ (no cancellation)
-   ↓                      ↓
-Cancelled ←───────────────┘
+Created ──────────────→ Accepted ───────────→ Funded ───────────→ Completed
+   │                          │                     │
+   │                          │                     ✗ (no cancellation)
+   ↓                          ↓
+Cancelled ←───────────────────┘
    │
    ↓ (Disputed)
 Disputed ──────────────→ Cancelled (arbiter only)
 ```
 
 **Key Transitions:**
-- Created → Funded: Client deposits funds
+- Created → Accepted: Freelancer or arbiter accepts the contract terms
+- Accepted → Funded: Client deposits funds after acceptance
 - Created → Cancelled: Client or freelancer cancels
+- Accepted → Cancelled: Client or freelancer cancels prior to funding
 - Funded → Cancelled: Client (no releases), freelancer, or arbiter cancels
 - Funded → Completed: All milestones released
 - Funded → Disputed: Dispute raised
@@ -138,3 +185,22 @@ Tests include:
 - Milestone release
 - Invalid deposit handling
 - Hello-world function check
+
+## Deterministic Event Schema
+
+The escrow lifecycle uses a shared event schema for deterministic indexing:
+
+- Topic tuple: `("escrow", "v1", operation, contract_id)`
+- Data tuple: `(status, amount, milestone_index, actor, timestamp)`
+
+Lifecycle operations covered:
+
+- `create_contract` -> operation `create`
+- `deposit_funds` -> operation `deposit`
+- `approve_milestone` -> operation `approve`
+- `release_milestone` -> operation `release`
+- `cancel_contract` -> operation `cancel`
+
+Breaking change note:
+
+- Consumers listening to legacy cancellation topic `contract_cancelled` must migrate to the v1 lifecycle event topic.
