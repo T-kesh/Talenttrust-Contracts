@@ -4,8 +4,8 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Ve
 
 mod types;
 pub use types::{
-    ContractStatus, ContractSummary, DataKey, EscrowError, Milestone, MilestoneSummary,
-    ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    ContractStatus, ContractSummary, DataKey, DepositMode, EscrowError, Milestone,
+    MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 mod amount_validation;
@@ -42,6 +42,7 @@ pub struct EscrowContractData {
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub reputation_issued: bool,
+    pub deposit_mode: DepositMode,
 }
 
 #[soroban_sdk::contracttype]
@@ -303,6 +304,7 @@ impl Escrow {
         client: Address,
         freelancer: Address,
         milestone_amounts: Vec<i128>,
+        deposit_mode: DepositMode,
     ) -> u32 {
         Self::require_not_paused(&env);
         client.require_auth();
@@ -349,6 +351,7 @@ impl Escrow {
             released_amount: 0,
             refunded_amount: 0,
             reputation_issued: false,
+            deposit_mode,
         };
         env.storage()
             .persistent()
@@ -379,8 +382,24 @@ impl Escrow {
         contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
-        if contract.status == ContractStatus::Created {
+        if contract.deposit_mode == DepositMode::ExactTotal {
+            if amount != total_milestones || contract.total_deposited > 0 {
+                env.panic_with_error(EscrowError::ExactDepositRequired);
+            }
+            contract.total_deposited = amount;
             contract.status = ContractStatus::Funded;
+        } else {
+            let new_total = safe_add_amounts(contract.total_deposited, amount)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+            if new_total > total_milestones {
+                env.panic_with_error(EscrowError::DepositWouldExceedTotal);
+            }
+            contract.total_deposited = new_total;
+            if new_total == total_milestones {
+                contract.status = ContractStatus::Funded;
+            } else {
+                contract.status = ContractStatus::PartiallyFunded;
+            }
         }
 
         env.storage().persistent().set(&key, &contract);

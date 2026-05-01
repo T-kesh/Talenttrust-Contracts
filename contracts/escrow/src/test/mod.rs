@@ -43,7 +43,12 @@ pub fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let milestones = default_milestones(env);
-    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &milestones,
+        &crate::types::DepositMode::ExactTotal,
+    );
     (client_addr, freelancer_addr, id)
 }
 

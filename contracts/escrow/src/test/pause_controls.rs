@@ -16,7 +16,12 @@ fn setup_funded_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let milestones = vec![env, 100_i128, 200_i128];
-    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &milestones,
+        &crate::types::DepositMode::ExactTotal,
+    );
     client.deposit_funds(&id, &300_i128);
     (client_addr, freelancer_addr, id)
 }
@@ -75,7 +80,12 @@ fn pause_blocks_create_contract() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     super::assert_contract_error(
-        client.try_create_contract(&a, &b, &vec![&env, 50_i128]),
+        client.try_create_contract(
+            &a,
+            &b,
+            &vec![&env, 50_i128],
+            &crate::types::DepositMode::ExactTotal,
+        ),
         EscrowError::ContractPaused,
     );
 }
@@ -151,6 +161,11 @@ fn unpause_restores_create_contract() {
 
     let a = Address::generate(&env);
     let b = Address::generate(&env);
-    let id = client.create_contract(&a, &b, &vec![&env, 50_i128]);
+    let id = client.create_contract(
+        &a,
+        &b,
+        &vec![&env, 50_i128],
+        &crate::types::DepositMode::ExactTotal,
+    );
     assert_eq!(id, 1);
 }
