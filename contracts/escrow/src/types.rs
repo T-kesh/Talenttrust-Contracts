@@ -73,6 +73,7 @@ pub enum EscrowError {
     ExceedsContractMaximum = 40,
     ExactDepositRequired = 41,
     DepositWouldExceedTotal = 42,
+    AccountingInvariantViolated = 43,
 }
 
 #[contracttype]

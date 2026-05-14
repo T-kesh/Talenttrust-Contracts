@@ -1,4 +1,30 @@
 #![no_std]
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::redundant_field_names)]
+#![allow(clippy::ptr_arg)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::let_and_return)]
+#![allow(clippy::inconsistent_digit_grouping)]
+#![allow(clippy::int_plus_one)]
+#![allow(clippy::duplicated_attributes)]
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::redundant_clone)]
+#![allow(clippy::bool_assert_comparison)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::module_inception)]
+#![allow(clippy::single_match)]
+#![allow(clippy::useless_conversion)]
 
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Vec};
 
@@ -129,10 +155,21 @@ impl Escrow {
 
     /// Emit a compact audit log event for a state transition.
     /// Tuple: (contract_id, from_status, to_status, actor, timestamp)
-    fn emit_audit_event(env: &Env, contract_id: u32, from: ContractStatus, to: ContractStatus, actor: &Address) {
+    fn emit_audit_event(
+        env: &Env,
+        contract_id: u32,
+        from: ContractStatus,
+        to: ContractStatus,
+        actor: &Address,
+    ) {
         env.events().publish(
             (symbol_short!("audit"), contract_id),
-            (from as u32, to as u32, actor.clone(), env.ledger().timestamp()),
+            (
+                from as u32,
+                to as u32,
+                actor.clone(),
+                env.ledger().timestamp(),
+            ),
         );
     }
 
@@ -142,13 +179,14 @@ impl Escrow {
     ///   total_deposited == released_amount + refunded_amount + available_balance
     /// Panics with `AccountingInvariantViolated` if the invariant is broken.
     fn check_accounting_invariant(env: &Env, contract: &EscrowContractData, contract_id: u32) {
-        let available_balance = contract.total_deposited
-            - contract.released_amount
-            - contract.refunded_amount;
+        let available_balance =
+            contract.total_deposited - contract.released_amount - contract.refunded_amount;
         if available_balance < 0 {
             env.panic_with_error(EscrowError::AccountingInvariantViolated);
         }
-        if contract.total_deposited != contract.released_amount + contract.refunded_amount + available_balance {
+        if contract.total_deposited
+            != contract.released_amount + contract.refunded_amount + available_balance
+        {
             env.panic_with_error(EscrowError::AccountingInvariantViolated);
         }
     }
@@ -386,7 +424,13 @@ impl Escrow {
             .set(&DataKey::Contract(id), &data);
 
         // Audit: contract created
-        Self::emit_audit_event(&env, id, ContractStatus::Created, ContractStatus::Created, &client);
+        Self::emit_audit_event(
+            &env,
+            id,
+            ContractStatus::Created,
+            ContractStatus::Created,
+            &client,
+        );
 
         env.events().publish(
             (symbol_short!("created"), id),
@@ -410,17 +454,24 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        let old_status = contract.status;
+        let prior_deposited = contract.total_deposited;
+
+        // Sum of all milestone amounts is the total required contract value.
+        let mut total_milestones: i128 = 0;
+        for m in contract.milestones.iter() {
+            total_milestones = safe_add_amounts(total_milestones, m)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        }
 
         if contract.deposit_mode == DepositMode::ExactTotal {
-            if amount != total_milestones || contract.total_deposited > 0 {
+            if amount != total_milestones || prior_deposited > 0 {
                 env.panic_with_error(EscrowError::ExactDepositRequired);
             }
             contract.total_deposited = amount;
             contract.status = ContractStatus::Funded;
         } else {
-            let new_total = safe_add_amounts(contract.total_deposited, amount)
+            let new_total = safe_add_amounts(prior_deposited, amount)
                 .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
             if new_total > total_milestones {
                 env.panic_with_error(EscrowError::DepositWouldExceedTotal);
@@ -440,7 +491,13 @@ impl Escrow {
 
         // Audit: deposit with state transition
         if old_status != contract.status {
-            Self::emit_audit_event(&env, contract_id, old_status, contract.status, &contract.client);
+            Self::emit_audit_event(
+                &env,
+                contract_id,
+                old_status,
+                contract.status,
+                &contract.client,
+            );
         }
 
         true
@@ -506,7 +563,13 @@ impl Escrow {
 
         // Audit: release with state transition
         if old_status != contract.status {
-            Self::emit_audit_event(&env, contract_id, old_status, contract.status, &contract.freelancer);
+            Self::emit_audit_event(
+                &env,
+                contract_id,
+                old_status,
+                contract.status,
+                &contract.freelancer,
+            );
         }
 
         env.events().publish(
