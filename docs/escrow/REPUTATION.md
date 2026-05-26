@@ -26,6 +26,14 @@ Every successful reputation update emits a `rated` event containing:
 
 Ratings are persisted as `ReputationEntry` structs in the contract's persistent storage, mapping `DataKey::Reputation(contract_id, freelancer_address)` to the entry. This ensures an immutable audit trail of individual ratings alongside aggregate scores in `ReputationRecord`.
 
+## Average Rating Accessor
+
+The contract exposes `get_average_rating(freelancer) -> Option<i128>` as a read-only helper for consumer convenience. The returned integer is scaled by 100, so `450` represents an average rating of `4.50`.
+
+- Returns `None` when the freelancer has no completed contracts.
+- Returns `Some(value)` when `completed_contracts > 0`.
+- The result is computed as `(total_rating * 100) / completed_contracts`.
+
 ## Security Assumptions
 
 - **Access Control:** `issue_reputation` requires the client's authentication.

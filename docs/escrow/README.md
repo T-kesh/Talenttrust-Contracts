@@ -233,6 +233,7 @@ Core escrow endpoints:
 - `issue_reputation(contract_id, rating) -> bool`
 - `get_contract(contract_id) -> EscrowContractData`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
+- `get_average_rating(freelancer) -> Option<i128>`
 - `get_pending_reputation_credits(freelancer) -> u32`
 
 Operational controls:

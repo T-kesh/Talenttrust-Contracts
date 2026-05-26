@@ -711,6 +711,27 @@ impl Escrow {
             .get(&DataKey::Reputation(freelancer))
     }
 
+    /// Returns the freelancer's average reputation rating, scaled by 100.
+    ///
+    /// The return value uses two-decimal fixed-point precision, so `450`
+    /// represents `4.50`. Returns `None` when `completed_contracts == 0`.
+    pub fn get_average_rating(env: Env, freelancer: Address) -> Option<i128> {
+        let record: ReputationRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Reputation(freelancer.clone()))
+            .unwrap_or_default();
+        if record.completed_contracts == 0 {
+            return None;
+        }
+        let numerator = record
+            .total_rating
+            .checked_mul(100)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        let denominator = i128::from(record.completed_contracts);
+        Some(numerator / denominator)
+    }
+
     pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
         env.storage()
             .persistent()
