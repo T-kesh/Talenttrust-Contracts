@@ -7,8 +7,7 @@ use crate::{Escrow, EscrowClient, EscrowError};
 // ─── Submodules ───────────────────────────────────────────────────────────────
 
 mod emergency_controls;
-mod pause_controls;
-
+mod pause_controls;mod reputation;
 // ─── Shared constants ─────────────────────────────────────────────────────────
 
 pub const MILESTONE_ONE: i128 = 200_0000000;

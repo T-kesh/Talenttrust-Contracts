@@ -1,40 +1,37 @@
 # Reputation Credential Issuance
 
-The Escrow contract issues reputation credentials (ratings) to freelancers upon the successful completion of a milestone or project. This module contains validations to ensure the integrity of the reputation system.
+The Escrow contract issues reputation credentials (ratings) to freelancers after a contract reaches `Completed` status.
 
 ## Validation Rules
 
-1. **Rating Bounds:** Must be between 1 and 5 (inclusive). Ratings outside these bounds will be rejected with an `InvalidRating` error.
-2. **Comment Validation:** 
-    - Max length: 1000 characters.
-    - Cannot be empty (whitespace-only strings should be avoided, though the contract currently checks for length > 0).
-    - Violation results in `CommentTooLong` or `EmptyComment` errors.
-3. **Self-Rating Prevention:** Clients cannot rate themselves if they are also the freelancer in the same contract. Prevented by `SelfRating` check and also at contract creation via `InvalidParticipant`.
-4. **Issuance Timing:** Credentials can only be issued if the project is completely finished (i.e. status is `Completed` or `Refunded`). If the project is in `Created`, `Funded`, or `Disputed` state, issuing ratings will fail with a `NotCompleted` error.
-5. **Duplicate Prevention:** A freelancer can only receive exactly one rating credential per contract (project). Subsequent attempts to issue a rating will fail with a `DuplicateRating` error.
+1. **Client authorization:** Only the contract client may call `issue_reputation`. Unauthorized callers fail with `UnauthorizedRole`.
+2. **Freelancer match:** The supplied freelancer address must match the contract's stored freelancer. Mismatches fail with `FreelancerMismatch`.
+3. **Contract completion gating:** Reputation can only be issued after the contract is `Completed`. Non-completed contracts fail with `NotCompleted`.
+4. **Rating bounds:** Ratings must be between `1` and `5` inclusive. Values outside this range fail with `InvalidRating`.
+5. **Duplicate issuance protection:** Reputation may only be issued once per contract. Subsequent attempts fail with `ReputationAlreadyIssued`.
 
-## Audit Trail
+## Reputation Aggregation
 
-Every successful reputation update emits a `rated` event containing:
-- `reviewer`: The address of the client who gave the rating.
-- `target`: The address of the freelancer being rated.
-- `rating`: The numeric score (1-5).
-- `comment`: The optional text comment.
-- `context_id`: The contract ID associated with the rating.
+Successful issuance updates the freelancer's aggregate `ReputationRecord`:
+- `completed_contracts` increments by `1`
+- `total_rating` increases by the rating value
+- `last_rating` is set to the most recent rating
 
-## Persistence
+Pending reputation credits are also decremented on success.
 
-Ratings are persisted as `ReputationEntry` structs in the contract's persistent storage, mapping `DataKey::Reputation(contract_id, freelancer_address)` to the entry. This ensures an immutable audit trail of individual ratings alongside aggregate scores in `ReputationRecord`.
+## Test Coverage
+
+The escrow test suite now includes dedicated coverage for the `issue_reputation` negative paths in `contracts/escrow/src/test/reputation.rs`.
+- unauthorized caller
+- freelancer mismatch
+- non-completed contract
+- invalid rating bounds
+- duplicate issuance
+- verified reputation aggregation and pending credit decrement on success
 
 ## Security Assumptions
 
-- **Access Control:** `issue_reputation` requires the client's authentication.
-- **Contract Completion:** Enforced by status check (`Completed` or `Refunded`).
-- **Duplicate tracking state:** Prevented by storage key check.
-- **Anti-Abuse:** Self-rating and out-of-bounds ratings are natively blocked.
-
-## Threat Scenarios
-
-- **Duplicate rating attack:** Attackers or clients attempting to unfairly inflate or deflate a freelancer's score by rating repeatedly on the same job. Prevented by checking the reputation map before issuance.
-- **Early rating attack:** Clients attempting to lock in a rating or rate negatively prematurely before finishing escrow obligations. Prevented by enforcing the `Completed` state as an issuance prerequisite.
-- **Out-of-bounds rating attack:** Attackers attempting to provide extremely high ratings to manipulate global average calculations. Prevented by enforcing the `1 <= rating <= 5` boundary natively in the Escrow contract.
+- **Access Control:** `issue_reputation` requires client authentication.
+- **Contract Completion:** Only `Completed` contracts are eligible for reputation issuance.
+- **Duplicate issuance guard:** Repeat issuance is blocked by a stored `ReputationIssued` flag.
+- **Aggregate consistency:** Reputation totals and pending credits are updated atomically.
