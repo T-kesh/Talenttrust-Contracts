@@ -721,6 +721,60 @@ impl Escrow {
 
     // ─── Read-only queries (not blocked by pause) ─────────────────────────────
 
+    /// Returns a versioned, denormalized snapshot of the escrow contract for
+    /// off-chain indexers. Intentionally unauthenticated and never blocked by
+    /// pause or emergency guards so that data availability is always maintained.
+    ///
+    /// Panics with [`EscrowError::ContractNotFound`] if `contract_id` does not exist.
+    pub fn get_contract_summary(env: Env, contract_id: u32) -> ContractSummary {
+        let contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        let mut total_amount: i128 = 0;
+        let mut released_milestone_count: u32 = 0;
+        let mut milestones = Vec::new(&env);
+
+        for i in 0..contract.milestones.len() {
+            let amount = contract.milestones.get(i).unwrap();
+            total_amount += amount;
+            let released = env
+                .storage()
+                .persistent()
+                .get::<_, bool>(&DataKey::MilestoneReleased(contract_id, i))
+                .unwrap_or(false);
+            if released {
+                released_milestone_count += 1;
+            }
+            milestones.push_back(MilestoneSummary {
+                index: i,
+                amount,
+                released,
+                refunded: false,
+            });
+        }
+
+        let refundable_balance =
+            contract.total_deposited - contract.released_amount - contract.refunded_amount;
+
+        ContractSummary {
+            schema_version: CONTRACT_SUMMARY_SCHEMA_VERSION,
+            client: contract.client,
+            freelancer: contract.freelancer,
+            arbiter: contract.arbiter,
+            status: contract.status,
+            reputation_issued: contract.reputation_issued,
+            total_amount,
+            funded_amount: contract.total_deposited,
+            released_amount: contract.released_amount,
+            refundable_balance,
+            released_milestone_count,
+            milestones,
+        }
+    }
+
     pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
         env.storage()
             .persistent()
