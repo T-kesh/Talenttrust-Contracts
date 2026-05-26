@@ -22,9 +22,9 @@ fn successful_contract_lifecycle() {
     );
 
     // Release milestones
-    assert!(client.release_milestone(&contract_id, &0));
-    assert!(client.release_milestone(&contract_id, &1));
-    assert!(client.release_milestone(&contract_id, &2));
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
+    assert!(client.release_milestone(&contract_id, &client_addr, &1));
+    assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let finalized = client.get_contract(&contract_id);
     assert_eq!(finalized.status, ContractStatus::Completed);

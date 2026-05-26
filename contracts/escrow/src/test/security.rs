@@ -79,9 +79,9 @@ fn release_rejects_when_contract_not_funded() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    let result = client.try_release_milestone(&contract_id, &0);
+    let result = client.try_release_milestone(&contract_id, &client_addr, &0);
     super::assert_contract_error(result, EscrowError::InsufficientFunds);
 }
 
@@ -90,10 +90,10 @@ fn release_rejects_invalid_milestone_id() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
-    let result = client.try_release_milestone(&contract_id, &99);
+    let result = client.try_release_milestone(&contract_id, &client_addr, &99);
     super::assert_contract_error(result, EscrowError::InvalidMilestone);
 }
 
@@ -102,12 +102,12 @@ fn release_rejects_double_release() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
-    assert!(client.release_milestone(&contract_id, &0));
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
-    let result = client.try_release_milestone(&contract_id, &0);
+    let result = client.try_release_milestone(&contract_id, &client_addr, &0);
     super::assert_contract_error(result, EscrowError::AlreadyReleased);
 }
 

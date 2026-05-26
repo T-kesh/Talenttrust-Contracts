@@ -503,9 +503,23 @@ impl Escrow {
         true
     }
 
-    /// Release a milestone to the freelancer. Blocked when paused.
-    pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
+    /// Release a funded milestone payment to the freelancer.
+    ///
+    /// # Parameters
+    /// - `contract_id`: The ID of the escrow contract.
+    /// - `caller`: The address authorizing the release. Must be the recorded client.
+    /// - `milestone_index`: Zero-based index of the milestone to release.
+    ///
+    /// # Errors / Panics
+    /// - `ContractPaused` — contract is paused or in emergency.
+    /// - `ContractNotFound` — no contract exists for `contract_id`.
+    /// - `UnauthorizedRole` — `caller` is not the recorded client.
+    /// - `InvalidMilestone` — `milestone_index` is out of range.
+    /// - `AlreadyReleased` — milestone was already released.
+    /// - `InsufficientFunds` — available balance is less than the milestone amount.
+    pub fn release_milestone(env: Env, contract_id: u32, caller: Address, milestone_index: u32) -> bool {
         Self::require_not_paused(&env);
+        caller.require_auth();
 
         let key = DataKey::Contract(contract_id);
         let mut contract = env
@@ -513,6 +527,10 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
 
         if milestone_index >= contract.milestones.len() {
             env.panic_with_error(EscrowError::InvalidMilestone);
