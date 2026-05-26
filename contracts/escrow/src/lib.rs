@@ -517,7 +517,12 @@ impl Escrow {
     /// - `InvalidMilestone` — `milestone_index` is out of range.
     /// - `AlreadyReleased` — milestone was already released.
     /// - `InsufficientFunds` — available balance is less than the milestone amount.
-    pub fn release_milestone(env: Env, contract_id: u32, caller: Address, milestone_index: u32) -> bool {
+    pub fn release_milestone(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_index: u32,
+    ) -> bool {
         Self::require_not_paused(&env);
         caller.require_auth();
 

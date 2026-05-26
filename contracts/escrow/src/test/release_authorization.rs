@@ -10,8 +10,8 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, EscrowError};
 use crate::types::DepositMode;
+use crate::{Escrow, EscrowClient, EscrowError};
 
 use super::assert_contract_error;
 
