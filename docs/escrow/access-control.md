@@ -44,10 +44,16 @@ Ensure only valid contract actors (client, freelancer, arbiter) can invoke state
 
 ### `release_milestone`
 
-- Requires caller auth.
-- Caller role validated against `release_auth` mode.
-- Requires sufficient approvals for configured mode.
-- Rejects invalid or already released milestones.
+- Accepts an explicit `caller: Address` parameter.
+- Calls `caller.require_auth()` immediately — cryptographic proof of authorization is mandatory before any state is read or mutated.
+- Asserts `caller == contract.client`; any other address panics with `EscrowError::UnauthorizedRole` (fail-closed).
+- Rejects invalid or already released milestones (`InvalidMilestone`, `AlreadyReleased`).
+- Rejects releases when available balance is insufficient (`InsufficientFunds`).
+- The `DataKey::MilestoneReleased` guard prevents double-release and duplicate token transfers.
+
+#### Fail-closed design
+
+The authorization check is placed before any storage reads of sensitive state. If `require_auth` fails the transaction is aborted by the Soroban host before the contract body executes, ensuring no partial state mutation is possible. The explicit `caller != contract.client` check provides a second, contract-level role boundary independent of the host auth mechanism.
 
 ### `issue_reputation`
 

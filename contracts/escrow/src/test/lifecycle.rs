@@ -39,7 +39,10 @@ fn created_to_partially_funded_to_funded() {
         &crate::types::DepositMode::Incremental,
     );
 
-    assert_eq!(client.get_contract(&id).status, ContractStatus::Created);
+    // Release milestones
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
+    assert!(client.release_milestone(&contract_id, &client_addr, &1));
+    assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     // Partial deposit → PartiallyFunded
     assert!(client.deposit_funds(&id, &MILESTONE_ONE));
