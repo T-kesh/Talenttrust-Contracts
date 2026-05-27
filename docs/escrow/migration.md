@@ -1,24 +1,52 @@
-# Storage Migration and Forward-Compatible Reads
+# Client Migration
 
 ## Overview
-The TalentTrust Escrow contract implements forward-compatible storage upgrade patterns. As the contract matures and business requirements evolve, the schema definitions persisting its native ledger state must shift. 
 
-To maintain continuous 100% interoperability without risking panics natively, the system utilizes explicit schema versioning (e.g. `StateV1`, `StateV2`) bounded by internal parsers that dynamically restructure legacy logic.
+Client migration allows the existing escrow client role to be safely reassigned to a new address without changing contract state until the proposed client explicitly accepts the migration.
 
-## Strategy: Forward-Compatible Legacy Reads
-When evaluating data from the persistent storage via `DataKey::State`, the fallback `get_state` entrypoint logic acts defensively:
-1. **Attempt Primary Load:** Prioritizes decoding the raw storage instance mapping dynamically to the current active `StateV2`.
-2. **Legacy Intercept:** If the type signature or data footprint doesn't reconcile (because the record remains un-upgraded natively on the ledger as `StateV1`), it specifically casts to `StateV1`.
-3. **In-Memory Transformation:** Once recovered, the old format is parsed sequentially into a fresh `StateV2` layout utilizing sensible default filler parameters where applicable securely (like setting generic initial `ContractStatus`es). 
-4. **Execution Rebound:** Passes cleanly updated `StateV2` to logical workflows guaranteeing no internal panics whatsoever.
+The implementation uses transient temporary storage under `DataKey::PendingClientMigration(contract_id)` with a Soroban TTL. This ensures proposals expire automatically after `PENDING_MIGRATION_TTL_LEDGERS` ledgers and cannot be accepted once stale.
 
-## Strategy: Explicit Upgrades
-For administrators desiring clean persistence, the `migrate_state` executes an authorized override.
-- Secured effectively by `admin.require_auth()`. Only contract administrators evaluating native Soroban authorizations can pull this logic loop natively.
-- Evaluates the legacy bytes via `get_state()` effectively bridging it.
-- Force-writes over `DataKey::State` rewriting the physical Soroban environment layout cleanly to the new `StateV2`.
+## Public functions
 
-## Security & Threat Scenarios
-1. **Malformed State Panics:** Directly querying outdated memory bytes can brick the contract or crash execution heavily. Utilizing explicit legacy `get_state()` mapping catches boundary offsets cleanly.
-2. **Unauthorized State Tampering:** Writing over raw memory parameters could allow attackers to manipulate active funds intentionally. The `migrate_state` securely enforces `.require_auth()`, severely locking this vector context entirely to legitimate administrators. 
-3. **Data Loss During Conversions:** Meticulously defined comprehensive tests (`migration_test.rs`) actively simulate thousands of invocations inserting literal `StateV1` elements straight into execution buckets directly probing against unexpected memory drops correctly resolving natively.
+- `propose_client_migration(env, contract_id, current_client, new_client) -> bool`
+  - Requires `current_client` authorization.
+  - Rejects when `new_client` equals the freelancer or the current client.
+  - Rejects when the contract status is `Completed`, `Cancelled`, `Refunded`, or `Disputed`.
+  - Stores the migration request in temporary storage with TTL.
+  - Emits `client_migration_proposed`.
+
+- `accept_client_migration(env, contract_id, new_client) -> bool`
+  - Requires `new_client` authorization.
+  - Loads the live pending migration from temporary storage.
+  - Rejects if the proposal is missing or expired.
+  - Rejects if the caller does not match the proposed client.
+  - Atomically updates `EscrowContractData.client`.
+  - Removes the transient migration request.
+  - Emits `client_migration_accepted`.
+
+- `has_pending_client_migration(env, contract_id) -> bool`
+  - Returns whether a live pending migration exists.
+
+- `get_pending_client_migration(env, contract_id) -> PendingClientMigration`
+  - Returns the live pending migration record or panics if none exists.
+
+## Security and invariants
+
+- `EscrowContractData.client` is updated only in `accept_client_migration`.
+- No contract mutation occurs during the proposal phase.
+- Expired proposals are not accepted because `read_if_live` returns `None` once the TTL has elapsed.
+- Paused or emergency states block both proposal and acceptance.
+- Unauthorized callers cannot forge or accept migration proposals.
+
+## Example
+
+```rust
+let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones, &DepositMode::ExactTotal);
+client.propose_client_migration(&contract_id, &client_addr, &new_client_addr);
+assert!(client.has_pending_client_migration(&contract_id));
+let pending = client.get_pending_client_migration(&contract_id);
+assert_eq!(pending.proposed_client, new_client_addr);
+client.accept_client_migration(&contract_id, &new_client_addr);
+let contract = client.get_contract(&contract_id);
+assert_eq!(contract.client, new_client_addr);
+```
