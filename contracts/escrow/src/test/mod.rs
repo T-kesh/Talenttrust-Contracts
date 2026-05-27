@@ -8,7 +8,9 @@ use crate::{Escrow, EscrowClient, EscrowError};
 
 mod dispute;
 mod emergency_controls;
-mod pause_controls;mod mainnet_readiness;
+mod pause_controls;
+mod release_authorization;
+
 // ─── Shared constants ─────────────────────────────────────────────────────────
 
 #[allow(dead_code)] // shared test fixture; not all test modules use every constant
