@@ -1,126 +1,133 @@
 # Storage TTL / Expiration Policy
 
-This document defines the deterministic, auditable TTL (time-to-live) policy for **transient** storage entries in the escrow contract. It exists to prevent unbounded state growth from orphaned pending approvals and pending migrations that are never resolved by counterparties.
+This document defines the deterministic, auditable TTL (time-to-live) policy for
+**transient** storage entries in the escrow contract. It exists to prevent
+unbounded state growth from orphaned pending approvals and pending migrations
+that are never resolved by counterparties.
 
-See also: [state-persistence.md](./state-persistence.md) for the persistent storage model; [upgradeable-storage.md](./upgradeable-storage.md) for upgrade semantics.
+See also: [state-persistence.md](./state-persistence.md) for the persistent
+storage model; [upgradeable-storage.md](./upgradeable-storage.md) for upgrade
+semantics.
 
 ## Scope
 
-Applies to keys stored in `env.storage().temporary()`. Persistent keys (e.g. `Contract(id)`, `NextId`) are unaffected — their TTL management is covered in [architecture.md](./architecture.md).
+Applies to keys stored in `env.storage().temporary()`. Persistent keys (e.g.
+`Contract(id)`, `NextId`) are unaffected — their TTL management is covered in
+[architecture.md](./architecture.md).
 
 ## Units
 
-All TTL values are denominated in **ledgers**, the Soroban-native unit. One ledger is ~5 seconds on Stellar mainnet. This avoids any coupling to wall-clock timestamps and keeps expiry deterministic as a function of `env.ledger().sequence()`.
+All TTL values are denominated in **ledgers**, the Soroban-native unit. One
+ledger is ~5 seconds on Stellar mainnet. This avoids any coupling to
+wall-clock timestamps and keeps expiry deterministic as a function of
+`env.ledger().sequence()`.
 
 | Named constant | Ledgers | Rough duration |
-| --- | ---: | --- |
+|---|---:|---|
 | `LEDGERS_PER_DAY` | 17 280 | 1 day |
 | `PENDING_APPROVAL_TTL_LEDGERS` | 120 960 | 7 days |
 | `PENDING_APPROVAL_BUMP_THRESHOLD` | 17 280 | 1 day |
 | `PENDING_MIGRATION_TTL_LEDGERS` | 362 880 | 21 days |
 | `PENDING_MIGRATION_BUMP_THRESHOLD` | 51 840 | 3 days |
 
-Constants live in [contracts/escrow/src/ttl.rs](../../contracts/escrow/src/ttl.rs).
+Constants live in
+[contracts/escrow/src/ttl.rs](../../contracts/escrow/src/ttl.rs).
 
 ## Transient Keys
 
-| Key | Value type | TTL | Bump threshold | Rationale |
-| --- | --- | ---: | ---: | --- |
-| `PendingApproval(contract_id: u32)` | `PendingApproval` | 7 days | 1 day | Counterparties are expected to respond within one business week; short enough to reclaim state on abandonment, long enough to tolerate holidays. |
-| `PendingMigration` | `PendingMigration` | 21 days | 3 days | Migrations are rarer and more consequential; reviewers need more lead time and explicit bump windows. |
+| Key | TTL | Bump threshold | Rationale |
+|---|---:|---:|---|
+| `PendingApproval(contract_id)` | 7 days | 1 day | Counterparties are expected to respond within one business week; short enough to reclaim state on abandonment. |
+| `PendingMigration` | 21 days | 3 days | Migrations are rarer and more consequential; reviewers need more lead time. |
 
-`PendingMigration` is a **single-slot** key: at most one migration may be pending at any time, which is enforced by `PendingMigrationExists` (error code 8).
+`PendingMigration` is a **single-slot** key: at most one migration may be
+pending at any time.
 
-## Value Schema
+## TTL Helper API
 
-Each transient value stores its own expiry metadata alongside Soroban's internal TTL. This is intentional redundancy so that on-chain readers and event indexers can audit expiry independently of Soroban's TTL ledger metadata.
+All transient reads and writes go through the helpers in `contracts/escrow/src/ttl.rs`:
 
-```rust
-pub struct PendingApproval {
-    pub approver: Address,
-    pub contract_id: u32,
-    pub requested_at_ledger: u32,
-    pub expires_at_ledger: u32,
-}
+| Function | Description |
+|---|---|
+| `compute_expiry(env, ttl)` | Returns `sequence + ttl` (saturating). |
+| `store_with_ttl(env, key, value, ttl)` | Writes to temporary storage and sets TTL. |
+| `read_if_live(env, key)` | Returns `Some(v)` if live, `None` if absent or evicted. |
+| `extend_if_below_threshold(env, key, threshold, extend_to)` | Bumps TTL; returns `false` if key absent. |
+| `remove_transient(env, key)` | Explicit removal before auto-eviction. |
+| `has_transient(env, key)` | Returns `true` if the key is currently live. |
 
-pub struct PendingMigration {
-    pub proposer: Address,
-    pub new_wasm_hash: BytesN<32>,
-    pub requested_at_ledger: u32,
-    pub expires_at_ledger: u32,
-}
-```
+## Expiry Semantics
+
+- Soroban auto-evicts temporary storage entries once their TTL has elapsed.
+- `read_if_live` returns `None` for both "never set" and "expired" — callers
+  treat both as "no active pending record".
+- No on-chain event is emitted at auto-eviction. Off-chain indexers should
+  compute eviction by comparing `expires_at_ledger` against the current ledger
+  sequence.
 
 ## Determinism
 
 Expiry is computed at write time as:
 
 ```
-expires_at_ledger = requested_at_ledger + TTL
-                  = env.ledger().sequence() + TTL
+expires_at_ledger = env.ledger().sequence() + TTL_LEDGERS
 ```
 
-Given the same ledger sequence and the same TTL constant, two runs produce identical `expires_at_ledger` values. Covered by test `deterministic_expiry` in [contracts/escrow/src/test/ttl_tests.rs](../../contracts/escrow/src/test/ttl_tests.rs).
-
-## Expiry Semantics
-
-- Soroban auto-evicts temporary storage entries once their TTL has elapsed.
-- `read_if_live` (used by `get_pending_approval` / `get_pending_migration`) returns `Option<_>`; after expiry it returns `None`.
-- The contract **does not distinguish** "never set" from "expired on read". Consumers must treat `None` as "no active pending record" in both cases.
-- No on-chain event is emitted at the moment of auto-eviction — Soroban does not expose an eviction hook. Off-chain indexers should compute eviction by comparing the stored `expires_at_ledger` against the current ledger sequence.
+Given the same starting sequence and the same TTL constant, two independent
+environments produce identical expiry values. This is verified by
+`expiry_is_deterministic_across_independent_envs` in the test suite.
 
 ## Extending (Bumping) TTL
 
-`extend_pending_approval` / `extend_pending_migration` wrap `env.storage().temporary().extend_ttl(key, threshold, extend_to)`:
+`extend_if_below_threshold` wraps
+`env.storage().temporary().extend_ttl(key, threshold, extend_to)`:
 
-- If remaining TTL is **below** the bump threshold, the entry's TTL is extended to the full policy value.
-- If the entry is already fresh, the call is a no-op.
-- If the entry is absent or already evicted, the helper returns `false` and performs no write.
+- If remaining TTL is **below** the bump threshold, the entry's TTL is
+  extended to the full policy value.
+- If the entry is already fresh, the call is a no-op (Soroban only extends,
+  never shrinks).
+- If the entry is absent or already evicted, the helper returns `false` and
+  performs no write.
 
-Callers must still be authorised (`approver.require_auth()` / `proposer.require_auth()`).
+## Security Notes
 
-## Events (Audit Trail)
-
-All state-changing TTL operations publish a structured event:
-
-| Topic 0 | Topic 1 | Data tuple |
-| --- | --- | --- |
-| `ttl` | `requested` | `(subject, identifier..., actor, requested_at_ledger, expires_at_ledger)` |
-| `ttl` | `cancelled` | `(subject, identifier..., actor)` |
-| `ttl` | `confirmed` | `(subject, identifier..., actor)` |
-
-`subject` is `approval` or `migration`. For approvals, `identifier` is the `contract_id`; for migrations, `identifier` is the `new_wasm_hash` (on request) or absent (on cancel).
-
-Auto-eviction emits no event. See *Expiry Semantics* above.
-
-## Error Codes
-
-| Variant | Code | Meaning |
-| --- | ---: | --- |
-| `PendingApprovalExists` | 6 | An approval is already pending for this contract. |
-| `PendingApprovalNotFound` | 7 | No live approval to cancel. |
-| `PendingMigrationExists` | 8 | A migration is already pending. |
-| `PendingMigrationNotFound` | 9 | No live migration to cancel or confirm. |
-| `Unauthorized` | 10 | Caller is not the original requester. |
+- All writes use `store_with_ttl`; no direct `.temporary().set` bypass is
+  permitted, ensuring TTL is always set at write time.
+- `remove_transient` is used for explicit cleanup (e.g. after an approval is
+  consumed or cancelled) so stale entries do not linger until auto-eviction.
+- The fail-closed design means a `None` from `read_if_live` always blocks the
+  dependent operation, regardless of whether the entry expired or was never
+  created.
 
 ## Testing
 
-Expiry is exercised by advancing `LedgerInfo.sequence_number` via `env.ledger().with_mut(...)`. See [contracts/escrow/src/test/ttl_tests.rs](../../contracts/escrow/src/test/ttl_tests.rs) for the full matrix:
+Tests live in
+[contracts/escrow/src/test/ttl_tests.rs](../../contracts/escrow/src/test/ttl_tests.rs).
+They call the TTL helpers directly via `env.as_contract` and advance
+`LedgerInfo.sequence_number` via `env.ledger().with_mut(...)` to simulate
+auto-eviction.
 
-- `pending_{approval,migration}_readable_before_expiry`
-- `pending_{approval,migration}_evicted_after_expiry`
-- `extend_if_below_threshold_bumps_when_near_expiry`
-- `extend_if_below_threshold_noop_when_fresh`
-- `extend_returns_false_when_key_absent`
-- `deterministic_expiry`
-- `cancel_removes_pending_approval`
-- `duplicate_request_{approval,migration}_rejects`
-- `confirm_migration_clears_pending`
+| Test | What it covers |
+|---|---|
+| `compute_expiry_equals_sequence_plus_ttl` | `compute_expiry` returns correct value for both TTL constants |
+| `compute_expiry_saturates_on_overflow` | Saturating addition at `u32::MAX` |
+| `ledgers_per_day_constant_is_correct` | All five constants match their documented values |
+| `approval_readable_before_expiry` | `read_if_live` returns `Some` one ledger before approval TTL |
+| `approval_evicted_after_expiry` | `read_if_live` returns `None` one ledger after approval TTL |
+| `migration_readable_before_expiry` | `read_if_live` returns `Some` one ledger before migration TTL |
+| `migration_evicted_after_expiry` | `read_if_live` returns `None` one ledger after migration TTL |
+| `extend_returns_false_for_absent_key` | `extend_if_below_threshold` returns `false` when key absent |
+| `extend_returns_true_and_entry_survives_past_original_expiry` | Bump keeps entry live past original expiry |
+| `extend_migration_returns_false_for_absent_key` | Same absent-key check for migration threshold |
+| `remove_transient_clears_entry_immediately` | Entry absent after `remove_transient` |
+| `remove_transient_is_idempotent` | Second `remove_transient` does not panic |
+| `has_transient_false_before_store` | `has_transient` returns `false` before any write |
+| `has_transient_true_after_store_false_after_expiry` | `has_transient` tracks live/evicted state |
+| `expiry_is_deterministic_across_independent_envs` | Same starting sequence → same expiry in two envs |
 
 ## Reviewer Checklist
 
 1. Every new transient key has an entry in the table above.
 2. Every write uses `ttl::store_with_ttl` (no direct `.temporary().set` bypass).
 3. Every read path uses `ttl::read_if_live` and handles `None` as "absent or expired".
-4. Expiry metadata on the value matches the constant applied at write time.
-5. A corresponding TTL test exists when a new transient key is introduced.
+4. A corresponding TTL test exists when a new transient key is introduced.
