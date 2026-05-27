@@ -13,10 +13,12 @@ Lifecycle and reputation:
 - `release_milestone(contract_id, milestone_index) -> bool`
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 - `cancel_contract(contract_id, caller) -> bool`
+- `finalize_contract(contract_id, finalizer) -> bool`
 
 Read-only queries:
 
 - `get_contract(contract_id) -> EscrowContractData`
+- `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_average_rating(freelancer) -> Option<i128>`
 - `get_pending_reputation_credits(freelancer) -> u32`
@@ -105,6 +107,20 @@ Cancellation requires `caller.require_auth()`. The caller must be the stored
 client or freelancer. It is blocked after `Completed` and blocked if the
 contract is already `Cancelled`.
 
+## Finalization
+
+```rust
+escrow.finalize_contract(&contract_id, &finalizer);
+```
+
+Finalization requires `finalizer.require_auth()`. The finalizer must be the
+stored client, freelancer, or assigned arbiter. It is allowed only while the
+contract status is `Completed` or `Disputed`.
+
+The contract writes one immutable `FinalizationRecord` containing the finalizer,
+ledger timestamp, and a `ContractSummary` snapshot. After the record exists,
+contract-specific mutating calls reject with `AlreadyFinalized`.
+
 ## Pause and Emergency Controls
 
 `pause`, `unpause`, `activate_emergency_pause`, and `resolve_emergency` require
@@ -125,6 +141,7 @@ Implemented events:
 - `("released", contract_id, milestone_index)` on release
 - `("rep_issd", contract_id)` on reputation issuance
 - `("cancelled", contract_id)` on cancellation
+- `("finalized", contract_id)` on finalization
 
 There is no dedicated deposit event in the current implementation unless the
 deposit changes contract status and therefore emits an audit event. Structured
@@ -157,8 +174,6 @@ These features are not implemented entrypoints today:
   [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313).
 - Protocol fee treasury withdrawal: planned in
   [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
-- Finalization with immutable close metadata: planned in
-  [#320](https://github.com/Talenttrust/Talenttrust-Contracts/issues/320).
 - Governed parameter setter/readiness wiring: planned in
   [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323).
 - Structured deposit and fee events: planned in

@@ -20,9 +20,14 @@ This document reflects the escrow API currently implemented in
   contract.
 - `cancel_contract` requires client or freelancer authorization and rejects
   completed or already-cancelled contracts.
+- `finalize_contract` requires client, freelancer, or assigned arbiter
+  authorization, is allowed only from `Completed` or `Disputed`, and locks
+  future contract-specific mutations with `AlreadyFinalized`.
 - Aggregate amount math uses checked helpers where totals are accumulated.
 - Balance-changing operations verify the core accounting invariant:
   `total_deposited == released_amount + refunded_amount + available_balance`.
+- Finalization summaries use checked arithmetic and persistent storage. They do
+  not expire through TTL and do not create, deduct, or withdraw protocol fees.
 
 ## Known Live Gaps
 
@@ -32,8 +37,8 @@ This document reflects the escrow API currently implemented in
 - The contract records escrow accounting only. Token custody, token transfers,
   and atomic asset movement are outside `lib.rs` and must be handled by a
   separate audited integration.
-- Admin transfer, protocol fees, refunds, disputes, approval expiry, finalization,
-  and storage migration are not implemented public entrypoints.
+- Admin transfer, protocol fees, refunds, approval expiry, and storage migration
+  are not implemented public entrypoints.
 - `ReadinessChecklist.governed_params_set` exists, but no live governance
   parameter entrypoint sets it to `true`.
 

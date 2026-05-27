@@ -58,6 +58,7 @@ impl Escrow {
         current_client.require_auth();
 
         let contract = Self::load_contract(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
         if current_client != contract.client {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
@@ -97,6 +98,7 @@ impl Escrow {
         new_client.require_auth();
 
         let mut contract = Self::load_contract(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
         Self::require_migration_allowed(&env, contract.status);
 
         let key = Self::pending_migration_key(contract_id);

@@ -17,10 +17,11 @@ The escrow implementation follows a fail-closed state machine:
 - deposits cannot exceed the required escrow total
 - releases require a valid unreleased milestone and enough funded balance to cover the payment; caller authorization is not yet implemented for `release_milestone`
 - reputation is gated behind contract completion and is issued once per contract
+- finalization records immutable close metadata for completed or disputed contracts and blocks later contract-specific mutations
 - one-time admin initialization protects pause and emergency controls; two-step admin transfer is planned in [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318)
 - pause and emergency controls block all state-changing escrow operations while active
 
-Planned finalization, protocol-fee, governance-transfer, and migration features are explicitly labeled in the escrow docs until their entrypoints land.
+Planned protocol-fee, governance-transfer, and migration features are explicitly labeled in the escrow docs until their entrypoints land.
 
 ```bash
 # Run tests (includes 95%+ coverage negative path testing for escrow)
@@ -71,11 +72,13 @@ Prerequisites:
 
 Common commands:
 
-## Escrow closure finalization
+## Escrow Closure Finalization
 
-Planned: `finalize_contract` is not implemented in `contracts/escrow/src/lib.rs`.
-Immutable close metadata and post-finalization immutability are tracked in
-[#320](https://github.com/Talenttrust/Talenttrust-Contracts/issues/320).
+`finalize_contract(contract_id, finalizer)` records immutable close metadata for
+contracts in `Completed` or `Disputed` status. The finalizer must be the stored
+client, freelancer, or assigned arbiter and must authorize the call. After
+finalization, subsequent contract-specific mutating calls fail with
+`AlreadyFinalized`.
 
 ## CI/CD
 

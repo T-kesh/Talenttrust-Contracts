@@ -29,6 +29,7 @@ pub const PENDING_MIGRATION_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 3;
 ///
 /// Uses saturating addition so the result never wraps on a pathological ledger
 /// sequence.
+#[allow(dead_code)] // used by tests and exposed constants document planned TTL flows
 pub fn compute_expiry(env: &Env, ttl_ledgers: u32) -> u32 {
     env.ledger().sequence().saturating_add(ttl_ledgers)
 }
@@ -67,6 +68,7 @@ where
 /// Returns `true` if the entry exists (and the bump was applied), `false` if
 /// the key is absent (already evicted or never stored).  A `false` return is
 /// not an error; callers may use it to detect expired approvals.
+#[allow(dead_code)] // retained for planned approval/migration TTL bumping
 pub fn extend_if_below_threshold<K>(env: &Env, key: &K, threshold: u32, extend_to: u32) -> bool
 where
     K: IntoVal<Env, Val>,
@@ -92,6 +94,7 @@ where
 
 /// Returns `true` if a transient entry for `key` is currently live in
 /// temporary storage (i.e. has not been evicted and was previously written).
+#[allow(dead_code)] // used in TTL tests; available for future transient workflows
 pub fn has_transient<K>(env: &Env, key: &K) -> bool
 where
     K: IntoVal<Env, Val>,
