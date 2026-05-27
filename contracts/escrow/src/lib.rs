@@ -43,6 +43,8 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
+mod governance;
+
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 
 /// Maximum number of milestones allowed per contract.

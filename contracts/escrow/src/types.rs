@@ -21,6 +21,8 @@ pub enum DataKey {
     PendingClientMigration(u32),
     // Protocol / governance
     ProtocolFeeBps,
+    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    PendingAdmin,
     AccumulatedProtocolFees,
     ReadinessChecklist,
 }
