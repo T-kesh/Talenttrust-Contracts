@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, Env, Symbol, symbol_short};
 use crate::{DataKey, EscrowError};
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 /// Governance-related privileged operations and audit events.
 ///
@@ -33,13 +33,19 @@ impl super::Escrow {
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
-        let old_bps: u32 = env.storage().persistent().get(&DataKey::ProtocolFeeBps).unwrap_or(0u32);
-        env.storage().persistent().set(&DataKey::ProtocolFeeBps, &new_bps);
+        let old_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeBps, &new_bps);
 
         // Emit audit-style event for protocol fee change. Topic uses the
         // short symbol to remain consistent with other contract events.
         env.events().publish(
-            (symbol_short!("protocol_fee_bps"),),
+            (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
         );
         true
@@ -65,7 +71,9 @@ impl super::Escrow {
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
-        env.storage().persistent().set(&DataKey::PendingAdmin, &proposed);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingAdmin, &proposed);
 
         env.events().publish(
             (symbol_short!("admin"), Symbol::new(&env, "proposed")),
@@ -102,7 +110,9 @@ impl super::Escrow {
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
 
-        env.storage().persistent().set(&DataKey::Admin, &pending_admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Admin, &pending_admin);
         // clear pending admin
         env.storage().persistent().remove(&DataKey::PendingAdmin);
 

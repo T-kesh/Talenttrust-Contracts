@@ -11,6 +11,7 @@ Rust/Soroban escrow contract for TalentTrust freelancer milestones.
 - Mark the contract `Completed` after the final milestone release.
 - Issue one reputation rating for the freelancer after completion.
 - Cancel non-completed contracts by the stored client or freelancer.
+- Finalize completed or disputed contracts with immutable close metadata.
 - Pause and emergency controls managed by a single initialized admin.
 
 ## Current Public Entrypoints
@@ -29,7 +30,9 @@ Rust/Soroban escrow contract for TalentTrust freelancer milestones.
 - `release_milestone(contract_id, milestone_index) -> bool`
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 - `cancel_contract(contract_id, caller) -> bool`
+- `finalize_contract(contract_id, finalizer) -> bool`
 - `get_contract(contract_id) -> EscrowContractData`
+- `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_pending_reputation_credits(freelancer) -> u32`
 
@@ -39,7 +42,7 @@ Rust/Soroban escrow contract for TalentTrust freelancer milestones.
   but it does not authenticate a client or arbiter caller.
 - The contract tracks escrow balances in state only. Token custody and transfers
   are not implemented in `contracts/escrow/src/lib.rs`.
-- `finalize_contract`, `withdraw_leftover`, protocol fee accounting, protocol
+- `withdraw_leftover`, protocol fee accounting, protocol
   fee withdrawal, two-step admin transfer, dispute/refund flows, and
   `migrate_state` are not live entrypoints.
 

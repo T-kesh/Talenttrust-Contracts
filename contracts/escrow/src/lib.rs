@@ -40,13 +40,10 @@ pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValid
 mod governance;
 
 mod ttl;
-mod governance;
 pub use ttl::{
     LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS,
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
-
-mod governance;
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 
@@ -115,6 +112,9 @@ pub struct MainnetReadinessInfo {
 
 #[contract]
 pub struct Escrow;
+
+mod finalize;
+pub use finalize::FinalizationRecord;
 
 mod migration;
 pub use migration::PendingClientMigration;
@@ -211,6 +211,17 @@ impl Escrow {
         }
     }
 
+    /// Panics with `AlreadyFinalized` if a contract has immutable close metadata.
+    fn require_not_finalized(env: &Env, contract_id: u32) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Finalization(contract_id))
+        {
+            env.panic_with_error(EscrowError::AlreadyFinalized);
+        }
+    }
+
     /// Panics with `NotInitialized` if `initialize` has not been called.
     fn require_initialized(env: &Env) {
         if !env
@@ -268,7 +279,12 @@ impl Escrow {
     ) {
         env.events().publish(
             (symbol_short!("deposit"), contract_id),
-            (amount, total_deposited, status as u32, env.ledger().timestamp()),
+            (
+                amount,
+                total_deposited,
+                status as u32,
+                env.ledger().timestamp(),
+            ),
         );
     }
 
@@ -287,7 +303,11 @@ impl Escrow {
         net: i128,
     ) {
         env.events().publish(
-            (symbol_short!("protocol_fee"), contract_id, milestone_index),
+            (
+                Symbol::new(env, "protocol_fee"),
+                contract_id,
+                milestone_index,
+            ),
             (fee, net, env.ledger().timestamp()),
         );
     }
@@ -562,6 +582,7 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        Self::require_not_finalized(&env, contract_id);
 
         let old_status = contract.status;
         let prior_deposited = contract.total_deposited;
@@ -627,7 +648,6 @@ impl Escrow {
     /// arbiter authorization until the release authorization entrypoint lands.
     pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
         Self::require_not_paused(&env);
-        caller.require_auth();
 
         let key = DataKey::Contract(contract_id);
         let mut contract = env
@@ -635,6 +655,7 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        Self::require_not_finalized(&env, contract_id);
 
         if contract.status != ContractStatus::Funded
             && contract.status != ContractStatus::PartiallyFunded
@@ -705,12 +726,7 @@ impl Escrow {
             (milestone_amount, env.ledger().timestamp()),
         );
 
-        Self::maybe_emit_protocol_fee_event(
-            &env,
-            contract_id,
-            milestone_index,
-            milestone_amount,
-        );
+        Self::maybe_emit_protocol_fee_event(&env, contract_id, milestone_index, milestone_amount);
         true
     }
 
@@ -725,6 +741,7 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        Self::require_not_finalized(&env, contract_id);
 
         if caller != contract.client && caller != contract.freelancer {
             env.panic_with_error(EscrowError::UnauthorizedRole);
@@ -768,6 +785,7 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        Self::require_not_finalized(&env, contract_id);
 
         if contract.status != ContractStatus::Disputed {
             env.panic_with_error(EscrowError::InvalidStatusTransition);
@@ -828,6 +846,7 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        Self::require_not_finalized(&env, contract_id);
 
         if caller != contract.client {
             env.panic_with_error(EscrowError::UnauthorizedRole);
@@ -931,6 +950,7 @@ impl Escrow {
             .persistent()
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        Self::require_not_finalized(&env, contract_id);
 
         // ─── State guardrails: reject from terminal or in-resolution states ──────
 
@@ -1005,9 +1025,6 @@ impl Escrow {
 mod proptest;
 #[cfg(test)]
 mod simple_amount_test;
-
-#[cfg(test)]
-mod proptest;
 
 #[cfg(test)]
 mod test;

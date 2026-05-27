@@ -19,6 +19,7 @@ declared-but-unused keys, is tracked in
 | `ReputationIssued(id)` | `bool` | `issue_reputation` |
 | `PendingReputationCredits(address)` | `u32` | final release, `issue_reputation` |
 | `Reputation(address)` | `ReputationRecord` | `issue_reputation` |
+| `Finalization(id)` | `FinalizationRecord` | `finalize_contract` |
 | `ReadinessChecklist` | `ReadinessChecklist` | initialize and emergency controls |
 
 ## Declared But Not Live

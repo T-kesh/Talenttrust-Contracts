@@ -5,6 +5,7 @@ At the time of this documentation pass it includes:
 
 - `pause_controls`
 - `emergency_controls`
+- `lifecycle`
 - `summary`
 
 `summary` is a documentation/API drift guard that compares `lib.rs` public

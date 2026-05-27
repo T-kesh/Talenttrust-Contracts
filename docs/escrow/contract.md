@@ -14,14 +14,14 @@ The live contract persists:
 - milestone amounts and per-milestone release flags
 - deposited, released, and refunded accounting totals
 - reputation aggregates and pending reputation credits
+- immutable finalization records for closed contracts
 - one operational admin address
 - pause and emergency flags
 - a readiness checklist
 
 The live contract does not implement token transfers, protocol fee deduction,
-two-step admin transfer, finalization, dispute/refund flows, approval expiry, or
-schema migration entrypoints. Planned items are listed below with tracking
-issues.
+two-step admin transfer, refund flows, approval expiry, or schema migration
+entrypoints. Planned items are listed below with tracking issues.
 
 ## Public Entrypoints
 
@@ -32,7 +32,9 @@ Core escrow endpoints:
 - `release_milestone(contract_id, milestone_index) -> bool`
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 - `cancel_contract(contract_id, caller) -> bool`
+- `finalize_contract(contract_id, finalizer) -> bool`
 - `get_contract(contract_id) -> EscrowContractData`
+- `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_pending_reputation_credits(freelancer) -> u32`
 
@@ -91,6 +93,16 @@ Requires `caller.require_auth()`. The caller must be the stored client or
 freelancer. Cancellation fails for unknown contracts, already-cancelled
 contracts, completed contracts, and unauthorized callers.
 
+### `finalize_contract(contract_id, finalizer) -> bool`
+
+Requires `finalizer.require_auth()`. The finalizer must be the stored client,
+freelancer, or assigned arbiter. The contract must be in `Completed` or
+`Disputed` status. Finalization writes one immutable `FinalizationRecord` with
+the finalizer, ledger timestamp, and `ContractSummary` snapshot.
+
+After finalization, contract-specific mutating entrypoints reject with
+`AlreadyFinalized`; read-only queries remain available.
+
 ### Read-only Queries
 
 `get_contract` panics with `ContractNotFound` for unknown ids. Reputation,
@@ -107,6 +119,8 @@ Implemented status transitions:
 - `Created`, `PartiallyFunded`, or `Funded -> Cancelled` through
   `cancel_contract`.
 - `Funded -> Completed` after all milestones are released.
+- `Completed` or `Disputed -> finalized metadata written` through
+  `finalize_contract`. The status itself is preserved in the immutable summary.
 
 `Accepted`, `Disputed`, and `Refunded` enum variants exist but no public
 entrypoint currently transitions a contract into those states.
@@ -125,6 +139,7 @@ Implemented event topics:
 - `("released", contract_id, milestone_index)`
 - `("rep_issd", contract_id)`
 - `("cancelled", contract_id)`
+- `("finalized", contract_id)`
 
 The deterministic v1 lifecycle event schema previously described for
 `approve`, `refund`, `finalize`, `withdraw`, and protocol-fee events is not
@@ -138,8 +153,6 @@ implemented in `lib.rs`.
   [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313)
 - Protocol fee withdrawal:
   [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314)
-- Immutable finalization record:
-  [#320](https://github.com/Talenttrust/Talenttrust-Contracts/issues/320)
 - Governed parameter setter/readiness wiring:
   [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323)
 - Structured deposit and fee events:
@@ -157,6 +170,8 @@ implemented in `lib.rs`.
 - Release accounting is state-only; actual token custody and transfer logic are
   outside the current contract surface.
 - Duplicate release and duplicate reputation issuance are rejected.
+- Finalization is authenticated, allowed only from `Completed` or `Disputed`,
+  and prevents later contract-specific state mutation.
 - Storage TTL constants are exported for planned pending records, but current
   live lifecycle records use persistent storage and no public approval/migration
   TTL flow exists.

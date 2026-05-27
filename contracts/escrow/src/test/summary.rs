@@ -8,12 +8,13 @@
 extern crate std;
 
 const LIB_RS: &str = include_str!("../lib.rs");
+const FINALIZE_RS: &str = include_str!("../finalize.rs");
 const DOCS_README: &str = include_str!("../../../../docs/escrow/README.md");
 const DOCS_CONTRACT: &str = include_str!("../../../../docs/escrow/contract.md");
 const CONTRACT_README: &str = include_str!("../../README.md");
 const ROOT_README: &str = include_str!("../../../../README.md");
 
-const IMPLEMENTED_ENTRYPOINTS: [&str; 17] = [
+const IMPLEMENTED_ENTRYPOINTS: [&str; 19] = [
     "initialize",
     "get_admin",
     "pause",
@@ -28,13 +29,14 @@ const IMPLEMENTED_ENTRYPOINTS: [&str; 17] = [
     "release_milestone",
     "issue_reputation",
     "cancel_contract",
+    "finalize_contract",
     "get_contract",
+    "get_finalization_record",
     "get_reputation",
     "get_pending_reputation_credits",
 ];
 
-const PLANNED_ENTRYPOINTS: [&str; 15] = [
-    "finalize_contract",
+const PLANNED_ENTRYPOINTS: [&str; 14] = [
     "withdraw_leftover",
     "refund_unreleased_milestones",
     "dispute_contract",
@@ -55,20 +57,22 @@ const PLANNED_ENTRYPOINTS: [&str; 15] = [
 fn implemented_entrypoint_list_matches_lib_rs_public_surface() {
     let mut public_count = 0;
 
-    for line in LIB_RS.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("pub fn ") {
-            public_count += 1;
-            let after_prefix = &trimmed["pub fn ".len()..];
-            let name_end = after_prefix
-                .find('(')
-                .expect("public function should include an argument list");
-            let name = &after_prefix[..name_end];
-            assert!(
-                IMPLEMENTED_ENTRYPOINTS.contains(&name),
-                "documented API guard is missing public function `{}`",
-                name
-            );
+    for source in [LIB_RS, FINALIZE_RS] {
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("pub fn ") {
+                public_count += 1;
+                let after_prefix = &trimmed["pub fn ".len()..];
+                let name_end = after_prefix
+                    .find('(')
+                    .expect("public function should include an argument list");
+                let name = &after_prefix[..name_end];
+                assert!(
+                    IMPLEMENTED_ENTRYPOINTS.contains(&name),
+                    "documented API guard is missing public function `{}`",
+                    name
+                );
+            }
         }
     }
 
