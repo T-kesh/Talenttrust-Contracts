@@ -5,8 +5,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 use crate::{Escrow, EscrowClient, EscrowError};
 
 // ─── Submodules ───────────────────────────────────────────────────────────────
-
-mod accounting_invariants;
+mod client_migration;
 mod emergency_controls;
 mod pause_controls;
 mod release_authorization;
