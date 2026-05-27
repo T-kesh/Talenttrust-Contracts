@@ -1,273 +1,290 @@
-//! Tests for raise_dispute and resolve_dispute.
+use crate::{ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, EscrowError};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-#![cfg(test)]
-
-use soroban_sdk::{testutils::Address as _, vec, Address, BytesN, Env};
-
-use crate::{ContractStatus, DisputeResolution, Escrow, EscrowClient};
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-fn register(env: &Env) -> EscrowClient {
-    EscrowClient::new(env, &env.register(Escrow, ()))
+fn setup_initialized() -> (Env, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    assert!(client.initialize(&admin));
+    (env, contract_id)
 }
 
-fn participants(env: &Env) -> (Address, Address, Address) {
-    (
-        Address::generate(env),
-        Address::generate(env),
-        Address::generate(env),
-    )
+fn create_client<'a>(env: &'a Env, contract_id: &Address) -> EscrowClient<'a> {
+    EscrowClient::new(env, contract_id)
 }
 
-fn reason_hash(env: &Env) -> BytesN<32> {
-    BytesN::from_array(env, &[0xabu8; 32])
-}
-
-/// Create a funded contract with an arbiter.
-fn funded_with_arbiter(env: &Env, escrow: &EscrowClient) -> (Address, Address, Address, u32) {
-    let (client_addr, freelancer_addr, arbiter_addr) = participants(env);
-    let milestones = vec![env, 100_i128, 200_i128];
-    let id = escrow.create_contract(
+fn funded_contract_with_arbiter(
+    env: &Env,
+    client: &EscrowClient<'_>,
+    milestones: soroban_sdk::Vec<i128>,
+    deposit_amount: i128,
+    deposit_mode: DepositMode,
+) -> (Address, Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let arbiter_addr = Address::generate(env);
+    let contract_id = client.create_contract_with_arbiter(
         &client_addr,
         &freelancer_addr,
-        &Some(arbiter_addr.clone()),
+        &arbiter_addr,
         &milestones,
+        &deposit_mode,
     );
-    escrow.deposit_funds(&id, &300_i128);
-    (client_addr, freelancer_addr, arbiter_addr, id)
+    assert!(client.deposit_funds(&contract_id, &deposit_amount));
+    (client_addr, freelancer_addr, arbiter_addr, contract_id)
 }
-
-// ── raise_dispute happy paths ─────────────────────────────────────────────────
 
 #[test]
 fn client_can_raise_dispute_on_funded_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, _, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128, 200_i128],
+        300_i128,
+        DepositMode::ExactTotal,
+    );
 
-    assert!(escrow.raise_dispute(&id, &client_addr, &reason_hash(&env)));
-
-    let contract = escrow.get_contract(&id);
-    assert_eq!(contract.status, ContractStatus::Disputed);
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
+    assert_eq!(
+        client.get_contract(&escrow_id).status,
+        ContractStatus::Disputed
+    );
 }
 
 #[test]
-fn freelancer_can_raise_dispute_on_funded_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (_, freelancer_addr, _, id) = funded_with_arbiter(&env, &escrow);
+fn freelancer_can_raise_dispute_on_partially_funded_contract() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (_, freelancer_addr, _, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128, 200_i128],
+        150_i128,
+        DepositMode::Incremental,
+    );
 
-    assert!(escrow.raise_dispute(&id, &freelancer_addr, &reason_hash(&env)));
-
-    let contract = escrow.get_contract(&id);
-    assert_eq!(contract.status, ContractStatus::Disputed);
+    assert!(client.raise_dispute(&escrow_id, &freelancer_addr));
+    assert_eq!(
+        client.get_contract(&escrow_id).status,
+        ContractStatus::Disputed
+    );
 }
 
 #[test]
-fn raise_dispute_stores_metadata() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
-    let hash = reason_hash(&env);
+fn raise_dispute_requires_contract_party() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (_, _, _, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128],
+        100_i128,
+        DepositMode::ExactTotal,
+    );
 
-    escrow.raise_dispute(&id, &client_addr, &hash);
-
-    let meta = escrow.get_dispute(&id);
-    assert_eq!(meta.reason_hash, hash);
-    assert_eq!(meta.raised_by, client_addr);
-}
-
-// ── raise_dispute error paths ─────────────────────────────────────────────────
-
-#[test]
-#[should_panic]
-fn arbiter_cannot_raise_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (_, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
-
-    escrow.raise_dispute(&id, &arbiter_addr, &reason_hash(&env));
-}
-
-#[test]
-#[should_panic]
-fn third_party_cannot_raise_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (_, _, _, id) = funded_with_arbiter(&env, &escrow);
     let outsider = Address::generate(&env);
-
-    escrow.raise_dispute(&id, &outsider, &reason_hash(&env));
+    super::assert_contract_error(
+        client.try_raise_dispute(&escrow_id, &outsider),
+        EscrowError::UnauthorizedRole,
+    );
 }
 
 #[test]
-#[should_panic]
-fn cannot_raise_dispute_without_arbiter() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
+fn raise_dispute_requires_assigned_arbiter() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 100_i128];
-    let id = escrow.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
-    escrow.deposit_funds(&id, &100_i128);
-
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
-}
-
-#[test]
-#[should_panic]
-fn cannot_raise_dispute_on_created_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, freelancer_addr, arbiter_addr) = participants(&env);
-    let milestones = vec![&env, 100_i128];
-    let id = escrow.create_contract(
+    let escrow_id = client.create_contract(
         &client_addr,
         &freelancer_addr,
-        &Some(arbiter_addr),
-        &milestones,
+        &vec![&env, 100_i128],
+        &DepositMode::ExactTotal,
     );
-    // Not funded — should fail
+    assert!(client.deposit_funds(&escrow_id, &100_i128));
 
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+    super::assert_contract_error(
+        client.try_raise_dispute(&escrow_id, &client_addr),
+        EscrowError::ArbiterRequired,
+    );
 }
 
 #[test]
-#[should_panic]
-fn cannot_raise_dispute_twice() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
+fn resolve_full_refund_marks_refunded_and_closes_accounting() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, arbiter_addr, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 125_i128, 75_i128],
+        200_i128,
+        DepositMode::ExactTotal,
+    );
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
 
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
-    // Already Disputed, not Funded — second call must fail
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
-}
+    assert!(client.resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund,));
 
-// ── resolve_dispute happy paths ───────────────────────────────────────────────
-
-#[test]
-fn arbiter_can_resolve_with_release() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
-
-    assert!(escrow.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::Release));
-
-    assert_eq!(escrow.get_contract(&id).status, ContractStatus::Completed);
+    let contract = client.get_contract(&escrow_id);
+    assert_eq!(contract.status, ContractStatus::Refunded);
+    assert_eq!(contract.released_amount, 0);
+    assert_eq!(contract.refunded_amount, 200);
+    assert_eq!(
+        contract.released_amount + contract.refunded_amount,
+        contract.total_deposited
+    );
 }
 
 #[test]
-fn arbiter_can_resolve_with_refund() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+fn resolve_partial_refund_applies_70_30_to_remaining_balance() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, arbiter_addr, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 101_i128, 100_i128],
+        201_i128,
+        DepositMode::ExactTotal,
+    );
+    assert!(client.release_milestone(&escrow_id, &0));
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
 
-    assert!(escrow.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::Refund));
+    assert!(client.resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::PartialRefund,));
 
-    assert_eq!(escrow.get_contract(&id).status, ContractStatus::Refunded);
+    let contract = client.get_contract(&escrow_id);
+    assert_eq!(contract.status, ContractStatus::Completed);
+    assert_eq!(contract.released_amount, 131);
+    assert_eq!(contract.refunded_amount, 70);
+    assert_eq!(
+        contract.released_amount + contract.refunded_amount,
+        contract.total_deposited
+    );
 }
 
 #[test]
-fn arbiter_can_resolve_with_cancel() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+fn resolve_split_accepts_custom_amounts_that_match_available_balance() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, arbiter_addr, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 40_i128, 60_i128],
+        100_i128,
+        DepositMode::ExactTotal,
+    );
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
 
-    assert!(escrow.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::Cancel));
+    assert!(client.resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::Split(35, 65),));
 
-    assert_eq!(escrow.get_contract(&id).status, ContractStatus::Cancelled);
-}
-
-// ── resolve_dispute error paths ───────────────────────────────────────────────
-
-#[test]
-#[should_panic]
-fn client_cannot_resolve_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
-
-    escrow.resolve_dispute(&id, &client_addr, &DisputeResolution::Release);
+    let contract = client.get_contract(&escrow_id);
+    assert_eq!(contract.status, ContractStatus::Completed);
+    assert_eq!(contract.refunded_amount, 35);
+    assert_eq!(contract.released_amount, 65);
 }
 
 #[test]
-#[should_panic]
-fn freelancer_cannot_resolve_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, freelancer_addr, _, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+fn resolve_split_rejects_invalid_totals() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, arbiter_addr, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128],
+        100_i128,
+        DepositMode::ExactTotal,
+    );
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
 
-    escrow.resolve_dispute(&id, &freelancer_addr, &DisputeResolution::Release);
+    super::assert_contract_error(
+        client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::Split(30, 50)),
+        EscrowError::InvalidDisputeSplit,
+    );
 }
 
 #[test]
-#[should_panic]
-fn third_party_cannot_resolve_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+fn resolve_dispute_requires_assigned_arbiter() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, _, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128],
+        100_i128,
+        DepositMode::ExactTotal,
+    );
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
+
     let outsider = Address::generate(&env);
-
-    escrow.resolve_dispute(&id, &outsider, &DisputeResolution::Release);
+    super::assert_contract_error(
+        client.try_resolve_dispute(&escrow_id, &outsider, &DisputeResolution::FullPayout),
+        EscrowError::UnauthorizedRole,
+    );
 }
 
 #[test]
-#[should_panic]
-fn cannot_resolve_non_disputed_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (_, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
-    // Not disputed yet
+fn resolve_dispute_rejects_non_disputed_contract() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (_, _, arbiter_addr, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128],
+        100_i128,
+        DepositMode::ExactTotal,
+    );
 
-    escrow.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::Release);
+    super::assert_contract_error(
+        client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
+        EscrowError::InvalidStatusTransition,
+    );
 }
 
-// ── state blocking ────────────────────────────────────────────────────────────
-
 #[test]
-#[should_panic]
-fn release_milestone_blocked_in_disputed_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
-    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+fn release_is_blocked_while_disputed() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, _, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128, 50_i128],
+        150_i128,
+        DepositMode::ExactTotal,
+    );
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
 
-    escrow.release_milestone(&id, &0);
+    super::assert_contract_error(
+        client.try_release_milestone(&escrow_id, &0),
+        EscrowError::InvalidStatusTransition,
+    );
 }
 
-// ── get_dispute error path ────────────────────────────────────────────────────
-
 #[test]
-#[should_panic]
-fn get_dispute_fails_when_no_dispute_exists() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register(&env);
-    let (_, _, _, id) = funded_with_arbiter(&env, &escrow);
+fn pause_blocks_raise_and_resolve_dispute() {
+    let (env, contract_id) = setup_initialized();
+    let client = create_client(&env, &contract_id);
+    let (client_addr, _, arbiter_addr, escrow_id) = funded_contract_with_arbiter(
+        &env,
+        &client,
+        vec![&env, 100_i128],
+        100_i128,
+        DepositMode::ExactTotal,
+    );
 
-    escrow.get_dispute(&id);
+    assert!(client.pause());
+    super::assert_contract_error(
+        client.try_raise_dispute(&escrow_id, &client_addr),
+        EscrowError::ContractPaused,
+    );
+
+    assert!(client.unpause());
+    assert!(client.raise_dispute(&escrow_id, &client_addr));
+    assert!(client.pause());
+
+    super::assert_contract_error(
+        client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
+        EscrowError::ContractPaused,
+    );
 }

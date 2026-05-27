@@ -31,6 +31,9 @@ pub use types::{
     MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
+mod dispute;
+pub use dispute::DisputeResolution;
+
 mod amount_validation;
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValidationError};
 
@@ -113,6 +116,82 @@ pub use migration::PendingClientMigration;
 
 #[contractimpl]
 impl Escrow {
+    fn create_contract_internal(
+        env: &Env,
+        client: Address,
+        freelancer: Address,
+        arbiter: Option<Address>,
+        milestone_amounts: Vec<i128>,
+        deposit_mode: DepositMode,
+    ) -> u32 {
+        if client == freelancer {
+            env.panic_with_error(EscrowError::InvalidParticipant);
+        }
+        if let Some(arbiter_addr) = arbiter.clone() {
+            if arbiter_addr == client || arbiter_addr == freelancer {
+                env.panic_with_error(EscrowError::InvalidParticipant);
+            }
+        }
+        if milestone_amounts.is_empty() {
+            env.panic_with_error(EscrowError::EmptyMilestones);
+        }
+        if milestone_amounts.len() > MAX_MILESTONES {
+            env.panic_with_error(EscrowError::TooManyMilestones);
+        }
+
+        let mut total: i128 = 0;
+        for i in 0..milestone_amounts.len() {
+            let amt = milestone_amounts.get(i).unwrap();
+            if amt <= 0 {
+                env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+            }
+            total = safe_add_amounts(total, amt)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        }
+        if total > MAX_TOTAL_ESCROW_STROOPS {
+            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+        }
+
+        let id: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &(id + 1));
+
+        let data = EscrowContractData {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            arbiter,
+            milestones: milestone_amounts,
+            status: ContractStatus::Created,
+            total_deposited: 0,
+            released_amount: 0,
+            refunded_amount: 0,
+            reputation_issued: false,
+            deposit_mode,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(id), &data);
+
+        Self::emit_audit_event(
+            env,
+            id,
+            ContractStatus::Created,
+            ContractStatus::Created,
+            &client,
+        );
+
+        env.events().publish(
+            (symbol_short!("created"), id),
+            (client, freelancer, env.ledger().timestamp()),
+        );
+        id
+    }
+
     // ─── Guard ───────────────────────────────────────────────────────────────
 
     /// Panics with `ContractPaused` if the contract is paused or in emergency.
@@ -376,68 +455,36 @@ impl Escrow {
         Self::require_not_paused(&env);
         client.require_auth();
 
-        if client == freelancer {
-            env.panic_with_error(EscrowError::InvalidParticipant);
-        }
-        if milestone_amounts.is_empty() {
-            env.panic_with_error(EscrowError::EmptyMilestones);
-        }
-        if milestone_amounts.len() > MAX_MILESTONES {
-            env.panic_with_error(EscrowError::TooManyMilestones);
-        }
-
-        let mut total: i128 = 0;
-        for i in 0..milestone_amounts.len() {
-            let amt = milestone_amounts.get(i).unwrap();
-            if amt <= 0 {
-                env.panic_with_error(EscrowError::InvalidMilestoneAmount);
-            }
-            total = safe_add_amounts(total, amt)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-        }
-        if total > MAX_TOTAL_ESCROW_STROOPS {
-            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
-        }
-
-        let id: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::NextContractId)
-            .unwrap_or(1);
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextContractId, &(id + 1));
-
-        let data = EscrowContractData {
-            client: client.clone(),
-            freelancer: freelancer.clone(),
-            arbiter: None,
-            milestones: milestone_amounts,
-            status: ContractStatus::Created,
-            total_deposited: 0,
-            released_amount: 0,
-            refunded_amount: 0,
-            reputation_issued: false,
-            deposit_mode,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(id), &data);
-
-        // Audit: contract created
-        Self::emit_audit_event(
+        Self::create_contract_internal(
             &env,
-            id,
-            ContractStatus::Created,
-            ContractStatus::Created,
-            &client,
-        );
+            client,
+            freelancer,
+            None,
+            milestone_amounts,
+            deposit_mode,
+        )
+    }
 
-        env.events().publish(
-            (symbol_short!("created"), id),
-            (client, freelancer, env.ledger().timestamp()),
-        );
-        id
+    /// Create a new escrow contract with an assigned arbiter for dispute resolution.
+    pub fn create_contract_with_arbiter(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        arbiter: Address,
+        milestone_amounts: Vec<i128>,
+        deposit_mode: DepositMode,
+    ) -> u32 {
+        Self::require_not_paused(&env);
+        client.require_auth();
+
+        Self::create_contract_internal(
+            &env,
+            client,
+            freelancer,
+            Some(arbiter),
+            milestone_amounts,
+            deposit_mode,
+        )
     }
 
     /// Deposit funds into an escrow contract. Blocked when paused.
@@ -534,8 +581,10 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        if caller != contract.client {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
+        if contract.status != ContractStatus::Funded
+            && contract.status != ContractStatus::PartiallyFunded
+        {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
         }
 
         if milestone_index >= contract.milestones.len() {
@@ -599,6 +648,103 @@ impl Escrow {
         env.events().publish(
             (symbol_short!("released"), contract_id, milestone_index),
             (milestone_amount, env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Raise a dispute on a funded escrow. Only the client or freelancer may call this.
+    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+        if contract.arbiter.is_none() {
+            env.panic_with_error(EscrowError::ArbiterRequired);
+        }
+        if contract.status != ContractStatus::Funded
+            && contract.status != ContractStatus::PartiallyFunded
+        {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        let old_status = contract.status;
+        contract.status = ContractStatus::Disputed;
+
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+        env.storage().persistent().set(&key, &contract);
+
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &caller);
+        env.events().publish(
+            (symbol_short!("dispute"), contract_id),
+            (caller, env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Resolve a disputed escrow and distribute the remaining balance according to the resolution.
+    pub fn resolve_dispute(
+        env: Env,
+        contract_id: u32,
+        arbiter: Address,
+        resolution: DisputeResolution,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        arbiter.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if contract.status != ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+        if contract.arbiter.clone() != Some(arbiter.clone()) {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        let old_status = contract.status;
+        let (client_payout, freelancer_payout) =
+            dispute::resolution_payouts(&contract, &resolution)
+                .unwrap_or_else(|err| env.panic_with_error(err));
+
+        contract.refunded_amount = safe_add_amounts(contract.refunded_amount, client_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.released_amount = safe_add_amounts(contract.released_amount, freelancer_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        if safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            != Some(contract.total_deposited)
+        {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
+
+        contract.status = dispute::final_status_after_resolution(&contract);
+
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+        env.storage().persistent().set(&key, &contract);
+
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &arbiter);
+        env.events().publish(
+            (symbol_short!("dsp_res"), contract_id),
+            (
+                arbiter,
+                resolution.code(),
+                client_payout,
+                freelancer_payout,
+                env.ledger().timestamp(),
+            ),
         );
         true
     }

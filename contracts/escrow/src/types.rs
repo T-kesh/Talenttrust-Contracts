@@ -74,6 +74,8 @@ pub enum EscrowError {
     ExactDepositRequired = 41,
     DepositWouldExceedTotal = 42,
     AccountingInvariantViolated = 43,
+    ArbiterRequired = 44,
+    InvalidDisputeSplit = 45,
 }
 
 #[contracttype]
