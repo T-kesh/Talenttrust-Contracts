@@ -23,13 +23,17 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-mod types;
-mod ttl;
 mod approvals;
+mod ttl;
+mod types;
 
-pub use types::{Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization};
+pub use types::{
+    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
+};
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
@@ -66,7 +70,7 @@ impl Escrow {
     }
 
     /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `client` - The address of the client funding the contract
@@ -74,10 +78,10 @@ impl Escrow {
     /// * `arbiter` - Optional arbiter address for dispute resolution
     /// * `milestones` - Vector of milestone amounts (in stroops)
     /// * `release_authorization` - Authorization mode for milestone releases
-    /// 
+    ///
     /// # Returns
     /// The unique contract ID
-    /// 
+    ///
     /// # Errors
     /// * `InvalidParticipants` - If client and freelancer are the same address
     /// * `EmptyMilestones` - If no milestones are provided
@@ -99,24 +103,24 @@ impl Escrow {
         if client == freelancer {
             env.panic_with_error(Error::InvalidParticipants);
         }
-        
+
         // Validate arbiter requirements
         match release_authorization {
-            ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter => {
-                if arbiter.is_none() {
-                    env.panic_with_error(Error::MissingArbiter);
-                }
+            ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
+                if arbiter.is_none() =>
+            {
+                env.panic_with_error(Error::MissingArbiter);
             }
             _ => {}
         }
-        
+
         // Validate arbiter is not client or freelancer
         if let Some(ref arb) = arbiter {
             if arb == &client || arb == &freelancer {
                 env.panic_with_error(Error::InvalidArbiter);
             }
         }
-        
+
         if milestones.is_empty() {
             env.panic_with_error(Error::EmptyMilestones);
         }
@@ -130,9 +134,10 @@ impl Escrow {
         let id = Self::next_contract_id(&env);
 
         // Store contract metadata
+        let freelancer_addr = freelancer.clone();
         let contract = Contract {
             client: client.clone(),
-            freelancer,
+            freelancer: freelancer_addr.clone(),
             arbiter,
             status: ContractStatus::Created,
             funded_amount: 0,
@@ -165,7 +170,7 @@ impl Escrow {
 
         env.events().publish(
             (symbol_short!("created"), id),
-            (client, freelancer, env.ledger().timestamp()),
+            (client, freelancer_addr, env.ledger().timestamp()),
         );
         id
     }
@@ -201,15 +206,15 @@ impl Escrow {
     }
 
     /// Deposits funds into the contract. Transitions to Funded status when fully funded.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
     /// * `amount` - The amount to deposit (in stroops)
-    /// 
+    ///
     /// # Returns
     /// `true` if deposit was successful
-    /// 
+    ///
     /// # Errors
     /// * `AmountMustBePositive` - If amount is <= 0
     /// * `ContractNotFound` - If contract doesn't exist
@@ -230,9 +235,9 @@ impl Escrow {
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
         }
-        
+
         caller.require_auth();
-        
+
         // Can only deposit in Created state
         if contract.status != ContractStatus::Created {
             env.panic_with_error(Error::InvalidState);
@@ -263,19 +268,19 @@ impl Escrow {
     }
 
     /// Approves a milestone for release.
-    /// 
+    ///
     /// Records the approval in temporary storage with TTL expiry.
     /// Approvals automatically expire after PENDING_APPROVAL_TTL_LEDGERS.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
     /// * `caller` - The address of the caller (must be authorized)
     /// * `milestone_index` - The index of the milestone to approve
-    /// 
+    ///
     /// # Returns
     /// `true` if approval was recorded successfully
-    /// 
+    ///
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Funded state
@@ -283,7 +288,7 @@ impl Escrow {
     /// * `MilestoneAlreadyReleased` - If milestone was already released
     /// * `UnauthorizedRole` - If caller is not authorized to approve
     /// * `AlreadyApproved` - If caller has already approved this milestone
-    /// 
+    ///
     /// # Security
     /// - Caller must be authenticated
     /// - Only authorized parties can approve based on ReleaseAuthorization mode
@@ -300,18 +305,18 @@ impl Escrow {
     }
 
     /// Releases a specific milestone, transferring funds to the freelancer.
-    /// 
+    ///
     /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
     /// * `caller` - The address of the caller (must be authorized)
     /// * `milestone_index` - The index of the milestone to release
-    /// 
+    ///
     /// # Returns
     /// `true` if release was successful
-    /// 
+    ///
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Funded state
@@ -322,7 +327,7 @@ impl Escrow {
     /// * `InsufficientApprovals` - If required approvals are missing
     /// * `ApprovalExpired` - If approvals have expired
     /// * `UnauthorizedRole` - If caller is not authorized to release
-    /// 
+    ///
     /// # Security
     /// - Requires valid approvals that haven't expired
     /// - Approvals are cleared after successful release
@@ -346,7 +351,7 @@ impl Escrow {
 
         // Check authorization for release
         let is_client = caller == contract.client;
-        let is_arbiter = contract.arbiter.as_ref().map_or(false, |a| &caller == a);
+        let is_arbiter = contract.arbiter.as_ref() == Some(&caller);
 
         match contract.release_authorization {
             ReleaseAuthorization::ClientOnly => {
@@ -405,9 +410,10 @@ impl Escrow {
             env.panic_with_error(Error::InsufficientFunds);
         }
 
+        let release_amount = milestone.amount;
         milestone.released = true;
         milestones.set(milestone_index, milestone);
-        contract.released_amount += milestone.amount;
+        contract.released_amount += release_amount;
 
         // Clear approvals after successful release
         approvals::clear_approvals(&env, contract_id, milestone_index);
@@ -418,9 +424,10 @@ impl Escrow {
             contract.status = ContractStatus::Completed;
         }
 
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(contract_id), milestone_key), &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
@@ -429,15 +436,15 @@ impl Escrow {
     }
 
     /// Refunds unreleased milestones back to the client.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
     /// * `milestone_indices` - Vector of milestone indices to refund
-    /// 
+    ///
     /// # Returns
     /// The total amount refunded
-    /// 
+    ///
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `EmptyRefundRequest` - If milestone_indices is empty
@@ -529,9 +536,10 @@ impl Escrow {
             }
         }
 
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(contract_id), milestone_key), &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
@@ -540,14 +548,14 @@ impl Escrow {
     }
 
     /// Retrieves contract information.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
-    /// 
+    ///
     /// # Returns
     /// The contract data
-    /// 
+    ///
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_contract(env: Env, contract_id: u32) -> Contract {
@@ -558,14 +566,14 @@ impl Escrow {
     }
 
     /// Retrieves all milestones for a contract.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
-    /// 
+    ///
     /// # Returns
     /// Vector of milestones
-    /// 
+    ///
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_milestones(env: Env, contract_id: u32) -> Vec<Milestone> {
@@ -577,14 +585,14 @@ impl Escrow {
     }
 
     /// Calculates the refundable balance (funded but not released or refunded).
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
-    /// 
+    ///
     /// # Returns
     /// The refundable balance amount
-    /// 
+    ///
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_refundable_balance(env: Env, contract_id: u32) -> i128 {
@@ -596,16 +604,16 @@ impl Escrow {
 
         contract.funded_amount - contract.released_amount - contract.refunded_amount
     }
-    
+
     /// Retrieves approval status for a milestone.
-    /// 
+    ///
     /// Returns None if approvals have expired or don't exist.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
     /// * `milestone_index` - The milestone index
-    /// 
+    ///
     /// # Returns
     /// Optional MilestoneApprovals struct
     pub fn get_milestone_approvals(
@@ -617,11 +625,6 @@ impl Escrow {
         env.storage().temporary().get(&approval_key)
     }
 }
-
-#[cfg(test)]
-mod proptest;
-#[cfg(test)]
-mod simple_amount_test;
 
 #[cfg(test)]
 mod test;

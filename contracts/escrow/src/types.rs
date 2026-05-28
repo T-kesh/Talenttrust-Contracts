@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, String};
+use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +97,7 @@ pub struct GovernedParameters {
 
 // ─── Indexer summary types ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 #[contracttype]
