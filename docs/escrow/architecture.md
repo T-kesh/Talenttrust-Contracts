@@ -1,21 +1,29 @@
-# Escrow Contract Architecture
+# Escrow Architecture
 
-## Overview
-The TalentTrust Escrow protocol facilitates secure, milestone-based compensation for freelancers on the Stellar network using Soroban smart contracts.
+The live escrow contract is implemented in `contracts/escrow/src/lib.rs`.
 
-## Lifecycle State Machine
-The contract relies on a rigid physical state machine governed by `ContractStatus`:
-1. **Created**: Initialized with parameters (Client, Freelancer, Arbiter, Milestones). No funds hold yet.
-2. **Funded**: Client deposits the exact `i128` sum of the underlying milestones. Authorization checks bind here.
-3. **Completed**: All milestones have been marked `released: true`.
-4. **Disputed**: Placeholder state for active arbitration interventions.
+## Current Components
 
-## Authorization
-Funds cannot be released until explicit `ReleaseAuthorization` requirements are met:
-- `ClientOnly`: Client must approve.
-- `ClientAndArbiter`: Either Client or Arbiter can approve.
-- `ArbiterOnly`: Only Arbiter can approve.
-- `MultiSig`: Both must approve.
+- `EscrowContractData` stores client, freelancer, optional arbiter field,
+  milestone amounts, status, aggregate accounting, reputation flag, and deposit
+  mode.
+- `DataKey::Contract(id)` stores each escrow record.
+- `DataKey::MilestoneReleased(id, index)` stores one-way milestone release flags.
+- Admin, pause, emergency, readiness, and reputation records are stored in
+  persistent storage.
 
-## Storage
-Contract data is stored persistently using `env.storage().persistent()`. This requires the contract's storage footprint to be actively managed, renewing TTL for long-running escrow agreements.
+## Current Flow
+
+1. `initialize(admin)` sets the operational admin.
+2. `create_contract` stores a new contract in `Created`.
+3. `deposit_funds` moves aggregate accounting to `PartiallyFunded` or `Funded`.
+4. `release_milestone` marks individual milestones released and completes the
+   contract after the final release.
+5. `issue_reputation` records one client-issued freelancer rating.
+6. `cancel_contract` cancels non-completed contracts by client/freelancer auth.
+
+## Not Implemented
+
+Approval modes, dispute resolution, refunds, finalization, protocol fees,
+two-step admin transfer, and migration entrypoints are planned work, not current
+architecture.

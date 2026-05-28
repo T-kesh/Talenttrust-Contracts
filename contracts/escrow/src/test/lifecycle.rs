@@ -1,60 +1,213 @@
-use super::{create_contract, register_client};
-use crate::ContractStatus;
-use soroban_sdk::Env;
+use crate::{ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, EscrowError};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, Address, Env};
 
-#[test]
-fn successful_contract_lifecycle() {
+fn setup() -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let client = register_client(&env);
+    let contract_id = env.register(Escrow, ());
+    (env, contract_id)
+}
 
-    let (_, freelancer_addr, contract_id) = create_contract(&env, &client);
+fn escrow_client<'a>(env: &'a Env, contract_id: &Address) -> EscrowClient<'a> {
+    EscrowClient::new(env, contract_id)
+}
 
-    // Initial state
-    let contract = client.get_contract(&contract_id);
-    assert_eq!(contract.status, ContractStatus::Created);
-
-    // Deposit
-    assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
+fn completed_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &vec![env, 100_i128],
+        &DepositMode::ExactTotal,
+    );
+    assert!(client.deposit_funds(&contract_id, &100_i128));
+    assert!(client.release_milestone(&contract_id, &0));
     assert_eq!(
         client.get_contract(&contract_id).status,
-        ContractStatus::Funded
+        ContractStatus::Completed
     );
+    (client_addr, freelancer_addr, contract_id)
+}
 
-    // Release milestones
-    assert!(client.release_milestone(&contract_id, &0));
-    assert!(client.release_milestone(&contract_id, &1));
-    assert!(client.release_milestone(&contract_id, &2));
-
-    let finalized = client.get_contract(&contract_id);
-    assert_eq!(finalized.status, ContractStatus::Completed);
-    // finalized field is set by finalize_contract, not automatically
-    assert!(client.finalize_contract(&contract_id));
-    assert!(client.get_contract(&contract_id).finalized);
-
-    // Reputation
-    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
-    assert!(client.issue_reputation(&contract_id, &5, &None));
-
-    let reputation = client.get_reputation_record(&freelancer_addr);
-    assert_eq!(reputation.completed_contracts, 1);
-    assert_eq!(reputation.total_rating, 5);
+fn disputed_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let arbiter = Address::generate(env);
+    let contract_id = client.create_contract_with_arbiter(
+        &client_addr,
+        &freelancer_addr,
+        &arbiter,
+        &vec![env, 100_i128],
+        &DepositMode::ExactTotal,
+    );
+    assert!(client.deposit_funds(&contract_id, &100_i128));
+    assert!(client.raise_dispute(&contract_id, &client_addr));
+    assert_eq!(
+        client.get_contract(&contract_id).status,
+        ContractStatus::Disputed
+    );
+    (client_addr, freelancer_addr, arbiter, contract_id)
 }
 
 #[test]
-fn contract_refund_lifecycle() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
+fn finalize_completed_contract_persists_immutable_close_record() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    env.ledger().with_mut(|li| li.timestamp = 1_717_171_717);
+    let (client_addr, freelancer_addr, contract_id) = completed_contract(&env, &client);
 
-    let (_, _, contract_id) = create_contract(&env, &client);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
 
-    assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    assert_eq!(record.finalizer, client_addr);
+    assert_eq!(record.timestamp, 1_717_171_717);
+    assert_eq!(record.summary.client, record.finalizer);
+    assert_eq!(record.summary.freelancer, freelancer_addr);
+    assert_eq!(record.summary.status, ContractStatus::Completed);
+    assert_eq!(record.summary.total_amount, 100);
+    assert_eq!(record.summary.funded_amount, 100);
+    assert_eq!(record.summary.released_amount, 100);
+    assert_eq!(record.summary.refundable_balance, 0);
+    assert_eq!(record.summary.released_milestone_count, 1);
+}
 
-    // Refund remaining
-    assert!(client.refund_remaining_funds(&contract_id));
+#[test]
+fn finalize_disputed_contract_can_be_called_by_assigned_arbiter() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let (_, _, arbiter, contract_id) = disputed_contract(&env, &client);
 
-    let refunded = client.get_contract(&contract_id);
-    assert_eq!(refunded.status, ContractStatus::Refunded);
-    assert!(refunded.finalized);
+    assert!(client.finalize_contract(&contract_id, &arbiter));
+
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    assert_eq!(record.finalizer, arbiter);
+    assert_eq!(record.summary.status, ContractStatus::Disputed);
+    assert_eq!(record.summary.refundable_balance, 100);
+}
+
+#[test]
+fn finalize_completed_contract_can_be_called_by_freelancer() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let (_, freelancer_addr, contract_id) = completed_contract(&env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &freelancer_addr));
+
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    assert_eq!(record.finalizer, freelancer_addr);
+    assert_eq!(record.summary.status, ContractStatus::Completed);
+}
+
+#[test]
+fn finalize_rejects_unauthorized_finalizer() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let (_, _, contract_id) = completed_contract(&env, &client);
+    let outsider = Address::generate(&env);
+
+    super::assert_contract_error(
+        client.try_finalize_contract(&contract_id, &outsider),
+        EscrowError::UnauthorizedRole,
+    );
+    assert!(client.get_finalization_record(&contract_id).is_none());
+}
+
+#[test]
+fn finalize_rejects_non_terminal_contract() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &vec![&env, 100_i128],
+        &DepositMode::ExactTotal,
+    );
+
+    super::assert_contract_error(
+        client.try_finalize_contract(&contract_id, &client_addr),
+        EscrowError::InvalidStatusTransition,
+    );
+    assert!(client.get_finalization_record(&contract_id).is_none());
+}
+
+#[test]
+fn finalize_is_idempotent_guarded() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let (client_addr, _, contract_id) = completed_contract(&env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    super::assert_contract_error(
+        client.try_finalize_contract(&contract_id, &client_addr),
+        EscrowError::AlreadyFinalized,
+    );
+}
+
+#[test]
+fn finalized_contract_rejects_subsequent_mutations() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let (client_addr, freelancer_addr, contract_id) = completed_contract(&env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    super::assert_contract_error(
+        client.try_deposit_funds(&contract_id, &1_i128),
+        EscrowError::AlreadyFinalized,
+    );
+    super::assert_contract_error(
+        client.try_release_milestone(&contract_id, &0),
+        EscrowError::AlreadyFinalized,
+    );
+    super::assert_contract_error(
+        client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128),
+        EscrowError::AlreadyFinalized,
+    );
+    super::assert_contract_error(
+        client.try_cancel_contract(&contract_id, &client_addr),
+        EscrowError::AlreadyFinalized,
+    );
+}
+
+#[test]
+fn finalized_dispute_rejects_resolution() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let (client_addr, _, arbiter, contract_id) = disputed_contract(&env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    super::assert_contract_error(
+        client.try_resolve_dispute(&contract_id, &arbiter, &DisputeResolution::FullRefund),
+        EscrowError::AlreadyFinalized,
+    );
+    super::assert_contract_error(
+        client.try_raise_dispute(&contract_id, &client_addr),
+        EscrowError::AlreadyFinalized,
+    );
+}
+
+#[test]
+fn pause_blocks_finalization() {
+    let (env, client) = setup();
+    let client = escrow_client(&env, &client);
+    let admin = Address::generate(&env);
+    assert!(client.initialize(&admin));
+    let (client_addr, _, contract_id) = completed_contract(&env, &client);
+    assert!(client.pause());
+
+    super::assert_contract_error(
+        client.try_finalize_contract(&contract_id, &client_addr),
+        EscrowError::ContractPaused,
+    );
+    assert!(client.get_finalization_record(&contract_id).is_none());
 }

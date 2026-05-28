@@ -1,80 +1,83 @@
 # Escrow Access Control Enforcement
 
-This document describes role checks enforced across all state-changing escrow entrypoints.
+This document describes role checks enforced in
+`contracts/escrow/src/lib.rs` and the internal helper that implements them.
 
-## Objective
+---
 
-Ensure only valid contract actors (client, freelancer, arbiter) can invoke state mutations, and only in role-appropriate flows.
+## `load_and_auth_admin` Helper
 
-## Role Model
+**Introduced in:** issue #337 — _Refactor repeated admin-load boilerplate into a
+single helper_
 
-- Client:
-  - creates contract (with freelancer)
-  - deposits escrow funds
-  - can approve/release milestones depending on `release_auth`
-  - issues reputation after completion
-- Freelancer:
-  - must authorize participation at contract creation
-  - is the only valid subject for post-completion reputation on that contract
-- Arbiter (optional):
-  - can approve/release milestones where selected release mode allows it
+All four admin-gated control entrypoints previously duplicated the same
+three-step pattern:
 
-## Entry Point Enforcement
-
-### `create_contract`
-
-- Requires `client.require_auth()` and `freelancer.require_auth()`.
-- Rejects same-address client/freelancer.
-- Validates arbiter distinctness from both client and freelancer.
-- Enforces arbiter presence for modes that require arbiter participation.
-
-### `deposit_funds`
-
-- Requires caller auth.
-- Caller must equal contract client.
-- Contract must be in `Created` status.
-- Deposit amount must equal milestone total.
-
-### `approve_milestone_release`
-
-- Requires caller auth.
-- Caller role validated against `release_auth` mode.
-- Rejects unauthorized roles and duplicate approvals.
-- Rejects invalid or already released milestones.
-
-### `release_milestone`
-
-- Requires caller auth.
-- Caller role validated against `release_auth` mode.
-- Requires sufficient approvals for configured mode.
-- Rejects invalid or already released milestones.
-
-### `issue_reputation`
-
-- Requires caller auth.
-- Caller must be the contract client.
-- Provided freelancer must match contract freelancer.
-- Contract must be `Completed` and reputation not previously issued.
-
-## Release Authorization Matrix
-
-- `ClientOnly`: client-only approve and release.
-- `ArbiterOnly`: arbiter-only approve and release.
-- `ClientAndArbiter`: either client or arbiter can approve/release.
-- `MultiSig`: both client and arbiter approvals required before release.
-
-## Latest Test Output
-
-Date: `2026-03-24`
-
-```text
-running 32 tests
-................................
-test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```rust
+let admin: Address = env
+    .storage()
+    .persistent()
+    .get(&DataKey::Admin)
+    .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+admin.require_auth();
 ```
 
-## Coverage Snapshot
+This is now centralised in a single private function:
 
-- Command: `cargo llvm-cov --workspace --all-features --summary-only`
-- `contracts/escrow/src/lib.rs` line coverage: `97.71%`
-- Workspace total line coverage: `99.16%`
+```rust
+/// Load the stored admin address, panic with `NotInitialized` if absent,
+/// and call `require_auth()` so that the Soroban auth engine records the
+/// authorization requirement.  Returns the authenticated admin `Address`.
+///
+/// # Panics
+/// - `NotInitialized` – no admin has been stored yet (i.e., `initialize`
+///   was never called or the storage entry is missing).
+/// - Soroban auth failure – the admin's signature is not present in the
+///   current invocation's authorization context.
+fn load_and_auth_admin(env: &Env) -> Address
+```
+
+### Security Properties
+
+| Property | Guarantee |
+|---|---|
+| **Fail-closed** | Panics `NotInitialized` if storage is empty — no silent no-op |
+| **Auth is required** | `require_auth()` is called _before_ any state mutation |
+| **No privilege escalation** | Returns the stored address; callers cannot inject a different one |
+| **Single source of truth** | All four entrypoints share identical semantics — no divergence risk |
+
+### Dead-code elimination
+
+The previous `require_admin(env, caller)` helper compared `caller` against the
+stored admin but was **never called**. It has been removed to eliminate dead
+code. `load_and_auth_admin` supersedes it.
+
+---
+
+## Implemented Checks
+
+- `initialize(admin)` requires `admin.require_auth()` and can run only once.
+- `pause`, `unpause`, `activate_emergency_pause`, and `resolve_emergency` all
+  delegate to `load_and_auth_admin(&env)` which loads and authenticates the
+  stored admin in one step.
+- `create_contract(client, freelancer, milestone_amounts, deposit_mode)`
+  requires `client.require_auth()`.
+- `issue_reputation(contract_id, caller, freelancer, rating)` requires
+  `caller.require_auth()` and `caller == contract.client`.
+- `cancel_contract(contract_id, caller)` requires `caller.require_auth()` and
+  the caller must be the stored client or freelancer.
+
+---
+
+## Current Release Caveat
+
+`release_milestone(contract_id, milestone_index)` does not authenticate a
+caller in the current implementation. It enforces pause state, contract
+existence, milestone bounds, duplicate-release prevention, and available funded
+balance only.
+
+## Not Implemented
+
+Approval-based release authorization, arbiter release authorization, and
+multi-party release modes are not live entrypoints. Treat any approval or
+arbiter release design as planned until implemented and tested.

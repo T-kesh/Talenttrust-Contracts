@@ -23,7 +23,7 @@ fn contract_state_round_trips_across_lifecycle_mutations() {
         &contract_id,
         &(total_milestone_amount() - 10_000_000_000_i128),
     ));
-    assert!(client.release_milestone(&contract_id, &0));
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let after_release = client.get_contract(&contract_id);
     assert_eq!(after_release.released_amount, super::MILESTONE_ONE);

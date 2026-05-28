@@ -1,206 +1,177 @@
 # Escrow Contract Documentation
 
-## Overview
-The Escrow Contract is a Rust smart contract built for the Soroban platform. It provides a secure way for clients and freelancers to handle payments with milestones, ensuring that funds are released only when work is verified.
+**Mainnet readiness (limits, events, risks):** [mainnet-readiness.md](mainnet-readiness.md)
 
-This contract includes:
+This document summarizes the reviewer-facing architecture for
+`contracts/escrow` as implemented in `contracts/escrow/src/lib.rs`.
 
-- Contract creation between a client and freelancer
-- Milestone-based payments
-- Secure fund deposit and release
-- Reputation issuance for freelancers
-- Automated unit tests to verify correctness
+## Scope
 
-## Contract Structure
-### Types
-ContractStatus: Represents the state of an escrow contract. Values:
-- Created – Contract created but not funded
-- Funded – Client has deposited funds
-- Completed – All milestones completed
-- Disputed – Issue flagged for dispute
-- Cancelled – Contract cancelled by authorized party
-- Refunded – Unreleased milestones refunded
+The live contract persists:
 
-Milestone: Defines a payment milestone:
+- escrow lifecycle state for each contract
+- client and freelancer addresses
+- milestone amounts and per-milestone release flags
+- deposited, released, and refunded accounting totals
+- reputation aggregates and pending reputation credits
+- immutable finalization records for closed contracts
+- one operational admin address
+- pause and emergency flags
+- a readiness checklist
 
-amount: i128 – payment amount  
-released: bool – whether the milestone has been paid
+The live contract does not implement token transfers, protocol fee deduction,
+two-step admin transfer, refund flows, approval expiry, or schema migration
+entrypoints. Planned items are listed below with tracking issues.
 
-EscrowContract: Holds the full contract data:
+## Public Entrypoints
 
-client: Address – client address  
-freelancer: Address – freelancer address  
-arbiter: Option<Address> – optional arbiter for dispute resolution  
-milestones: Vec<i128> – milestone payment amounts  
-status: ContractStatus – current state  
-total_deposited: i128 – total amount deposited  
-released_amount: i128 – total amount released to freelancer
+Core escrow endpoints:
 
-## Read API Semantics
+- `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
+- `deposit_funds(contract_id, amount) -> bool`
+- `release_milestone(contract_id, milestone_index) -> bool`
+- `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
+- `cancel_contract(contract_id, caller) -> bool`
+- `finalize_contract(contract_id, finalizer) -> bool`
+- `get_contract(contract_id) -> EscrowContractData`
+- `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
+- `get_reputation(freelancer) -> Option<ReputationRecord>`
+- `get_pending_reputation_credits(freelancer) -> u32`
 
-### Panicking vs. Result-returning variants
+Operational controls:
 
-The escrow contract exposes three read functions for contract data:
+- `initialize(admin) -> bool`
+- `get_admin() -> Option<Address>`
+- `pause() -> bool`
+- `unpause() -> bool`
+- `is_paused() -> bool`
+- `activate_emergency_pause() -> bool`
+- `resolve_emergency() -> bool`
+- `is_emergency() -> bool`
+- `get_mainnet_readiness_info() -> MainnetReadinessInfo`
 
-| Contract function | Behavior on missing ID | Client-side `try_*` wrapper |
-|---|---|---|
-| `get_contract(contract_id)` | panics with `ContractNotFound` | `try_get_contract(contract_id)` → `Result` |
-| `get_milestones(contract_id)` | panics with `ContractNotFound` | `try_get_milestones(contract_id)` → `Result` |
-| `get_checklist()` | panics with `ContractNotFound` | `try_get_checklist()` → `Result` |
+## Function Semantics
 
-**On-chain behavior**: all three functions call `env.panic_with_error(EscrowError::ContractNotFound)`
-when the requested data is absent. The Soroban runtime encodes the error code in the panic so it
-is observable on-chain, but the call still aborts. This is the correct Soroban idiom for
-mutating operations where a missing contract is always a programming error.
+### `initialize(admin) -> bool`
 
-**Off-chain / indexer behavior**: the Soroban SDK auto-generates a `try_*` client wrapper for
-every contract function. These wrappers return `Err(Ok(EscrowError::ContractNotFound))` instead
-of propagating the panic. Use the `try_*` wrappers in indexer pipelines and any off-chain read
-path where a missing contract should be handled gracefully.
+One-time setup for the operational admin. Requires `admin.require_auth()` and
+fails with `AlreadyInitialized` if called twice.
 
-### Error codes
+### `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
 
-| Code | Variant | Meaning |
-|---|---|---|
-| 9 | `ContractNotFound` | No contract, milestone list, or checklist exists for the given ID |
+Creates a contract in `Created` status. Requires `client.require_auth()`.
+Rejects identical client/freelancer addresses, empty milestones, too many
+milestones, non-positive milestone amounts, checked-arithmetic overflow, and
+totals above `MAX_TOTAL_ESCROW_STROOPS`.
 
-### `get_checklist()`
+### `deposit_funds(contract_id, amount) -> bool`
 
-Returns the [`ReadinessChecklist`] stored under `DataKey::ReadinessChecklist`.
+Adds escrow accounting balance. Rejects non-positive amounts, unknown contract
+ids, exact-total deposits that are not exactly the milestone sum, repeat exact
+deposits, and incremental deposits that would exceed the milestone sum.
 
-The checklist is written by lifecycle operations (`initialize`,
-`initialize_protocol_governance`, `activate_emergency_pause`, etc.). A fresh contract that
-has not yet executed any of those operations will panic with `ContractNotFound` — use
-`try_get_checklist()` on the client side to get a `Result` instead.
+### `release_milestone(contract_id, milestone_index) -> bool`
 
-```
-ReadinessChecklist {
-    initialized: bool,               // true after initialize()
-    governed_params_set: bool,       // true after initialize_protocol_governance()
-    emergency_controls_enabled: bool, // true after activate_emergency_pause() / resolve_emergency()
-}
-```
+Marks one milestone released and increments `released_amount`. Rejects paused
+state, unknown contract ids, invalid milestone indexes, double release, and
+insufficient funded balance.
 
-## Functions
-### create_contract(env, client, freelancer, arbiter, milestone_amounts) -> u32
-- Creates a new escrow contract.
-- Stores the client, freelancer, and optional arbiter addresses.
-- Sets up milestones with specified amounts.
-- Validates arbiter doesn't overlap with client or freelancer.
-- Returns a contract_id.
-- Initial status: Created
+Current implementation note: this entrypoint does not authenticate the client or
+arbiter. Do not document or rely on client-required release authorization until
+the authorization fix lands.
 
-### deposit_funds(env, contract_id, token, client, amount) -> bool
-- Deposits funds into escrow.
-- Only the client can call this.
-- Updates contract status to Funded after success.
-- Returns true if successful.
+### `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 
-### release_milestone(env, contract_id, token, freelancer, amount) -> bool
-- Releases a milestone payment to the freelancer.
-- Only the freelancer can receive payments.
-- Updates contract status to Completed after success.
-- Returns true if successful.
+Requires `caller.require_auth()`. The caller must be the stored client, the
+freelancer argument must match the stored freelancer, the contract must be
+`Completed`, rating must be `1..=5`, and reputation can be issued only once per
+contract.
 
-### cancel_contract(env, contract_id, caller) -> bool
-- Cancels an escrow contract under strict authorization and state constraints.
-- Emits deterministic lifecycle event payload for indexer consumption.
+### `cancel_contract(contract_id, caller) -> bool`
 
-**Authorization Rules:**
-- Created state: Client or Freelancer can cancel
-- Funded state: 
-  - Client (only if zero milestones released)
-  - Freelancer (economic deterrent - funds return to client)
-  - Arbiter (dispute resolution)
-- Disputed state: Arbiter only
+Requires `caller.require_auth()`. The caller must be the stored client or
+freelancer. Cancellation fails for unknown contracts, already-cancelled
+contracts, completed contracts, and unauthorized callers.
 
-**State Transitions:**
-- Created → Cancelled ✓
-- Funded → Cancelled ✓ (with conditions)
-- Disputed → Cancelled ✓ (arbiter only)
-- Completed → Cancelled ✗ (blocked - terminal state)
-- Cancelled → Cancelled ✗ (idempotent error)
+### `finalize_contract(contract_id, finalizer) -> bool`
 
-**Event Emission:**
-Emits lifecycle event with:
-- Topics: `("escrow", "v1", "cancel", contract_id)`
-- Data: `(status: ContractStatus, amount: i128, milestone_index: u32, actor: Option<Address>, timestamp: u64)`
+Requires `finalizer.require_auth()`. The finalizer must be the stored client,
+freelancer, or assigned arbiter. The contract must be in `Completed` or
+`Disputed` status. Finalization writes one immutable `FinalizationRecord` with
+the finalizer, ledger timestamp, and `ContractSummary` snapshot.
 
-**Security Guarantees:**
-- Cryptographic authorization required (caller.require_auth())
-- Prevents retroactive cancellation of completed contracts
-- Prevents double-cancellation (idempotency guard)
-- Protects freelancer: client cannot cancel after milestone releases
-- Arbiter isolation: cannot overlap with client/freelancer
+After finalization, contract-specific mutating entrypoints reject with
+`AlreadyFinalized`; read-only queries remain available.
 
-### issue_reputation(env, freelancer, rating) -> bool
-- Issues a reputation score for the freelancer after contract completion.
-- Returns true.
+### Read-only Queries
 
-### hello(env, to) -> Symbol
-- Simple test function to verify contract interaction.
-- Returns the same symbol passed in.
+`get_contract` panics with `ContractNotFound` for unknown ids. Reputation,
+pending credits, admin, pause, emergency, and mainnet readiness queries return
+stored values or documented defaults.
 
-## Security Considerations
-- Only the client can deposit funds.
-- Only the freelancer can receive milestone payments.
-- Milestone amounts must be greater than zero.
-- Handles non-existent contracts safely using Option.
-- Skips token transfers during unit tests to prevent errors.
-- Always validate addresses before calling contract functions.
-- Arbiter cannot be the same as client or freelancer.
-- Cancellation requires cryptographic authorization from eligible parties.
-- Completed contracts cannot be cancelled (prevents retroactive actions).
-- Double-cancellation is prevented with explicit error.
+## Lifecycle Model
 
-## Contract Lifecycle
+Implemented status transitions:
 
-```
-Created ──────────────→ Accepted ───────────→ Funded ───────────→ Completed
-   │                          │                     │
-   │                          │                     ✗ (no cancellation)
-   ↓                          ↓
-Cancelled ←───────────────────┘
-   │
-   ↓ (Disputed)
-Disputed ──────────────→ Cancelled (arbiter only)
-```
+- `Created -> PartiallyFunded` through an incremental deposit below the total.
+- `Created -> Funded` through an exact deposit or final incremental deposit.
+- `PartiallyFunded -> Funded` through the final incremental deposit.
+- `Created`, `PartiallyFunded`, or `Funded -> Cancelled` through
+  `cancel_contract`.
+- `Funded -> Completed` after all milestones are released.
+- `Completed` or `Disputed -> finalized metadata written` through
+  `finalize_contract`. The status itself is preserved in the immutable summary.
 
-**Key Transitions:**
-- Created → Accepted: Freelancer or arbiter accepts the contract terms
-- Accepted → Funded: Client deposits funds after acceptance
-- Created → Cancelled: Client or freelancer cancels
-- Accepted → Cancelled: Client or freelancer cancels prior to funding
-- Funded → Cancelled: Client (no releases), freelancer, or arbiter cancels
-- Funded → Completed: All milestones released
-- Funded → Disputed: Dispute raised
-- Disputed → Cancelled: Arbiter cancels
-- Completed: Terminal state (no further transitions)
+`Accepted`, `Disputed`, and `Refunded` enum variants exist but no public
+entrypoint currently transitions a contract into those states.
 
-## Testing
-All core functions are covered with unit tests.
-Tests include:
-- Contract creation
-- Fund deposit
-- Milestone release
-- Invalid deposit handling
-- Hello-world function check
+## Events
 
-## Deterministic Event Schema
+Implemented event topics:
 
-The escrow lifecycle uses a shared event schema for deterministic indexing:
+- `("init", "admin_set")`
+- `("paused", timestamp)`
+- `("unpaused", timestamp)`
+- `("emergency", "activated")`
+- `("emergency", "resolved")`
+- `("audit", contract_id)`
+- `("created", contract_id)`
+- `("released", contract_id, milestone_index)`
+- `("rep_issd", contract_id)`
+- `("cancelled", contract_id)`
+- `("finalized", contract_id)`
 
-- Topic tuple: `("escrow", "v1", operation, contract_id)`
-- Data tuple: `(status, amount, milestone_index, actor, timestamp)`
+The deterministic v1 lifecycle event schema previously described for
+`approve`, `refund`, `finalize`, `withdraw`, and protocol-fee events is not
+implemented in `lib.rs`.
 
-Lifecycle operations covered:
+## Planned Features
 
-- `create_contract` -> operation `create`
-- `deposit_funds` -> operation `deposit`
-- `approve_milestone` -> operation `approve`
-- `release_milestone` -> operation `release`
-- `cancel_contract` -> operation `cancel`
+- Two-step admin transfer:
+  [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318)
+- Protocol fee deduction:
+  [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313)
+- Protocol fee withdrawal:
+  [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314)
+- Governed parameter setter/readiness wiring:
+  [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323)
+- Structured deposit and fee events:
+  [#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336)
+- Canonical storage-key documentation:
+  [#342](https://github.com/Talenttrust/Talenttrust-Contracts/issues/342)
+- `migrate_state` / `StateV1` / `StateV2` migration flow:
+  [#341](https://github.com/Talenttrust/Talenttrust-Contracts/issues/341)
 
-Breaking change note:
+## Security Notes
 
-- Consumers listening to legacy cancellation topic `contract_cancelled` must migrate to the v1 lifecycle event topic.
+- Mutating lifecycle operations fail while paused or in emergency.
+- Admin controls require the stored admin's authentication after initialization.
+- Amount math uses checked helpers for aggregate totals.
+- Release accounting is state-only; actual token custody and transfer logic are
+  outside the current contract surface.
+- Duplicate release and duplicate reputation issuance are rejected.
+- Finalization is authenticated, allowed only from `Completed` or `Disputed`,
+  and prevents later contract-specific state mutation.
+- Storage TTL constants are exported for planned pending records, but current
+  live lifecycle records use persistent storage and no public approval/migration
+  TTL flow exists.

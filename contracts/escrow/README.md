@@ -1,59 +1,59 @@
 # Escrow Contract
 
-This is a Rust smart contract for the **Soroban** platform that implements a simple escrow system for freelancers and clients. Payments are handled via **milestones**, ensuring that funds are only released when work is completed and verified. 
+Rust/Soroban escrow contract for TalentTrust freelancer milestones.
 
----
+## Implemented Features
 
-## Features
+- Create a contract between a client and a freelancer.
+- Define milestone amounts at creation time.
+- Track exact-total or incremental deposits in contract state.
+- Release milestones from funded balance.
+- Mark the contract `Completed` after the final milestone release.
+- Issue one reputation rating for the freelancer after completion.
+- Cancel non-completed contracts by the stored client or freelancer.
+- Finalize completed or disputed contracts with immutable close metadata.
+- Pause and emergency controls managed by a single initialized admin.
 
-- Create an escrow contract between a **client** and a **freelancer**.  
-- Define multiple **milestones**, each with a set payment amount.  
-- Deposit funds into escrow (only the client can do this).  
-- Release milestone payments to the freelancer once verified.  
-- Finalize contracts to enable leftover fund withdrawals.  
-- **Withdraw leftover funds** after contract finalization (client only).  
-- Issue a reputation score or credential to the freelancer after the contract is completed.  
-- Fully tested with unit tests to ensure contract correctness.
+## Current Public Entrypoints
 
----
+- `initialize(admin) -> bool`
+- `get_admin() -> Option<Address>`
+- `pause() -> bool`
+- `unpause() -> bool`
+- `is_paused() -> bool`
+- `activate_emergency_pause() -> bool`
+- `resolve_emergency() -> bool`
+- `is_emergency() -> bool`
+- `get_mainnet_readiness_info() -> MainnetReadinessInfo`
+- `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
+- `deposit_funds(contract_id, amount) -> bool`
+- `release_milestone(contract_id, milestone_index) -> bool`
+- `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
+- `cancel_contract(contract_id, caller) -> bool`
+- `finalize_contract(contract_id, finalizer) -> bool`
+- `get_contract(contract_id) -> EscrowContractData`
+- `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
+- `get_reputation(freelancer) -> Option<ReputationRecord>`
+- `get_pending_reputation_credits(freelancer) -> u32`
 
-## Leftover Fund Withdrawal
+## Important Integration Notes
 
-After a contract is finalized, the client can withdraw any remaining funds that were not released as milestone payments. This feature includes strict security invariants:
+- `release_milestone` currently validates milestone state and available balance,
+  but it does not authenticate a client or arbiter caller.
+- The contract tracks escrow balances in state only. Token custody and transfers
+  are not implemented in `contracts/escrow/src/lib.rs`.
+- `withdraw_leftover`, protocol fee accounting, protocol
+  fee withdrawal, two-step admin transfer, dispute/refund flows, and
+  `migrate_state` are not live entrypoints.
 
-- **Only allowed after contract finalization**
-- **Only the client can withdraw leftover funds**
-- **Cannot withdraw more than available balance**
-- **Prevents double withdrawals**
-- **Emits events for transparency**
+## Planned Features
 
-### Usage Example
-
-```rust
-// Create contract and deposit funds
-let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-client.deposit_funds(&contract_id, &1000, &client_addr);
-
-// Release some milestones
-client.release_milestone(&contract_id, &0, &client_addr);
-
-// Finalize the contract
-client.finalize_contract(&contract_id, &client_addr);
-
-// Withdraw remaining funds
-let leftover = client.withdraw_leftover(&contract_id, &client_addr);
-```
-
----
-
-## Security Notes
-
-- Only the **client** is allowed to deposit funds.  
-- Only the **freelancer** can receive payments for milestones.  
-- Milestone amounts are validated to be **greater than zero**.  
-- Non-existent contracts are safely handled to prevent panics.  
-- Token transfers are skipped during testing to avoid unnecessary errors.  
-- Always verify the addresses used when calling contract methods.  
-- **Leftover withdrawals are protected by strict invariants** to prevent unauthorized access.  
-
-
+- Two-step admin transfer:
+  [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318)
+- Protocol fee deduction and withdrawal:
+  [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313),
+  [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314)
+- Final contract closure metadata:
+  [#320](https://github.com/Talenttrust/Talenttrust-Contracts/issues/320)
+- `migrate_state` / `StateV1` / `StateV2` flow:
+  [#341](https://github.com/Talenttrust/Talenttrust-Contracts/issues/341)

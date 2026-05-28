@@ -1,6 +1,6 @@
 use super::register_client;
 use crate::{EscrowError, ProtocolParameters};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn protocol_parameters_default_before_governance_is_initialized() {
@@ -45,7 +45,6 @@ fn initialize_governance_twice_panics() {
     let admin = Address::generate(&env);
     client.initialize_governance(&admin);
 
-    // Second initialization should panic
     let admin2 = Address::generate(&env);
     client.initialize_governance(&admin2);
 }
@@ -73,12 +72,11 @@ fn update_protocol_parameters_without_initialization_panics() {
     let (env, contract_id) = setup();
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Try to update without initializing governance
     client.update_protocol_parameters(&100_i128, &10_u32, &1_i128, &10_i128);
 }
 
 #[test]
-#[should_panic(expected = "minimum milestone amount must be positive")]
+#[should_panic(expected = "invalid protocol parameters")]
 fn update_protocol_parameters_with_zero_min_milestone_panics() {
     let (env, contract_id) = setup();
     let client = EscrowClient::new(&env, &contract_id);
@@ -86,12 +84,7 @@ fn update_protocol_parameters_with_zero_min_milestone_panics() {
     let admin = Address::generate(&env);
     client.initialize_governance(&admin);
 
-    let contract_id = client.create_contract(&escrow_client, &freelancer, &milestones);
-    assert!(client.deposit_funds(&contract_id, &285_i128));
-    assert!(client.release_milestone(&contract_id, &0));
-    assert!(client.release_milestone(&contract_id, &1));
-    assert!(client.release_milestone(&contract_id, &2));
-    assert!(client.issue_reputation(&contract_id, &5_i128));
+    client.update_protocol_parameters(&0_i128, &4_u32, &1_i128, &5_i128);
 }
 
 #[test]
@@ -105,14 +98,29 @@ fn governance_admin_transfer_is_two_step() {
     assert!(client.initialize_protocol_governance(&admin, &10_i128, &4_u32, &1_i128, &5_i128));
 
     assert!(client.propose_governance_admin(&next_admin));
-    assert_eq!(
-        client.get_pending_governance_admin(),
-        Some(next_admin.clone())
-    );
+    assert_eq!(client.get_pending_governance_admin(), Some(next_admin.clone()));
 
     assert!(client.accept_governance_admin());
     assert_eq!(client.get_governance_admin(), Some(next_admin));
     assert_eq!(client.get_pending_governance_admin(), None);
+}
+
+#[test]
+fn governance_propose_overwrites_pending_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+
+    let admin = Address::generate(&env);
+    let first_pending = Address::generate(&env);
+    let second_pending = Address::generate(&env);
+    assert!(client.initialize_protocol_governance(&admin, &10_i128, &4_u32, &1_i128, &5_i128));
+
+    assert!(client.propose_governance_admin(&first_pending));
+    assert_eq!(client.get_pending_governance_admin(), Some(first_pending.clone()));
+
+    assert!(client.propose_governance_admin(&second_pending));
+    assert_eq!(client.get_pending_governance_admin(), Some(second_pending.clone()));
 }
 
 #[test]
