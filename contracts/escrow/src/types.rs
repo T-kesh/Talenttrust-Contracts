@@ -3,10 +3,18 @@ use soroban_sdk::{contracterror, contracttype, Address, String};
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
-    // Admin / pause / emergency
+    // Admin / governance / protocol parameters
     Initialized,
+    Admin,
+    PendingAdmin,
+    ProtocolFeeBps,
+    AccumulatedProtocolFees,
+    // Contracts and milestones
     Contract(u32),
     NextContractId,
+    MilestoneReleased(u32, u32),
+    Finalization(u32),
+    // Approvals (temporary storage with TTL)
     /// Stores milestone approval flags (contract_id, milestone_index) -> MilestoneApprovals
     /// Stored in temporary storage with TTL for expiry grace period
     MilestoneApprovals(u32, u32),
@@ -39,6 +47,9 @@ pub enum Error {
     FreelancerMismatch = 21,
     InvalidRating = 22,
     ReputationAlreadyIssued = 23,
+    InsufficientAccumulatedFees = 24,
+    AccountingInvariantViolated = 25,
+    PotentialOverflow = 26,
 }
 
 #[contracttype]

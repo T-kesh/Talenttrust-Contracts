@@ -26,6 +26,7 @@
 mod types;
 mod ttl;
 mod approvals;
+mod protocol_fees;
 
 pub use types::{Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization};
 
@@ -407,6 +408,22 @@ impl Escrow {
         milestone.released = true;
         milestones.set(milestone_index, milestone);
         contract.released_amount += milestone.amount;
+
+        // Accumulate protocol fees if initialized with a fee rate
+        if Self::is_initialized(env) {
+            let fee_bps = Self::get_protocol_fee_bps(env);
+            if fee_bps > 0 {
+                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
+                let current_accumulated: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::AccumulatedProtocolFees)
+                    .unwrap_or(0);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::AccumulatedProtocolFees, &(current_accumulated + fee));
+            }
+        }
 
         // Clear approvals after successful release
         approvals::clear_approvals(&env, contract_id, milestone_index);
