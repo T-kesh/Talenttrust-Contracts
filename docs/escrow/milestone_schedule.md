@@ -1,10 +1,11 @@
-# Milestone Schedule Metadata
+# Escrow Milestone Scheduling
 
-**Feature branch:** `feature/contracts-13-milestone-schedule-metadata`  
-**Issue:** Contracts-13  
-**Scope:** `contracts/escrow`
+Milestone due dates, schedules, and deadline-driven timeout behavior are not
+implemented in `contracts/escrow/src/lib.rs`.
 
----
+The current milestone model is a vector of positive `i128` amounts plus
+per-milestone release flags. Release validates only milestone existence,
+duplicate-release state, available funded balance, and pause/emergency state.
 
 ## Overview
 
@@ -144,3 +145,72 @@ All new code lives in `contracts/escrow/src/test/milestone_schedule.rs`.
 ## Migration Notes
 
 `create_contract` has a new final parameter `schedules: Vec<Option<MilestoneSchedule>>`. Existing callers must be updated to pass `Vec::new(&env)` to preserve the old behaviour (no schedule metadata).
+
+---
+
+## Refund Functionality
+
+### `refund_unreleased_milestones`
+
+Refunds specific unreleased milestones back to the client. This allows partial refunds of the contract while preserving released milestones.
+
+```rust
+pub fn refund_unreleased_milestones(
+    env: Env,
+    contract_id: u32,
+    milestone_indices: Vec<u32>,
+) -> i128
+```
+
+**Returns:** The total amount refunded (sum of all refunded milestone amounts).
+
+**Authorization:** Requires client authentication (`client.require_auth()`).
+
+### Refund Validation Rules
+
+| Rule | Error | Details |
+|---|---|---|
+| Request must not be empty | `EmptyRefundRequest` | `milestone_indices` cannot be empty |
+| No duplicate indices | `DuplicateMilestoneInRefund` | Each milestone can only appear once in the request |
+| Milestone must exist | `InvalidMilestone` | Index must be < milestone count |
+| Milestone must not be released | `AlreadyReleased` | Cannot refund a milestone that was already released |
+| Milestone must not be refunded | `AlreadyRefunded` | Cannot refund the same milestone twice |
+| Sufficient balance required | `InsufficientFunds` | `funded_amount - released_amount - refunded_amount >= refund_total` |
+
+### Status Transitions
+
+- **Funded → Refunded**: When all unreleased milestones are refunded (no releases have occurred)
+- **Funded → Funded**: When some but not all unreleased milestones are refunded
+- **Funded → Completed**: When all milestones are either released or refunded (mixed state)
+
+### Accounting Invariant
+
+The contract maintains the following invariant at all times:
+
+```
+funded_amount = released_amount + refunded_amount + available_balance
+```
+
+Where `available_balance` represents funds that are neither released nor refunded.
+
+### Security Considerations for Refunds
+
+1. **Authorization** — Only the client can initiate refunds via `require_auth()`
+2. **Atomicity** — All validations occur before any state changes; a single invalid milestone causes the entire refund to fail
+3. **Idempotency** — Refunded milestones are marked with `refunded: true` flag, preventing double-refunds
+4. **Balance protection** — The contract verifies sufficient balance exists before processing refunds
+5. **State machine integrity** — Refunds respect the contract lifecycle and cannot be applied to released milestones
+
+### Test Coverage for Refunds
+
+All refund tests are in `contracts/escrow/src/refund.rs`.
+
+| Test | Purpose |
+|---|---|
+| `refunds_selected_unreleased_milestones_and_preserves_remaining_balance` | Verifies partial refunds work correctly |
+| `marks_contract_refunded_when_all_unreleased_milestones_are_refunded` | Tests full refund status transition |
+| `rejects_empty_refund_request` | Validates `EmptyRefundRequest` error |
+| `rejects_duplicate_milestones_in_single_refund` | Validates `DuplicateMilestoneInRefund` error |
+| `rejects_refunding_released_milestone` | Validates `AlreadyReleased` error |
+| `rejects_refunding_same_milestone_twice` | Validates `AlreadyRefunded` error |
+| `rejects_refund_when_balance_is_not_available` | Validates `InsufficientFunds` error |

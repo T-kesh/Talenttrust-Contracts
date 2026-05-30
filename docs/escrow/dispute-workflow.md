@@ -1,8 +1,9 @@
 # Escrow Dispute Workflow
 
-## Overview
+No dispute workflow is implemented in `contracts/escrow/src/lib.rs`.
 
-The TalentTrust escrow contract supports a formal on-chain dispute mechanism. Either the **client** or the **freelancer** may raise a dispute against a funded or completed escrow. Once raised, the dispute is recorded immutably in persistent storage and the escrow status transitions to `Disputed`.
+The `ContractStatus::Disputed` enum variant exists, but there is no public
+entrypoint that transitions a contract into or out of `Disputed`.
 
 ## State Machine
 
@@ -159,3 +160,5 @@ All acceptance criteria are covered by unit tests in `contracts/escrow/src/test.
 | `test_dispute_unauthorized_caller` | Req 1.5, 4.3 — third party rejected |
 | `test_get_dispute_no_record` | Req 2.4 — None before dispute |
 | `test_get_dispute_returns_record` | Req 2.1, 2.3 — record round-trip |
+Dispute and refund designs should remain planned documentation until their
+public entrypoints, tests, events, and storage records are implemented.

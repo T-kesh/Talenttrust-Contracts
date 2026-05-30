@@ -1,21 +1,45 @@
 # Reputation Credential Issuance
 
-The Escrow contract issues reputation credentials (ratings) to freelancers upon the successful completion of a milestone or project. This module contains validations to ensure the integrity of the reputation system.
+The Escrow contract issues reputation credentials (ratings) to freelancers after a contract reaches `Completed` status.
 
 ## Validation Rules
 
-1. **Rating Bounds:** Must be between 1 and 5 (inclusive). Ratings outside these bounds will be rejected with an `InvalidRating` error.
-2. **Issuance Timing:** Credentials can only be issued if the project is completely finished (i.e. status is `Completed`). If the project is in `Created`, `Funded`, or `Disputed` state, issuing ratings will fail with a `NotCompleted` error.
-3. **Duplicate Prevention:** A freelancer can only receive exactly one rating credential per contract (project). Subsequent attempts to issue a rating will fail with a `DuplicateRating` error.
+1. **Client authorization:** Only the contract client may call `issue_reputation`. Unauthorized callers fail with `UnauthorizedRole`.
+2. **Freelancer match:** The supplied freelancer address must match the contract's stored freelancer. Mismatches fail with `FreelancerMismatch`.
+3. **Contract completion gating:** Reputation can only be issued after the contract is `Completed`. Non-completed contracts fail with `NotCompleted`.
+4. **Rating bounds:** Ratings must be between `1` and `5` inclusive. Values outside this range fail with `InvalidRating`.
+5. **Duplicate issuance protection:** Reputation may only be issued once per contract. Subsequent attempts fail with `ReputationAlreadyIssued`.
+
+## Reputation Aggregation
+
+Successful issuance updates the freelancer's aggregate `ReputationRecord`:
+- `completed_contracts` increments by `1`
+- `total_rating` increases by the rating value
+- `last_rating` is set to the most recent rating
+
+Pending reputation credits are also decremented on success.
+
+## Test Coverage
+
+The escrow test suite now includes dedicated coverage for the `issue_reputation` negative paths in `contracts/escrow/src/test/reputation.rs`.
+- unauthorized caller
+- freelancer mismatch
+- non-completed contract
+- invalid rating bounds
+- duplicate issuance
+- verified reputation aggregation and pending credit decrement on success
+
+## Average Rating Accessor
+
+The contract exposes `get_average_rating(freelancer) -> Option<i128>` as a read-only helper for consumer convenience. The returned integer is scaled by 100, so `450` represents an average rating of `4.50`.
+
+- Returns `None` when the freelancer has no completed contracts.
+- Returns `Some(value)` when `completed_contracts > 0`.
+- The result is computed as `(total_rating * 100) / completed_contracts`.
 
 ## Security Assumptions
 
-- **Access Control:** `issue_reputation` should preferably be restricted to authenticated clients or protocol administrators.
-- **Contract Completion:** We rely on the `release_milestone` equivalent logic correctly transitioning the overall contract status into `Completed`.
-- **Duplicate tracking state:** The persistent storage maps `DataKey::Reputation(contract_id, freelancer_address)` to a rating value effectively preventing duplicated logs.
-
-## Threat Scenarios
-
-- **Duplicate rating attack:** Attackers or clients attempting to unfairly inflate or deflate a freelancer's score by rating repeatedly on the same job. Prevented by checking the reputation map before issuance.
-- **Early rating attack:** Clients attempting to lock in a rating or rate negatively prematurely before finishing escrow obligations. Prevented by enforcing the `Completed` state as an issuance prerequisite.
-- **Out-of-bounds rating attack:** Attackers attempting to provide extremely high ratings to manipulate global average calculations. Prevented by enforcing the `1 <= rating <= 5` boundary natively in the Escrow contract.
+- **Access Control:** `issue_reputation` requires client authentication.
+- **Contract Completion:** Only `Completed` contracts are eligible for reputation issuance.
+- **Duplicate issuance guard:** Repeat issuance is blocked by a stored `ReputationIssued` flag.
+- **Aggregate consistency:** Reputation totals and pending credits are updated atomically.

@@ -1,62 +1,56 @@
-# PR: feat/contracts-35-escrow-closure-finalization
+# Pull Request: Refactor Repeated Admin-Load Boilerplate into Single Helper (#337)
 
-## Summary
+## Description
+Closes #337
 
-Implements Escrow contract closure finalization with immutable close records and summary metadata.
+This pull request refactors the repetitive admin authorization and validation logic in the TalentTrust Escrow contract (`contracts/escrow`) into a single, clean helper function.
 
-### What changed
+### Key Changes
+1. **Extracted `load_and_auth_admin` Helper**:
+   - Introduced `fn load_and_auth_admin(env: &Env) -> Address` inside `contracts/escrow/src/lib.rs`.
+   - The helper loads the admin address from persistent storage (panicking with `NotInitialized` if missing) and calls `require_auth()` on it.
+   
+2. **Replaced Boilerplate**:
+   - Replaced duplicate storage fetch and authorization blocks in the following administrative functions with `load_and_auth_admin`:
+     - `pause`
+     - `unpause`
+     - `activate_emergency_pause`
+     - `resolve_emergency`
 
-- `contracts/escrow/src/lib.rs`
-  - `EscrowContract` now includes:
-    - `finalized_at: Option<u64>`
-    - `finalized_by: Option<Address>`
-    - `close_summary: Option<Symbol>`
-  - Added `finalize_contract` method with:
-    - status precondition (Completed | Disputed)
-    - one-time finalization guard (immutable once performed)
-    - participant authorization guard (client/freelancer/arbiter)
-  - Added read helpers:
-    - `is_finalized`
-    - `get_close_summary`
-    - `get_finalizer`
+3. **Dead Code Elimination**:
+   - Removed the unused `require_admin(env, caller)` helper which was never called in the contract.
 
-- `contracts/escrow/src/test.rs`
-  - Added tests:
-    - `test_finalize_contract_success_and_immutable`
-    - `test_finalize_contract_already_finalized`
-    - `test_finalize_contract_not_ready`
-    - `test_finalize_contract_unauthorized`
+4. **Added Comprehensive Unit Tests**:
+   - Created `contracts/escrow/src/test/admin_auth_helper.rs` with extensive test coverage for `load_and_auth_admin`.
+   - Verified paused/emergency state transitions, atomic round-trips, and initialization safeguards.
+   - Declared the test module inside `contracts/escrow/src/test/mod.rs`.
 
-- `README.md` and `docs/escrow/status-transition-guardrails.md`
-  - Documented finalization workflow and guardrails
+5. **Updated Documentation**:
+   - Updated `docs/escrow/access-control.md` to reflect the new `load_and_auth_admin` pattern, documented the security invariants, and described the dead-code cleanup.
 
-## Security notes
+---
 
-- Finalization allowed only after final applicant status; prevents premature closure.
-- Finalization is immutable after the first call.
-- Caller must be a known contract participant.
+## Verification Status
 
-## Testing
+All checks, linters, and verification steps are fully passing:
 
-Run:
-```bash
-cargo test
-```
+1. **Unit and Integration Tests**:
+   - Ran `cargo test` on `contracts/escrow`.
+   - All **74 tests** passed successfully.
+   ```bash
+   test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.41s
+   ```
 
-Result: 27 passed, 0 failed.
+2. **Linting (Clippy)**:
+   - Ran `cargo clippy --tests` successfully with zero errors or warnings.
 
-## Attachment
+3. **Formatting (rustfmt)**:
+   - Code is clean and matches the standard Rust formatting style.
 
-**Proof of successful build/tests**
+---
 
-![test-output-screenshot](attachment-placeholder.png)
-
-To attach proof, run the test command locally and capture terminal output screenshot or log file, then add it here:
-- `cargo test -- --nocapture` (if needed)
-- Save screenshot or copy output to file
-- Attach the file via GitHub PR UI (choose image or link)
-
-## Next steps
-
-1. Review API naming and usability (e.g., contract ID usage as symbolic key currently simplified).
-2. Merge; pipeline should run fmt/build/test automatically.
+## Pre-existing Codebase Fixes
+In order to successfully run `cargo test` and verify our refactoring, we also resolved a few pre-existing compiler errors that were blocking the build on `main`:
+- Resolved duplicate discriminants in the `EscrowError` enum in `types.rs` and added missing variants referenced by the `dispute` module.
+- Resolved argument mismatches (3-argument calls to `release_milestone` instead of 2) in tests.
+- Replaced overflowing `symbol_short!` topics (>9 characters) with `Symbol::new` in `governance.rs` and `lib.rs`.

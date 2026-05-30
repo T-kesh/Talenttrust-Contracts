@@ -1,59 +1,31 @@
-# Escrow Contract Fee Model
+# Escrow Integration Guide
 
-This module adds configurable protocol fee settings for the escrow milestone model.
+This guide documents the entrypoints currently implemented by
+`contracts/escrow/src/lib.rs`. Planned features are listed separately and linked
+to their tracking issues so integrators can distinguish live API from roadmap.
 
-## New features
+## Implemented API Surface
 
-- `protocol_fee_bps` configurable in `create_contract` (0-10000 basis points).
-- `protocol_fee_account` set at creation time; only this account can withdraw fees and update fee rate.
-- Per-milestone fee accounting via `Milestone.protocol_fee` and `EscrowContract.protocol_fee_accrued`.
-- `get_protocol_fee_accrued` to query current fee balance.
-- `withdraw_protocol_fees` for controlled withdrawal.
-- `set_protocol_fee_bps` to update protocol fee rate with authorization.
+Lifecycle and reputation:
 
-## Security controls
-
-- Only the `protocol_fee_account` can adjust fee rate or withdraw accrued fees.
-- Fee account is authenticated with `caller.require_auth()`.
-- Fee bounds enforced at 0..=10000.
-- All protocol fee operations use persisted state and safe integer arithmetic.
-
-## Behaviour on release
-
-On each milestone release:
-- Compute fee: `milestone.amount * protocol_fee_bps / 10000`.
-- Save fee to milestone object.
-- Increment `protocol_fee_accrued`.
-- Mark milestone released and contract status completed when all milestones done.
-# Escrow Contract Documentation
-
-**Mainnet readiness (limits, events, risks):** [mainnet-readiness.md](mainnet-readiness.md)
-
-This document summarizes the reviewer-facing architecture for `contracts/escrow`.
-
-## Scope
-
-The contract persists:
-
-- escrow lifecycle state for each contract
-- participant metadata for the client and freelancer
-- milestone release state
-- funded and released accounting
-- pending and issued reputation aggregates
-- protocol governance parameters
-- pause and emergency flags
-
-## Public Flows
-
-Core escrow endpoints:
-
-- `create_contract(client, freelancer, milestone_amounts) -> u32`
+- `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
 - `deposit_funds(contract_id, amount) -> bool`
-- `release_milestone(contract_id, milestone_id) -> bool`
-- `issue_reputation(contract_id, rating) -> bool`
+- `release_milestone(contract_id, milestone_index) -> bool`
+- `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
+- `cancel_contract(contract_id, caller) -> bool`
+- `finalize_contract(contract_id, finalizer) -> bool`
+
+Read-only queries:
+
 - `get_contract(contract_id) -> EscrowContractData`
+- `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
+- `get_average_rating(freelancer) -> Option<i128>`
 - `get_pending_reputation_credits(freelancer) -> u32`
+- `get_admin() -> Option<Address>`
+- `is_paused() -> bool`
+- `is_emergency() -> bool`
+- `get_mainnet_readiness_info() -> MainnetReadinessInfo`
 
 Operational controls:
 
@@ -62,75 +34,157 @@ Operational controls:
 - `unpause() -> bool`
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
-- `is_paused() -> bool`
-- `is_emergency() -> bool`
 
-Governance:
+## Canonical Happy Path
 
-- `initialize_protocol_governance(admin, min_milestone_amount, max_milestones, min_reputation_rating, max_reputation_rating) -> bool`
-- `update_protocol_parameters(...) -> bool`
-- `propose_governance_admin(next_admin) -> bool`
-- `accept_governance_admin() -> bool`
-- `get_protocol_parameters() -> ProtocolParameters`
-- `get_governance_admin() -> Option<Address>`
-- `get_pending_governance_admin() -> Option<Address>`
+### 1. Initialize Operational Admin
 
-The escrow tests are grouped into dedicated modules:
+```rust
+escrow.initialize(&admin);
+```
 
-To prevent out-of-gas or infinite-loop denial of service attacks, the escrow contract enforces creation limits:
+`initialize` is single-use, requires `admin.require_auth()`, and stores the
+admin used by pause and emergency controls.
 
-- maximum milestone count is capped by `ProtocolParameters.max_milestones` (defaults to 16)
-- total escrow amount is bounded by the immutable mainnet cap (`MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS`)
+### 2. Create Contract
 
-## Lifecycle Model
+```rust
+let contract_id = escrow.create_contract(
+    &client_addr,
+    &freelancer_addr,
+    &vec![&env, 500_0000000_i128, 500_0000000_i128],
+    &DepositMode::ExactTotal,
+);
+```
 
-Supported lifecycle transitions:
+Creation requires `client.require_auth()`, rejects identical client/freelancer
+addresses, rejects empty or non-positive milestones, caps milestone count at
+`MAX_MILESTONES`, and caps total escrow value at `MAX_TOTAL_ESCROW_STROOPS`.
 
-- `Created -> Funded` after any positive deposit
-- `Funded -> Completed` after the final unreleased milestone is released
+### 3. Deposit Funds
 
-Operational invariants:
+```rust
+escrow.deposit_funds(&contract_id, &1000_0000000_i128);
+```
 
-- client and freelancer addresses are immutable after creation
-- milestone amounts are immutable after creation
-- each milestone can transition from `released = false` to `released = true` exactly once
-- `released_amount` is the sum of released milestone amounts
-- `released_milestones` matches the number of released milestone flags
-- `reputation_issued` can only become `true` after `Completed`
+`ExactTotal` contracts require one exact deposit equal to the milestone total.
+`Incremental` contracts allow partial deposits until the milestone total is
+reached. Deposits that exceed the required total fail closed.
 
-## Incident Response
+### 4. Release Milestones
 
-### Emergency Response
+```rust
+escrow.release_milestone(&contract_id, &0);
+```
 
-1. Detect incident and call `activate_emergency_pause`.
-2. Investigate and remediate root cause.
-3. Validate mitigations in test/staging.
-4. Call `resolve_emergency` to restore service.
-5. Publish incident summary for ecosystem transparency.
+Current implementation note: `release_milestone` does not yet authenticate the
+client or an arbiter. It validates the contract id, milestone index, unreleased
+state, available funded balance, and paused state, then marks the milestone as
+released. This authorization gap is intentionally documented here until the auth
+fix lands.
 
-## Persistence Notes
+When the final milestone is released, status becomes `Completed` and one pending
+reputation credit is added for the freelancer.
 
-Each `EscrowContractData` record stores:
+### 5. Issue Reputation
 
-- participant addresses
-- milestone vector and cached milestone count
-- total escrow amount
-- funded and released balances
-- released milestone count
-- contract status
-- reputation issuance flag
-- creation and update timestamps
+```rust
+escrow.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128);
+```
 
-Detailed storage-key coverage is documented in [state-persistence.md](state-persistence.md).
+Reputation requires `caller.require_auth()`, the caller must be the stored
+client, the freelancer argument must match the contract freelancer, the contract
+must be `Completed`, rating must be `1..=5`, and each contract can issue
+reputation once.
 
-## Test Coverage
+## Cancellation
 
-The escrow regression suite is split by concern:
+```rust
+escrow.cancel_contract(&contract_id, &caller);
+```
 
-- `flows.rs`: happy-path lifecycle and reputation aggregation
-- `lifecycle.rs`: state transition persistence
-- `persistence.rs`: storage round-trip assertions
-- `security.rs`: failure paths and validation checks
-- `governance.rs`: admin and parameter persistence
-- `pause_controls.rs` and `emergency_controls.rs`: operational safety controls
-- `performance.rs`: resource regression ceilings
+Cancellation requires `caller.require_auth()`. The caller must be the stored
+client or freelancer. It is blocked after `Completed` and blocked if the
+contract is already `Cancelled`.
+
+## Finalization
+
+```rust
+escrow.finalize_contract(&contract_id, &finalizer);
+```
+
+Finalization requires `finalizer.require_auth()`. The finalizer must be the
+stored client, freelancer, or assigned arbiter. It is allowed only while the
+contract status is `Completed` or `Disputed`.
+
+The contract writes one immutable `FinalizationRecord` containing the finalizer,
+ledger timestamp, and a `ContractSummary` snapshot. After the record exists,
+contract-specific mutating calls reject with `AlreadyFinalized`.
+
+## Pause and Emergency Controls
+
+`pause`, `unpause`, `activate_emergency_pause`, and `resolve_emergency` require
+the stored admin's authorization. While paused or in emergency, mutating
+lifecycle calls fail with `ContractPaused`; read-only queries remain available.
+`unpause` fails while emergency mode is active.
+
+## Events
+
+Implemented events:
+
+- `("init", "admin_set")` on `initialize`
+- `("paused", timestamp)` on `pause`
+- `("unpaused", timestamp)` on `unpause`
+- `("emergency", "activated")` and `("emergency", "resolved")`
+- `("audit", contract_id)` for lifecycle state transitions
+- `("created", contract_id)` on contract creation
+- `("released", contract_id, milestone_index)` on release
+- `("rep_issd", contract_id)` on reputation issuance
+- `("cancelled", contract_id)` on cancellation
+- `("finalized", contract_id)` on finalization
+
+There is no dedicated deposit event in the current implementation unless the
+deposit changes contract status and therefore emits an audit event. Structured
+deposit and fee events are planned in
+[#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336).
+
+## Implemented Security Assumptions
+
+- Creation and reputation issue require explicit address authentication.
+- Pause and emergency controls are admin-authenticated.
+- Deposits cannot exceed the exact milestone total.
+- Releases fail on duplicate milestone release, invalid milestone id, missing
+  contract, paused state, and insufficient funded balance.
+- Arithmetic for escrow totals, deposits, and releases uses checked helpers and
+  panics with `PotentialOverflow` on overflow.
+- Accounting is checked after balance-changing operations.
+- The contract stores accounting state only; token custody and token transfers
+  are not implemented in `lib.rs` and must be handled by an audited integration.
+- Storage uses persistent keys. TTL constants exist for planned pending approval
+  and migration flows, but no current public entrypoint writes those pending
+  records.
+
+## Planned Features
+
+These features are not implemented entrypoints today:
+
+- Two-step admin transfer: planned in
+  [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318).
+- Protocol fee deduction on release: planned in
+  [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313).
+- Protocol fee treasury withdrawal: planned in
+  [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
+- Governed parameter setter/readiness wiring: planned in
+  [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323).
+- Structured deposit and fee events: planned in
+  [#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336).
+- Storage-key reference for declared-but-unused keys, including pending client
+  migration and protocol fee keys: planned in
+  [#342](https://github.com/Talenttrust/Talenttrust-Contracts/issues/342).
+- `migrate_state` / `StateV1` / `StateV2` migration flow: not implemented;
+  tracked by this reconciliation issue
+  [#341](https://github.com/Talenttrust/Talenttrust-Contracts/issues/341)
+  until a dedicated implementation issue exists.
+
+Any documentation that describes one of these items as available should be
+treated as roadmap text, not live integration guidance.

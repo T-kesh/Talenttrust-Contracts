@@ -1,76 +1,49 @@
-# Escrow State Persistence
+# Storage Layout Reference — TalentTrust Escrow Contract
 
-This document maps the escrow contract's persisted storage to the lifecycle invariants reviewers should verify.
+This document maps the currently implemented `DataKey` storage used by
+`contracts/escrow/src/lib.rs`. A fuller key-by-key reference, including
+declared-but-unused keys, is tracked in
+[#342](https://github.com/Talenttrust/Talenttrust-Contracts/issues/342).
 
-For transient keys (pending approvals, pending migrations) and their TTL / expiration policy, see [storage-ttl.md](./storage-ttl.md).
+## Live Storage Keys
 
-## Storage Keys
-
-| Key | Value | Purpose |
+| Key | Value | Written by |
 | --- | --- | --- |
-| `PauseAdmin` | `Address` | authority for pause and emergency controls |
-| `Paused` | `bool` | fail-closed switch for mutating escrow flows |
-| `EmergencyPaused` | `bool` | blocks standard `unpause` until explicit recovery |
-| `NextContractId` | `u32` | monotonically increasing escrow identifier counter |
-| `Contract(id)` | `EscrowContractData` | full persisted lifecycle and participant record |
-| `Reputation(address)` | `ReputationRecord` | aggregate ratings for a freelancer |
-| `PendingReputationCredits(address)` | `u32` | count of completed contracts still eligible to issue a rating |
-| `GovernanceAdmin` | `Address` | current protocol parameter admin |
-| `PendingGovernanceAdmin` | `Address` | proposed next governance admin |
-| `ProtocolParameters` | `ProtocolParameters` | live validation bounds for creation and rating |
+| `Initialized` | `bool` | `initialize` |
+| `Admin` | `Address` | `initialize` |
+| `Paused` | `bool` | `pause`, `unpause`, emergency controls |
+| `Emergency` | `bool` | emergency controls |
+| `Contract(id)` | `EscrowContractData` | create/deposit/release/reputation/cancel |
+| `NextContractId` | `u32` | `create_contract` |
+| `MilestoneReleased(id, index)` | `bool` | `release_milestone` |
+| `ReputationIssued(id)` | `bool` | `issue_reputation` |
+| `PendingReputationCredits(address)` | `u32` | final release, `issue_reputation` |
+| `Reputation(address)` | `ReputationRecord` | `issue_reputation` |
+| `Finalization(id)` | `FinalizationRecord` | `finalize_contract` |
+| `ReadinessChecklist` | `ReadinessChecklist` | initialize and emergency controls |
 
-## Escrow Record Fields
+## Declared But Not Live
 
-`EscrowContractData` persists:
+These keys are declared in `types.rs` but no public entrypoint currently uses
+them as a complete feature:
 
-- `client`
-- `freelancer`
-- `milestones`
-- `milestone_count`
-- `total_amount`
-- `funded_amount`
-- `released_amount`
-- `released_milestones`
-- `status`
-- `reputation_issued`
-- `created_at`
-- `updated_at`
+- `MilestoneApprovals`
+- `PendingClientMigration`
+- `ProtocolFeeBps`
+- `AccumulatedProtocolFees`
 
-## Persistence Invariants
+Protocol fee implementation is tracked in
+[#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313) and
+[#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
 
-Creation invariants:
+### 3. Reputation Auditing States
+* **`PendingReputation(Address)` / `ReputationIssued(u32)`**
+    * **Description:** Bookkeeping indices capturing un-issued tokens and completion certificates for network participants.
+    * **Storage Lifespan:** `Persistent`. Preserved explicitly to guarantee deterministic chronological processing when users harvest pending system values.
 
-- `milestone_count == milestones.len()`
-- `total_amount == sum(milestones.amount)`
-- `funded_amount == 0`
-- `released_amount == 0`
-- `released_milestones == 0`
-- `status == Created`
-- `reputation_issued == false`
-
-Funding invariants:
-
-- `0 < funded_amount <= total_amount`
-- status becomes `Funded` after the first successful deposit
-
-Release invariants:
-
-- each milestone changes from unreleased to released once
-- `released_amount` increases by the released milestone amount
-- `released_milestones` increases by one per successful release
-- `released_amount <= funded_amount`
-- final release transitions `status` to `Completed`
-
-Reputation invariants:
-
-- completed contracts mint one pending reputation credit for the recorded freelancer
-- `issue_reputation` consumes exactly one pending credit
-- `reputation_issued` is irreversible
-
-## Reviewer Checklist
-
-1. Confirm invalid participant or milestone metadata cannot be persisted.
-2. Confirm overfunding is rejected before storage writes.
-3. Confirm milestone double release is rejected.
-4. Confirm completed contracts can issue reputation once.
-5. Confirm pause and emergency flags block every mutating payment path.
+- Contract ids are monotonically assigned from `NextContractId`.
+- Milestone amounts and participant addresses are immutable after creation.
+- `total_deposited`, `released_amount`, and `refunded_amount` are checked after
+  balance-changing operations.
+- A milestone release flag can move from absent/false to true only once.
+- Reputation issuance is guarded by `ReputationIssued(contract_id)`.
