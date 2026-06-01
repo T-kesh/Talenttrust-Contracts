@@ -98,7 +98,6 @@ impl Escrow {
         if client == freelancer {
             env.panic_with_error(Error::InvalidParticipants);
         }
-        
         // Validate arbiter requirements
         match release_authorization {
             ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter => {
@@ -108,7 +107,6 @@ impl Escrow {
             }
             _ => {}
         }
-        
         // Validate arbiter is not client or freelancer
         if let Some(ref arb) = arbiter {
             if arb == &client || arb == &freelancer {
@@ -230,7 +228,6 @@ impl Escrow {
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
         }
-        
         caller.require_auth();
         
         // Can only deposit in Created state

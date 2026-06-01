@@ -1,5 +1,7 @@
 use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
-use crate::types::{Contract, ContractStatus, DataKey, Error, MilestoneApprovals, Milestone, ReleaseAuthorization};
+use crate::types::{
+    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
+};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Approves a milestone for release by the caller.
@@ -174,10 +176,7 @@ pub fn check_approvals(
     
     // Try to load approvals from temporary storage
     // If TTL has expired, this will return None
-    let approvals: Option<MilestoneApprovals> = env
-        .storage()
-        .temporary()
-        .get(&approval_key);
+    let approvals: Option<MilestoneApprovals> = env.storage().temporary().get(&approval_key);
 
     // If no approvals exist (or they expired), fail
     let approvals = approvals.ok_or(Error::InsufficientApprovals)?;
