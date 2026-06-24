@@ -36,55 +36,69 @@ pub enum DataKey {
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum EscrowError {
-    InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    UnauthorizedRole = 6,
-    InvalidStatusTransition = 7,
-    AlreadyCancelled = 8,
-    ContractNotFound = 9,
-    MilestonesAlreadyReleased = 10,
-    TooManyMilestones = 11,
-    NotCompleted = 12,
-    InvalidRating = 13,
-    DuplicateRating = 14,
-    AlreadyFinalized = 15,
-    NotReadyForFinalization = 16,
-    AlreadyReleased = 17,
-    InsufficientFunds = 18,
-    SelfRating = 19,
-    CommentTooLong = 20,
-    EmptyComment = 21,
-    AmountMustBePositive = 22,
-    FundingExceedsRequired = 23,
-    InvalidState = 24,
-    InsufficientEscrowBalance = 25,
-    MilestoneNotFound = 26,
-    AlreadyApproved = 27,
-    ReputationAlreadyIssued = 28,
-    // Pause / emergency controls
-    ContractPaused = 29,
-    EmergencyActive = 30,
-    NotInitialized = 31,
-    AlreadyInitialized = 32,
-    InvalidProtocolParameters = 33,
-    GovernanceNotInitialized = 34,
-    FreelancerMismatch = 35,
-    EmptyRefundRequest = 36,
-    DuplicateMilestoneInRefund = 37,
-    PotentialOverflow = 38,
-    NonPositiveAmount = 39,
-    AmountExceedsMaximum = 40,
-    InvalidStroopPrecision = 41,
-    ExceedsContractMaximum = 42,
-    ExactDepositRequired = 43,
-    DepositWouldExceedTotal = 44,
-    AccountingInvariantViolated = 45,
-    ArbiterRequired = 46,
-    InvalidDisputeSplit = 47,
+pub enum Error {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    InvalidStatusTransition = 5,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    ApprovalExpired = 19,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    InvalidFeeBps = 24,
+    // ── Additional error codes from lib.rs entrypoints ──
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
+    InvalidDepositAmount = 29,
+    InvalidMilestone = 30,
+    MilestonesAlreadyReleased = 31,
+    TooManyMilestones = 32,
+    NotCompleted = 33,
+    DuplicateRating = 34,
+    AlreadyFinalized = 35,
+    NotReadyForFinalization = 36,
+    SelfRating = 37,
+    CommentTooLong = 38,
+    EmptyComment = 39,
+    FundingExceedsRequired = 40,
+    InsufficientEscrowBalance = 41,
+    MilestoneNotFound = 42,
+    ContractPaused = 43,
+    EmergencyActive = 44,
+    GovernanceNotInitialized = 45,
+    InvalidProtocolParameters = 46,
+    PotentialOverflow = 47,
+    NonPositiveAmount = 48,
+    AmountExceedsMaximum = 49,
+    InvalidStroopPrecision = 50,
+    ExceedsContractMaximum = 51,
+    ExactDepositRequired = 52,
+    DepositWouldExceedTotal = 53,
+    AccountingInvariantViolated = 54,
+    ArbiterRequired = 55,
+    InvalidDisputeSplit = 56,
+    InsufficientAccumulatedFees = 57,
+    AmountExceedsContractMaximum = 58,
+    TotalCapExceeded = 59,
+    TotalExceedsMaxEscrow = 60,
+    AlreadyCancelled = 61,
 }
 
 #[contracttype]
@@ -168,6 +182,43 @@ pub struct ContractSummary {
     pub refundable_balance: i128,
     pub released_milestone_count: u32,
     pub milestones: Vec<MilestoneSummary>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Contract {
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub status: ContractStatus,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refunded_amount: i128,
+    pub release_authorization: ReleaseAuthorization,
+}
+
+/// Defines who can approve milestone releases.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorization {
+    /// Only client can approve.
+    ClientOnly = 0,
+    /// Either client or arbiter can approve.
+    ClientAndArbiter = 1,
+    /// Only arbiter can approve.
+    ArbiterOnly = 2,
+    /// Both client and freelancer must approve.
+    MultiSig = 3,
+}
+
+/// Tracks approval status for a milestone.
+/// Stored in temporary storage with TTL for expiry grace period.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
 }
 
 #[contracttype]

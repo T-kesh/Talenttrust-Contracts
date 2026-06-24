@@ -476,6 +476,95 @@ Your implementation is complete and correct when:
 
 ---
 
+## Property-Based Testing: Accounting Invariants
+
+### Overview
+
+The escrow contract maintains three accounting fields on each `Contract`:
+- `funded_amount` — total stroops deposited by the client
+- `released_amount` — total stroops released to the freelancer
+- `refunded_amount` — total stroops refunded back to the client
+
+The **core invariant** is:
+
+```
+funded_amount - released_amount - refunded_amount >= 0
+```
+
+Equivalently, `released_amount + refunded_amount <= funded_amount`. This must
+hold at all times, regardless of operation order, interleaving, or failures.
+
+### Properties Asserted (`contracts/escrow/src/proptest.rs`)
+
+| Property | Description |
+|----------|-------------|
+| `prop_accounting_invariant_holds_under_random_ops` | Random sequences of deposit/approve/release/refund; invariant checked after every operation. |
+| `prop_full_release_sequence_invariant` | Deposit exact total, approve and release each milestone in order. Status ends at `Completed`. |
+| `prop_full_refund_sequence_invariant` | Deposit exact total, refund all milestones. Status ends at `Refunded`. |
+| `prop_mixed_release_refund_invariant` | Release first k milestones, refund the rest. Status ends at `Completed`. |
+| `prop_double_release_rejected_invariant_preserved` | Releasing the same milestone twice is rejected; state unchanged. |
+| `prop_overdeposit_rejected_invariant_preserved` | Depositing beyond the contract total is rejected; state unchanged. |
+| `prop_empty_sequence_invariant` | Invariant holds with zero operations after creation. |
+| `prop_release_without_approval_rejected` | Release without prior approval fails; invariant preserved. |
+| `prop_status_transitions_monotone` | Status moves monotonically toward terminal states (Completed, Refunded). |
+| `prop_large_amounts_invariant_preserved` | Near-`i128::MAX` milestone amounts do not overflow; invariant holds. |
+
+### Running the Property Tests
+
+```bash
+# Default: 256 cases per property
+cargo test -p escrow proptest
+
+# Increase coverage:
+PROPTEST_CASES=1024 cargo test -p escrow proptest
+
+# Reproduce a specific failure:
+PROPTEST_SEED=<hex> cargo test -p escrow proptest
+```
+
+All runs use proptest's default deterministic seed. Failing seeds are
+automatically saved to `proptest-regressions/proptest.txt` for replay.
+
+### Security Model
+
+The property tests assume `env.mock_all_auths()`, which bypasses
+signature verification. The tests therefore validate **logic invariants**,
+not authentication. Authentication is tested separately in
+`test/access_control.rs` and similar modules.
+
+**Accounting invariant (non-negativity):**
+
+```
+funded_amount - released_amount - refunded_amount >= 0
+```
+
+This prevents:
+- **Over-release**: releasing more than was deposited
+- **Over-refund**: refunding more than the available balance
+- **Accounting drift**: state corruption due to ordering bugs
+
+**Status transition monotonicity:**
+
+```
+Created -> Funded -> Completed   (forward, no skipping)
+Created -> Funded -> Refunded    (all milestones refunded)
+Funded  -> Completed             (mixed release + refund)
+```
+
+Terminal states (`Completed`, `Refunded`, `Cancelled`) are absorbing.
+No operation can change them once reached.
+
+### Edge Cases Covered
+
+- **Max-value amounts**: milestones near `i128::MAX` (3× `i128::MAX / 3`)
+- **Interleaved release/refund**: mixed sequences across milestone indices
+- **Empty sequences**: contract creation with zero subsequent operations
+- **Failed operations**: invariant holds even when operations panic
+- **Double operations**: double-release, over-deposit rejected cleanly
+- **Approval requirement**: release without prior approval is rejected
+
+---
+
 ## Next Steps
 
 1. **Run the validation script** above to verify everything works
