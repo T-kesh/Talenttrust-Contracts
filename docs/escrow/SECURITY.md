@@ -16,7 +16,8 @@ This document reflects the escrow API currently implemented in
 - `release_milestone` requires `caller.require_auth()`, enforces the contract's
   `ReleaseAuthorization` mode (ClientOnly, ArbiterOnly, ClientAndArbiter, or
   MultiSig), and checks valid non-expired approvals before releasing funds.
-  MultiSig requires both client and freelancer approvals via `check_approvals`.
+  MultiSig requires both client and freelancer approvals via `check_approvals`,
+  and release may be triggered only by the stored client or freelancer.
 - `issue_reputation` requires the stored client as caller, matching freelancer,
   completed status, rating in `1..=5`, and no prior reputation issuance for the
   contract.

@@ -384,6 +384,10 @@ impl Escrow {
     ///
     /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
     ///
+    /// MultiSig semantics are client-and-freelancer approval. A MultiSig
+    /// milestone can be released only by the stored client or freelancer after
+    /// both of those addresses have approved the same milestone.
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `contract_id` - The contract ID
@@ -455,7 +459,6 @@ impl Escrow {
                 }
             }
             ReleaseAuthorization::MultiSig => {
-                // MultiSig allows client or freelancer (both must approve beforehand)
                 if !is_client && !is_freelancer {
                     env.panic_with_error(Error::UnauthorizedRole);
                 }
