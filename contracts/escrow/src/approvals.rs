@@ -1,21 +1,23 @@
 use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
-use crate::types::{Contract, ContractStatus, DataKey, Error, MilestoneApprovals, Milestone, ReleaseAuthorization};
+use crate::types::{
+    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
+};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Approves a milestone for release by the caller.
-/// 
+///
 /// Records the approval in temporary storage with TTL expiry.
 /// The approval will automatically expire after PENDING_APPROVAL_TTL_LEDGERS.
-/// 
+///
 /// # Arguments
 /// * `env` - The contract environment
 /// * `contract_id` - The contract ID
 /// * `milestone_index` - The index of the milestone to approve
 /// * `caller` - The address of the caller (must be client, freelancer, or arbiter)
-/// 
+///
 /// # Returns
 /// `true` if approval was recorded successfully
-/// 
+///
 /// # Errors
 /// * `ContractNotFound` - If contract doesn't exist
 /// * `InvalidState` - If contract is not in Funded state
@@ -23,7 +25,7 @@ use soroban_sdk::{Address, Env, Symbol, Vec};
 /// * `MilestoneAlreadyReleased` - If milestone was already released
 /// * `UnauthorizedRole` - If caller is not authorized to approve
 /// * `AlreadyApproved` - If caller has already approved this milestone
-/// 
+///
 /// # Security
 /// - Caller must be authenticated via require_auth()
 /// - Only authorized parties (client/freelancer/arbiter) can approve
@@ -106,15 +108,15 @@ pub fn approve_milestone(
 
     // Load or create approval record
     let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
-    let mut approvals: MilestoneApprovals = env
-        .storage()
-        .temporary()
-        .get(&approval_key)
-        .unwrap_or(MilestoneApprovals {
-            client_approved: false,
-            freelancer_approved: false,
-            arbiter_approved: false,
-        });
+    let mut approvals: MilestoneApprovals =
+        env.storage()
+            .temporary()
+            .get(&approval_key)
+            .unwrap_or(MilestoneApprovals {
+                client_approved: false,
+                freelancer_approved: false,
+                arbiter_approved: false,
+            });
 
     // Check for duplicate approval and update
     if is_client {
@@ -135,32 +137,32 @@ pub fn approve_milestone(
     }
 
     // Store approval with TTL
-    env.storage()
-        .temporary()
-        .set(&approval_key, &approvals);
-    
-    env.storage()
-        .temporary()
-        .extend_ttl(&approval_key, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS);
+    env.storage().temporary().set(&approval_key, &approvals);
+
+    env.storage().temporary().extend_ttl(
+        &approval_key,
+        PENDING_APPROVAL_BUMP_THRESHOLD,
+        PENDING_APPROVAL_TTL_LEDGERS,
+    );
 
     Ok(true)
 }
 
 /// Checks if a milestone has sufficient approvals for release.
-/// 
+///
 /// Expired approvals (TTL elapsed) are treated as absent and return None.
-/// 
+///
 /// # Arguments
 /// * `env` - The contract environment
 /// * `contract` - The contract data
 /// * `contract_id` - The contract ID
 /// * `milestone_index` - The milestone index
-/// 
+///
 /// # Returns
 /// * `Ok(true)` - If sufficient approvals exist and are valid
 /// * `Err(InsufficientApprovals)` - If approvals are missing or insufficient
 /// * `Err(ApprovalExpired)` - If approvals existed but have expired
-/// 
+///
 /// # Security
 /// - Fail-closed: missing or expired approvals prevent release
 /// - TTL expiry is enforced by Soroban's temporary storage
@@ -171,13 +173,10 @@ pub fn check_approvals(
     milestone_index: u32,
 ) -> Result<bool, Error> {
     let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
-    
+
     // Try to load approvals from temporary storage
     // If TTL has expired, this will return None
-    let approvals: Option<MilestoneApprovals> = env
-        .storage()
-        .temporary()
-        .get(&approval_key);
+    let approvals: Option<MilestoneApprovals> = env.storage().temporary().get(&approval_key);
 
     // If no approvals exist (or they expired), fail
     let approvals = approvals.ok_or(Error::InsufficientApprovals)?;
@@ -202,9 +201,9 @@ pub fn check_approvals(
 }
 
 /// Clears approval records for a milestone after successful release.
-/// 
+///
 /// This prevents approval reuse and cleans up temporary storage.
-/// 
+///
 /// # Arguments
 /// * `env` - The contract environment
 /// * `contract_id` - The contract ID
@@ -253,9 +252,10 @@ mod tests {
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(contract_id), milestone_key), &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
 
         // Client approves
         let result = approve_milestone(&env, contract_id, 0, &client);
@@ -300,9 +300,10 @@ mod tests {
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(contract_id), milestone_key), &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
 
         // Only client approves - insufficient
         let result = approve_milestone(&env, contract_id, 0, &client);
@@ -353,9 +354,10 @@ mod tests {
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(contract_id), milestone_key), &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
 
         // First approval succeeds
         let result = approve_milestone(&env, contract_id, 0, &client);

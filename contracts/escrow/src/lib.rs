@@ -29,39 +29,14 @@ mod ttl;
 mod types;
 
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization,
+    Contract, ContractStatus, DataKey, Error, EscrowError, Milestone, MilestoneApprovals,
+    ReadinessChecklist, ReleaseAuthorization,
 };
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
-
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EscrowError {
-    InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    ContractNotFound = 6,
-    EmptyRefundRequest = 7,
-    DuplicateMilestoneInRefund = 8,
-    AlreadyReleased = 9,
-    AlreadyRefunded = 10,
-    InsufficientFunds = 11,
-    AlreadyInitialized = 12,
-    InsufficientAccumulatedFees = 13,
-    NotInitialized = 14,
-    UnauthorizedRole = 15,
-    ContractPaused = 16,
-    EmergencyActive = 17,
-    InvalidState = 18,
-}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -159,7 +134,7 @@ impl Escrow {
         client.require_auth();
 
         if client == freelancer {
-            env.panic_with_error(Error::InvalidParticipants);
+            env.panic_with_error(Error::InvalidParticipant);
         }
         // Validate arbiter requirements
         match release_authorization {
@@ -186,6 +161,8 @@ impl Escrow {
                 env.panic_with_error(Error::InvalidMilestoneAmount);
             }
         }
+
+        let id = Self::next_contract_id(&env);
 
         // Extend TTL for NextContractId counter on read
         ttl::extend_next_contract_id_ttl(&env);
@@ -405,6 +382,9 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        // Authenticate caller before any state-dependent logic
+        caller.require_auth();
+
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -419,8 +399,9 @@ impl Escrow {
             env.panic_with_error(Error::InvalidState);
         }
 
-        // Check authorization for release
+        // Check caller is authorized for this release authorization mode
         let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
         let is_arbiter = contract.arbiter.as_ref() == Some(&caller);
 
         match contract.release_authorization {
@@ -440,13 +421,12 @@ impl Escrow {
                 }
             }
             ReleaseAuthorization::MultiSig => {
-                if !is_client && !is_arbiter {
+                // MultiSig allows client or freelancer (both must approve beforehand)
+                if !is_client && !is_freelancer {
                     env.panic_with_error(Error::UnauthorizedRole);
                 }
             }
         }
-
-        caller.require_auth();
 
         // Check for valid approvals
         approvals::check_approvals(&env, &contract, contract_id, milestone_index)
@@ -488,20 +468,23 @@ impl Escrow {
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
 
-        // Accumulate protocol fees if initialized with a fee rate
-        if Self::is_initialized(env) {
-            let fee_bps = Self::get_protocol_fee_bps(env);
-            if fee_bps > 0 {
-                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
-                let current_accumulated: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::AccumulatedProtocolFees)
-                    .unwrap_or(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::AccumulatedProtocolFees, &(current_accumulated + fee));
-            }
+        // Accumulate protocol fees if the fee rate has been configured
+        let fee_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0);
+        if fee_bps > 0 {
+            let fee = milestone.amount * fee_bps as i128 / 10_000;
+            let current_accumulated: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AccumulatedProtocolFees)
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::AccumulatedProtocolFees,
+                &(current_accumulated + fee),
+            );
         }
 
         // Clear approvals after successful release
@@ -665,10 +648,10 @@ impl Escrow {
             .persistent()
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-        
+
         // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
-        
+
         contract
     }
 
@@ -690,10 +673,10 @@ impl Escrow {
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-        
+
         // Extend TTL on milestone read
         ttl::extend_milestone_ttl(&env, contract_id);
-        
+
         milestones
     }
 
