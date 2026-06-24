@@ -31,6 +31,12 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 fn setup(env: &Env) -> (Address, Address, Address) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let arbiter_addr = Address::generate(env);
+    (client_addr, freelancer_addr, arbiter_addr)
+}
+
 /// Register the escrow contract and return a client.
 fn register(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
