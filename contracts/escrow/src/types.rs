@@ -228,7 +228,8 @@ pub enum ReleaseAuthorization {
     ClientAndArbiter = 1,
     /// Only arbiter can approve.
     ArbiterOnly = 2,
-    /// Both client and freelancer must approve.
+    /// Both client and freelancer must approve; only either of them may release
+    /// after both approvals are present.
     MultiSig = 3,
 }
 
