@@ -57,7 +57,14 @@ fn create(
     arbiter: Option<&Address>,
     auth: &ReleaseAuthorization,
 ) -> u32 {
-    let id = client.create_contract(client_addr, freelancer_addr, &None, &milestones(env), auth);
+    let arbiter_owned = arbiter.cloned();
+    let id = client.create_contract(
+        client_addr,
+        freelancer_addr,
+        &arbiter_owned,
+        &milestones(env),
+        auth,
+    );
     assert!(client.deposit_funds(&id, client_addr, &total()));
     // Approve milestone 0 so release can go through on happy paths
     match auth {
