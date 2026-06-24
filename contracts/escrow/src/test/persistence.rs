@@ -64,21 +64,7 @@ fn finalize_disputed_contract_allows_arbiter_finalizer() {
     assert_eq!(
         record.summary.refundable_balance,
         super::total_milestone_amount()
-    assert!(client.deposit_funds(&contract_id, &client_addr, &10_000_000_000_i128));
-    let funded = client.get_contract(&contract_id);
-    assert_eq!(funded.status, ContractStatus::Funded);
-    assert_eq!(funded.funded_amount, 10_000_000_000_i128);
-
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &(total_milestone_amount() - 10_000_000_000_i128),
-    ));
-    assert!(client.release_milestone(&contract_id, &client_addr, &0));
-
-    let after_release = client.get_contract(&contract_id);
-    assert_eq!(after_release.released_amount, super::MILESTONE_ONE);
-    assert_eq!(after_release.status, ContractStatus::Funded);
+    );
 }
 
 #[test]
