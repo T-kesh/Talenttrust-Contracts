@@ -1,4 +1,4 @@
-use crate::{Escrow, EscrowClient, EscrowError};
+use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, Address) {
@@ -19,18 +19,19 @@ fn setup_funded_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
+        &None,
         &milestones,
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
-    client.deposit_funds(&id, &300_i128);
+    client.deposit_funds(&id, &client_addr, &300_i128);
     (client_addr, freelancer_addr, id)
 }
 
 /// Create a completed contract ready for reputation issuance.
 fn setup_completed_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
     let (client_addr, freelancer_addr, id) = setup_funded_contract(env, client);
-    client.release_milestone(&id, &0);
-    client.release_milestone(&id, &1);
+    client.release_milestone(&id, &client_addr, &0);
+    client.release_milestone(&id, &client_addr, &1);
     (client_addr, freelancer_addr, id)
 }
 
@@ -83,8 +84,9 @@ fn pause_blocks_create_contract() {
         client.try_create_contract(
             &a,
             &b,
+            &None,
             &vec![&env, 50_i128],
-            &crate::types::DepositMode::ExactTotal,
+            &ReleaseAuthorization::ClientOnly,
         ),
         EscrowError::ContractPaused,
     );
@@ -96,11 +98,11 @@ fn pause_blocks_create_contract() {
 fn pause_blocks_deposit_funds() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (_, _, id) = setup_funded_contract(&env, &client);
+    let (client_addr, _, id) = setup_funded_contract(&env, &client);
     client.pause();
 
     super::assert_contract_error(
-        client.try_deposit_funds(&id, &50_i128),
+        client.try_deposit_funds(&id, &client_addr, &50_i128),
         EscrowError::ContractPaused,
     );
 }
@@ -111,11 +113,11 @@ fn pause_blocks_deposit_funds() {
 fn pause_blocks_release_milestone() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (_, _, id) = setup_funded_contract(&env, &client);
+    let (client_addr, _, id) = setup_funded_contract(&env, &client);
     client.pause();
 
     super::assert_contract_error(
-        client.try_release_milestone(&id, &0),
+        client.try_release_milestone(&id, &client_addr, &0),
         EscrowError::ContractPaused,
     );
 }
@@ -164,8 +166,9 @@ fn unpause_restores_create_contract() {
     let id = client.create_contract(
         &a,
         &b,
+        &None,
         &vec![&env, 50_i128],
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
     assert_eq!(id, 1);
 }

@@ -2,7 +2,7 @@ use super::{
     assert_contract_error, complete_contract, create_contract, default_milestones,
     generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO,
 };
-use crate::{ContractStatus, DataKey, EscrowError, ReadinessChecklist};
+use crate::{ContractStatus, DataKey, EscrowError, ReadinessChecklist, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─── Initialized / Admin ──────────────────────────────────────────────────────
@@ -100,8 +100,9 @@ fn paused_blocks_create_contract() {
         client.try_create_contract(
             &c,
             &f,
+            &None,
             &default_milestones(&env),
-            &crate::types::DepositMode::ExactTotal,
+            &ReleaseAuthorization::ClientOnly,
         ),
         EscrowError::ContractPaused,
     );
@@ -115,11 +116,11 @@ fn paused_blocks_deposit_funds() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    let (_, _, id) = create_contract(&env, &client);
+    let (client_addr, _, id) = create_contract(&env, &client);
     client.pause();
 
     assert_contract_error(
-        client.try_deposit_funds(&id, &total_milestone_amount()),
+        client.try_deposit_funds(&id, &client_addr, &total_milestone_amount()),
         EscrowError::ContractPaused,
     );
 }
@@ -132,12 +133,12 @@ fn paused_blocks_release_milestone() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    let (_, _, id) = create_contract(&env, &client);
-    client.deposit_funds(&id, &total_milestone_amount());
+    let (client_addr, _, id) = create_contract(&env, &client);
+    client.deposit_funds(&id, &client_addr, &total_milestone_amount());
     client.pause();
 
     assert_contract_error(
-        client.try_release_milestone(&id, &0),
+        client.try_release_milestone(&id, &client_addr, &0),
         EscrowError::ContractPaused,
     );
 }
@@ -150,11 +151,11 @@ fn paused_blocks_cancel_contract() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    let (c, _, id) = create_contract(&env, &client);
+    let (client_addr, _, id) = create_contract(&env, &client);
     client.pause();
 
     assert_contract_error(
-        client.try_cancel_contract(&id, &c),
+        client.try_cancel_contract(&id, &client_addr),
         EscrowError::ContractPaused,
     );
 }
@@ -230,15 +231,15 @@ fn contract_written_on_create_and_readable() {
     let id = client.create_contract(
         &c,
         &f,
+        &None,
         &default_milestones(&env),
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
 
     let record = client.get_contract(&id);
     assert_eq!(record.client, c);
     assert_eq!(record.freelancer, f);
     assert_eq!(record.status, ContractStatus::Created);
-    assert_eq!(record.total_deposited, 0);
 }
 
 #[test]
@@ -272,9 +273,9 @@ fn milestone_released_written_on_release() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    let (_, _, id) = create_contract(&env, &client);
-    client.deposit_funds(&id, &total_milestone_amount());
-    client.release_milestone(&id, &0);
+    let (client_addr, _, id) = create_contract(&env, &client);
+    client.deposit_funds(&id, &client_addr, &total_milestone_amount());
+    client.release_milestone(&id, &client_addr, &0);
 
     env.as_contract(&client.address, || {
         let v: bool = env
@@ -298,12 +299,12 @@ fn double_release_same_milestone_fails() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    let (_, _, id) = create_contract(&env, &client);
-    client.deposit_funds(&id, &total_milestone_amount());
-    client.release_milestone(&id, &0);
+    let (client_addr, _, id) = create_contract(&env, &client);
+    client.deposit_funds(&id, &client_addr, &total_milestone_amount());
+    client.release_milestone(&id, &client_addr, &0);
 
     assert_contract_error(
-        client.try_release_milestone(&id, &0),
+        client.try_release_milestone(&id, &client_addr, &0),
         EscrowError::AlreadyReleased,
     );
 }
@@ -314,11 +315,11 @@ fn release_out_of_bounds_milestone_fails() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    let (_, _, id) = create_contract(&env, &client);
-    client.deposit_funds(&id, &total_milestone_amount());
+    let (client_addr, _, id) = create_contract(&env, &client);
+    client.deposit_funds(&id, &client_addr, &total_milestone_amount());
 
     assert_contract_error(
-        client.try_release_milestone(&id, &99),
+        client.try_release_milestone(&id, &client_addr, &99),
         EscrowError::InvalidMilestone,
     );
 }
@@ -397,8 +398,9 @@ fn reputation_not_issuable_before_completion() {
     let id = client.create_contract(
         &c,
         &f,
+        &None,
         &default_milestones(&env),
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
 
     assert_contract_error(
@@ -472,18 +474,18 @@ fn released_amount_tracks_milestone_amounts() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    let (_, _, id) = create_contract(&env, &client);
-    client.deposit_funds(&id, &total_milestone_amount());
+    let (client_addr, _, id) = create_contract(&env, &client);
+    client.deposit_funds(&id, &client_addr, &total_milestone_amount());
 
-    client.release_milestone(&id, &0);
+    client.release_milestone(&id, &client_addr, &0);
     let r = client.get_contract(&id);
     assert_eq!(r.released_amount, MILESTONE_ONE);
 
-    client.release_milestone(&id, &1);
+    client.release_milestone(&id, &client_addr, &1);
     let r = client.get_contract(&id);
     assert_eq!(r.released_amount, MILESTONE_ONE + MILESTONE_TWO);
 
-    client.release_milestone(&id, &2);
+    client.release_milestone(&id, &client_addr, &2);
     let r = client.get_contract(&id);
     assert_eq!(r.released_amount, total_milestone_amount());
     assert_eq!(r.status, ContractStatus::Completed);
@@ -495,9 +497,9 @@ fn deposit_exceeding_total_fails() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    let (_, _, id) = create_contract(&env, &client);
+    let (client_addr, _, id) = create_contract(&env, &client);
     assert_contract_error(
-        client.try_deposit_funds(&id, &(total_milestone_amount() + 1)),
+        client.try_deposit_funds(&id, &client_addr, &(total_milestone_amount() + 1)),
         EscrowError::ExactDepositRequired,
     );
 }

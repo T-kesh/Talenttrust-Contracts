@@ -36,7 +36,7 @@ extern crate std;
 use proptest::prelude::*;
 use soroban_sdk::{testutils::Address as _, vec as sorovec, Address, Env, Vec as SoroVec};
 
-use crate::{Escrow, EscrowClient, EscrowError, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS};
+use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,9 +78,9 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
 
-        assert_err(client.try_deposit_funds(&cid, &bad_amount), EscrowError::AmountMustBePositive);
+        assert_err(client.try_deposit_funds(&cid, &client_addr, &bad_amount), EscrowError::AmountMustBePositive);
     }
 
     /// Empty milestone list must be rejected at contract creation.
@@ -92,7 +92,7 @@ proptest! {
         let empty = SoroVec::<i128>::new(&env);
 
         assert_err(
-            client.try_create_contract(&client_addr, &freelancer_addr, &empty),
+            client.try_create_contract(&client_addr, &freelancer_addr, &None, &empty, &ReleaseAuthorization::ClientOnly),
             EscrowError::EmptyMilestones,
         );
     }
@@ -106,7 +106,7 @@ proptest! {
         let milestones = to_soroban_vec(&env, &[100_i128, bad]);
 
         assert_err(
-            client.try_create_contract(&client_addr, &freelancer_addr, &milestones),
+            client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly),
             EscrowError::InvalidMilestoneAmount,
         );
     }
@@ -118,11 +118,11 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128, 200_i128, 300_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &600_i128);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &600_i128);
 
         assert_err(
-            client.try_release_milestone(&cid, &oob_idx),
+            client.try_release_milestone(&cid, &client_addr, &oob_idx),
             EscrowError::MilestoneNotFound,
         );
     }
@@ -134,12 +134,12 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128, 200_i128, 300_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &600_i128);
-        client.release_milestone(&cid, &idx);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &600_i128);
+        client.release_milestone(&cid, &client_addr, &idx);
 
         assert_err(
-            client.try_release_milestone(&cid, &idx),
+            client.try_release_milestone(&cid, &client_addr, &idx),
             EscrowError::MilestoneAlreadyReleased,
         );
     }
@@ -159,7 +159,7 @@ proptest! {
         let amounts: std::vec::Vec<i128> = (0..MAX_MILESTONES).map(|_| 1_i128).collect();
         let milestones = to_soroban_vec(&env, &amounts);
 
-        let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
+        let result = client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
         assert!(result.is_ok(), "MAX_MILESTONES should be accepted, got {:?}", result);
     }
 
@@ -173,7 +173,7 @@ proptest! {
         let milestones = to_soroban_vec(&env, &amounts);
 
         assert_err(
-            client.try_create_contract(&client_addr, &freelancer_addr, &milestones),
+            client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly),
             EscrowError::TooManyMilestones,
         );
     }
@@ -186,7 +186,7 @@ proptest! {
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, MAX_TOTAL_ESCROW_STROOPS];
 
-        let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
+        let result = client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
         assert!(result.is_ok(), "amount at cap should be accepted, got {:?}", result);
     }
 
@@ -199,7 +199,7 @@ proptest! {
         let milestones = sorovec![&env, MAX_TOTAL_ESCROW_STROOPS + 1];
 
         assert_err(
-            client.try_create_contract(&client_addr, &freelancer_addr, &milestones),
+            client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly),
             EscrowError::TotalExceedsMaxEscrow,
         );
     }
@@ -211,11 +211,11 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &100_i128);
-        client.release_milestone(&cid, &0);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &100_i128);
+        client.release_milestone(&cid, &client_addr, &0);
 
-        let result = client.try_issue_reputation(&cid, &rating);
+        let result = client.try_issue_reputation(&cid, &client_addr, &freelancer_addr, &rating);
         assert!(result.is_ok(), "rating {} should be accepted, got {:?}", rating, result);
     }
 
@@ -226,11 +226,11 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &100_i128);
-        client.release_milestone(&cid, &0);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &100_i128);
+        client.release_milestone(&cid, &client_addr, &0);
 
-        assert_err(client.try_issue_reputation(&cid, &rating), EscrowError::InvalidRating);
+        assert_err(client.try_issue_reputation(&cid, &client_addr, &freelancer_addr, &rating), EscrowError::InvalidRating);
     }
 
     /// Deposit exactly equal to total required must be accepted and mark contract Funded.
@@ -240,9 +240,9 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, amount];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
 
-        let result = client.try_deposit_funds(&cid, &amount);
+        let result = client.try_deposit_funds(&cid, &client_addr, &amount);
         assert!(result.is_ok(), "exact deposit should be accepted, got {:?}", result);
     }
 
@@ -253,11 +253,11 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, amount];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &amount);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &amount);
 
         assert_err(
-            client.try_deposit_funds(&cid, &1),
+            client.try_deposit_funds(&cid, &client_addr, &1),
             EscrowError::FundingExceedsRequired,
         );
     }
@@ -276,7 +276,7 @@ proptest! {
         let milestones = sorovec![&env, 100_i128];
 
         assert_err(
-            client.try_create_contract(&same, &same, &milestones),
+            client.try_create_contract(&same, &same, &None, &milestones, &ReleaseAuthorization::ClientOnly),
             EscrowError::InvalidParticipants,
         );
     }
@@ -285,10 +285,11 @@ proptest! {
     #[test]
     fn fuzz_missing_contract_id_rejected(bad_id in 1u32..u32::MAX) {
         let (env, client) = setup();
+        let client_addr = Address::generate(&env);
 
         assert_err(client.try_get_contract(&bad_id), EscrowError::ContractNotFound);
-        assert_err(client.try_deposit_funds(&bad_id, &1), EscrowError::ContractNotFound);
-        assert_err(client.try_release_milestone(&bad_id, &0), EscrowError::ContractNotFound);
+        assert_err(client.try_deposit_funds(&bad_id, &client_addr, &1), EscrowError::ContractNotFound);
+        assert_err(client.try_release_milestone(&bad_id, &client_addr, &0), EscrowError::ContractNotFound);
     }
 
     /// All mutating entrypoints must be blocked when the contract is paused.
@@ -304,11 +305,11 @@ proptest! {
         let milestones = sorovec![&env, 100_i128];
 
         assert_err(
-            client.try_create_contract(&client_addr, &freelancer_addr, &milestones),
+            client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly),
             EscrowError::ContractPaused,
         );
-        assert_err(client.try_deposit_funds(&0, &100), EscrowError::ContractPaused);
-        assert_err(client.try_release_milestone(&0, &0), EscrowError::ContractPaused);
+        assert_err(client.try_deposit_funds(&0, &client_addr, &100), EscrowError::ContractPaused);
+        assert_err(client.try_release_milestone(&0, &client_addr, &0), EscrowError::ContractPaused);
     }
 
     /// All mutating entrypoints must be blocked during emergency pause.
@@ -324,11 +325,11 @@ proptest! {
         let milestones = sorovec![&env, 100_i128];
 
         assert_err(
-            client.try_create_contract(&client_addr, &freelancer_addr, &milestones),
+            client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly),
             EscrowError::ContractPaused,
         );
-        assert_err(client.try_deposit_funds(&0, &100), EscrowError::ContractPaused);
-        assert_err(client.try_release_milestone(&0, &0), EscrowError::ContractPaused);
+        assert_err(client.try_deposit_funds(&0, &client_addr, &100), EscrowError::ContractPaused);
+        assert_err(client.try_release_milestone(&0, &client_addr, &0), EscrowError::ContractPaused);
     }
 
     /// Reputation cannot be issued on an incomplete (not-all-milestones-released) contract.
@@ -338,12 +339,12 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128, 200_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &300_i128);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &300_i128);
         // Only release one of two milestones — contract not complete.
-        client.release_milestone(&cid, &0);
+        client.release_milestone(&cid, &client_addr, &0);
 
-        assert_err(client.try_issue_reputation(&cid, &5), EscrowError::InvalidState);
+        assert_err(client.try_issue_reputation(&cid, &client_addr, &freelancer_addr, &5), EscrowError::InvalidState);
     }
 
     /// Reputation can only be issued once per contract.
@@ -353,12 +354,12 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &100_i128);
-        client.release_milestone(&cid, &0);
-        client.issue_reputation(&cid, &5);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &100_i128);
+        client.release_milestone(&cid, &client_addr, &0);
+        client.issue_reputation(&cid, &client_addr, &freelancer_addr, &5);
 
-        assert_err(client.try_issue_reputation(&cid, &4), EscrowError::ReputationAlreadyIssued);
+        assert_err(client.try_issue_reputation(&cid, &client_addr, &freelancer_addr, &4), EscrowError::ReputationAlreadyIssued);
     }
 
     /// Release without sufficient funded balance must be rejected.
@@ -370,11 +371,11 @@ proptest! {
         let client_addr = Address::generate(&env);
         let freelancer_addr = Address::generate(&env);
         let milestones = sorovec![&env, 100_i128];
-        let cid = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-        client.deposit_funds(&cid, &fund);
+        let cid = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+        client.deposit_funds(&cid, &client_addr, &fund);
 
         assert_err(
-            client.try_release_milestone(&cid, &0),
+            client.try_release_milestone(&cid, &client_addr, &0),
             EscrowError::InsufficientEscrowBalance,
         );
     }

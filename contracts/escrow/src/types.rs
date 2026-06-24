@@ -37,11 +37,8 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    AlreadyInitialized = 1,
-    NotInitialized = 2,
     IndexOutOfBounds = 3,
     AlreadyReleased = 4,
-    InvalidStatusTransition = 5,
     EmptyRefundRequest = 6,
     DuplicateMilestoneInRefund = 7,
     AlreadyRefunded = 8,
@@ -55,50 +52,14 @@ pub enum Error {
     InvalidState = 16,
     MilestoneAlreadyReleased = 17,
     AlreadyApproved = 18,
-    ApprovalExpired = 19,
     InsufficientApprovals = 20,
     FreelancerMismatch = 21,
     InvalidRating = 22,
     ReputationAlreadyIssued = 23,
-    InvalidFeeBps = 24,
-    // ── Additional error codes from lib.rs entrypoints ──
     EmptyMilestones = 25,
     InvalidMilestoneAmount = 26,
     ContractIdCollision = 27,
     ContractIdOverflow = 28,
-    InvalidDepositAmount = 29,
-    InvalidMilestone = 30,
-    MilestonesAlreadyReleased = 31,
-    TooManyMilestones = 32,
-    NotCompleted = 33,
-    DuplicateRating = 34,
-    AlreadyFinalized = 35,
-    NotReadyForFinalization = 36,
-    SelfRating = 37,
-    CommentTooLong = 38,
-    EmptyComment = 39,
-    FundingExceedsRequired = 40,
-    InsufficientEscrowBalance = 41,
-    MilestoneNotFound = 42,
-    ContractPaused = 43,
-    EmergencyActive = 44,
-    GovernanceNotInitialized = 45,
-    InvalidProtocolParameters = 46,
-    PotentialOverflow = 47,
-    NonPositiveAmount = 48,
-    AmountExceedsMaximum = 49,
-    InvalidStroopPrecision = 50,
-    ExceedsContractMaximum = 51,
-    ExactDepositRequired = 52,
-    DepositWouldExceedTotal = 53,
-    AccountingInvariantViolated = 54,
-    ArbiterRequired = 55,
-    InvalidDisputeSplit = 56,
-    InsufficientAccumulatedFees = 57,
-    AmountExceedsContractMaximum = 58,
-    TotalCapExceeded = 59,
-    TotalExceedsMaxEscrow = 60,
-    AlreadyCancelled = 61,
 }
 
 #[contracttype]
@@ -226,4 +187,12 @@ pub struct MilestoneApprovals {
 pub enum DepositMode {
     ExactTotal = 0,
     Incremental = 1,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct Reputation {
+    pub completed_contracts: i128,
+    pub total_rating: i128,
+    pub last_rating: i128,
 }

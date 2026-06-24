@@ -2,7 +2,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, EscrowError};
+use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // --- Submodules ---
 
@@ -47,8 +47,9 @@ pub fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
+        &None,
         &milestones,
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
     (client_addr, freelancer_addr, id)
 }
@@ -56,10 +57,10 @@ pub fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u
 /// Create and fully complete a contract (all milestones released).
 pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
     let (client_addr, freelancer_addr, id) = create_contract(env, client);
-    assert!(client.deposit_funds(&id, &total_milestone_amount()));
-    assert!(client.release_milestone(&id, &0));
-    assert!(client.release_milestone(&id, &1));
-    assert!(client.release_milestone(&id, &2));
+    assert!(client.deposit_funds(&id, &client_addr, &total_milestone_amount()));
+    assert!(client.release_milestone(&id, &client_addr, &0));
+    assert!(client.release_milestone(&id, &client_addr, &1));
+    assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }
 

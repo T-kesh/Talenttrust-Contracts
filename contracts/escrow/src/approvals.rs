@@ -246,9 +246,11 @@ mod tests {
             &env,
             [Milestone {
                 amount: 1000,
+                funded_amount: 0,
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                refunded_amount: 0,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
@@ -294,9 +296,11 @@ mod tests {
             &env,
             [Milestone {
                 amount: 1000,
+                funded_amount: 0,
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                refunded_amount: 0,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
@@ -348,9 +352,11 @@ mod tests {
             &env,
             [Milestone {
                 amount: 1000,
+                funded_amount: 0,
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                refunded_amount: 0,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");

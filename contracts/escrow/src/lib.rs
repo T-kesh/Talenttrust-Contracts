@@ -30,7 +30,7 @@ mod types;
 
 pub use types::{
     Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization,
+    ReleaseAuthorization, Reputation,
 };
 
 use soroban_sdk::{
@@ -61,6 +61,11 @@ pub enum EscrowError {
     ContractPaused = 16,
     EmergencyActive = 17,
     InvalidState = 18,
+    InvalidRating = 19,
+    SelfRating = 20,
+    ReputationAlreadyIssued = 21,
+    NotCompleted = 22,
+    FreelancerMismatch = 23,
 }
 
 #[contracttype]
@@ -189,6 +194,8 @@ impl Escrow {
 
         // Extend TTL for NextContractId counter on read
         ttl::extend_next_contract_id_ttl(&env);
+
+        let id = Self::next_contract_id(&env);
 
         // Store contract metadata
         let freelancer_addr = freelancer.clone();
@@ -489,8 +496,8 @@ impl Escrow {
         contract.released_amount += milestone.amount;
 
         // Accumulate protocol fees if initialized with a fee rate
-        if Self::is_initialized(env) {
-            let fee_bps = Self::get_protocol_fee_bps(env);
+        if Self::is_initialized(&env) {
+            let fee_bps = Self::get_protocol_fee_bps(&env);
             if fee_bps > 0 {
                 let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
                 let current_accumulated: i128 = env
@@ -740,6 +747,227 @@ impl Escrow {
     ) -> Option<MilestoneApprovals> {
         let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
         env.storage().temporary().get(&approval_key)
+    }
+
+    /// Returns true if the contract has been initialized.
+    fn is_initialized(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+    }
+
+    /// Returns the protocol fee in basis points.
+    fn get_protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Calculates the protocol fee for a given amount.
+    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
+        if fee_bps == 0 {
+            return 0;
+        }
+        amount * fee_bps as i128 / 10_000
+    }
+
+    // -----------------------------------------------------------------------
+    // Pause / unpause
+    // -----------------------------------------------------------------------
+
+    pub fn pause(env: Env) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Paused, &true);
+        true
+    }
+
+    pub fn unpause(env: Env) -> bool {
+        Self::require_initialized(&env);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Emergency)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::EmergencyActive);
+        }
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Paused, &false);
+        true
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    // -----------------------------------------------------------------------
+    // Emergency pause
+    // -----------------------------------------------------------------------
+
+    pub fn activate_emergency_pause(env: Env) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Emergency, &true);
+        env.storage().persistent().set(&DataKey::Paused, &true);
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.emergency_controls_enabled = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+        true
+    }
+
+    pub fn resolve_emergency(env: Env) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Emergency, &false);
+        env.storage().persistent().set(&DataKey::Paused, &false);
+        true
+    }
+
+    pub fn is_emergency(env: Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Emergency)
+            .unwrap_or(false)
+    }
+
+    // -----------------------------------------------------------------------
+    // Cancel contract
+    // -----------------------------------------------------------------------
+
+    pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+
+        match contract.status {
+            ContractStatus::Created | ContractStatus::PartiallyFunded | ContractStatus::Funded => {}
+            _ => env.panic_with_error(Error::InvalidState),
+        }
+
+        caller.require_auth();
+        contract.status = ContractStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+        ttl::extend_contract_ttl(&env, contract_id);
+        true
+    }
+
+    // -----------------------------------------------------------------------
+    // Reputation
+    // -----------------------------------------------------------------------
+
+    pub fn issue_reputation(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        freelancer: Address,
+        rating: i128,
+    ) -> bool {
+        let contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        if caller != contract.client {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+        if freelancer != contract.freelancer {
+            env.panic_with_error(Error::FreelancerMismatch);
+        }
+
+        if rating < 1 || rating > 5 {
+            env.panic_with_error(EscrowError::InvalidRating);
+        }
+
+        if contract.status != ContractStatus::Completed {
+            env.panic_with_error(EscrowError::NotCompleted);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::ReputationIssued(contract_id))
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::ReputationAlreadyIssued);
+        }
+
+        if contract.client == contract.freelancer {
+            env.panic_with_error(EscrowError::SelfRating);
+        }
+
+        caller.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReputationIssued(contract_id), &true);
+
+        let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
+        let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+        env.storage().persistent().set(&pending_key, &(pending - 1));
+
+        let rep_key = DataKey::Reputation(contract.freelancer.clone());
+        let mut rep: types::Reputation =
+            env.storage().persistent().get(&rep_key).unwrap_or_default();
+        rep.completed_contracts += 1;
+        rep.total_rating += rating;
+        rep.last_rating = rating;
+        env.storage().persistent().set(&rep_key, &rep);
+
+        true
+    }
+
+    pub fn get_reputation(env: Env, address: Address) -> Option<types::Reputation> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Reputation(address))
+    }
+
+    pub fn get_pending_reputation_credits(env: Env, address: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingReputationCredits(address))
+            .unwrap_or(0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    fn require_initialized(env: &Env) {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::NotInitialized);
+        }
     }
 }
 

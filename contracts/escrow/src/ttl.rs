@@ -6,7 +6,8 @@
 //! elapsed, so `read_if_live` returns `None` for both "never set" and
 //! "expired".
 
-use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+use crate::DataKey;
+use soroban_sdk::{Env, IntoVal, Symbol, TryFromVal, Val};
 
 pub const LEDGERS_PER_DAY: u32 = 17_280;
 
@@ -15,6 +16,10 @@ pub const PENDING_APPROVAL_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY;
 
 pub const PENDING_MIGRATION_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 21;
 pub const PENDING_MIGRATION_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 3;
+
+/// Persistent storage TTL: extend to 30 days, renew when below 7 days.
+pub const PERSISTENT_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 30;
+pub const PERSISTENT_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 7;
 
 #[allow(dead_code)]
 pub fn compute_expiry(env: &Env, ttl_ledgers: u32) -> u32 {
@@ -68,4 +73,38 @@ where
     K: IntoVal<Env, Val>,
 {
     env.storage().temporary().has(key)
+}
+
+/// Extend TTL of the NextContractId counter.
+pub fn extend_next_contract_id_ttl(env: &Env) {
+    let _ = env.storage().persistent().extend_ttl(
+        &DataKey::NextContractId,
+        PERSISTENT_BUMP_THRESHOLD,
+        PERSISTENT_TTL_LEDGERS,
+    );
+}
+
+/// Extend TTL of a single contract entry.
+pub fn extend_contract_ttl(env: &Env, contract_id: u32) {
+    let _ = env.storage().persistent().extend_ttl(
+        &DataKey::Contract(contract_id),
+        PERSISTENT_BUMP_THRESHOLD,
+        PERSISTENT_TTL_LEDGERS,
+    );
+}
+
+/// Extend TTL of the milestones vector for a given contract.
+pub fn extend_milestone_ttl(env: &Env, contract_id: u32) {
+    let milestone_key = Symbol::new(env, "milestones");
+    let _ = env.storage().persistent().extend_ttl(
+        &(DataKey::Contract(contract_id), milestone_key),
+        PERSISTENT_BUMP_THRESHOLD,
+        PERSISTENT_TTL_LEDGERS,
+    );
+}
+
+/// Extend TTL of both the contract and its milestones vector.
+pub fn extend_contract_and_milestones_ttl(env: &Env, contract_id: u32) {
+    extend_contract_ttl(env, contract_id);
+    extend_milestone_ttl(env, contract_id);
 }
