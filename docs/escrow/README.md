@@ -1,8 +1,16 @@
 # Escrow Integration Guide
 
-This guide documents the entrypoints currently implemented by
-`contracts/escrow/src/lib.rs`. Planned features are listed separately and linked
-to their tracking issues so integrators can distinguish live API from roadmap.
+This guide documents the entrypoints currently implemented by the escrow
+contract. Planned features are listed separately and linked to their tracking
+issues so integrators can distinguish live API from roadmap.
+
+## Module Map
+
+- `contracts/escrow/src/lib.rs`: contract type, shared API surface, reads, controls, cancellation, reputation, and module wiring.
+- `contracts/escrow/src/create_contract.rs`: `create_contract` lifecycle entrypoint.
+- `contracts/escrow/src/deposit.rs`: `deposit_funds` lifecycle entrypoint.
+- `contracts/escrow/src/release.rs`: `release_milestone` lifecycle entrypoint.
+- `contracts/escrow/src/refund.rs`: `refund_unreleased_milestones` lifecycle entrypoint.
 
 ## Implemented API Surface
 

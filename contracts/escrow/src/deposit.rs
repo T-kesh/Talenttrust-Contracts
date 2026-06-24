@@ -1,52 +1,70 @@
-use super::{assert_contract_state, create_client, create_default_contract, setup};
-use crate::ContractStatus;
+use crate::{
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
+};
+use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
-#[test]
-fn accumulates_deposits_without_exceeding_total() {
-    let (env, client_addr, freelancer_addr) = setup();
-    let client = create_client(&env);
-    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+#[contractimpl]
+impl Escrow {
+    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `amount` - The amount to deposit (in stroops)
+    ///
+    /// # Returns
+    /// `true` if deposit was successful
+    ///
+    /// # Errors
+    /// * `AmountMustBePositive` - If amount is <= 0
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `InvalidState` - If contract is not in Created state
+    /// * `UnauthorizedRole` - If caller is not the client
+    pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
+        if amount <= 0 {
+            env.panic_with_error(Error::AmountMustBePositive);
+        }
 
-    assert!(client.deposit_funds(&contract_id, &600_0000000_i128));
-    let contract = client.get_contract(&contract_id);
-    assert_contract_state(contract, ContractStatus::Created, 600_0000000_i128, 0, 0);
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
-    assert!(client.deposit_funds(&contract_id, &600_0000000_i128));
-    let contract = client.get_contract(&contract_id);
-    assert_contract_state(contract, ContractStatus::Funded, 1_200_0000000_i128, 0, 0);
-}
+        ttl::extend_contract_ttl(&env, contract_id);
 
-#[test]
-#[should_panic]
-fn rejects_zero_deposit() {
-    let (env, client_addr, freelancer_addr) = setup();
-    let client = create_client(&env);
-    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+        if caller != contract.client {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+        caller.require_auth();
 
-    client.deposit_funds(&contract_id, &0_i128);
-}
+        if contract.status != ContractStatus::Created {
+            env.panic_with_error(Error::InvalidState);
+        }
 
-#[test]
-#[should_panic]
-fn rejects_overfunding() {
-    let (env, client_addr, freelancer_addr) = setup();
-    let client = create_client(&env);
-    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+        contract.funded_amount += amount;
 
-    client.deposit_funds(&contract_id, &1_300_0000000_i128);
-}
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap();
 
-#[test]
-#[should_panic]
-fn rejects_deposit_after_full_refund_resolution() {
-    let (env, client_addr, freelancer_addr) = setup();
-    let client = create_client(&env);
-    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+        ttl::extend_milestone_ttl(&env, contract_id);
 
-    assert!(client.deposit_funds(&contract_id, &1_200_0000000_i128));
-    let refund_ids = soroban_sdk::vec![&env, 0_u32, 1_u32, 2_u32];
-    let refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);
-    assert_eq!(refunded, 1_200_0000000_i128);
+        let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-    client.deposit_funds(&contract_id, &1_i128);
+        if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+            contract.status = ContractStatus::Funded;
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        true
+    }
 }
