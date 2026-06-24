@@ -7,7 +7,7 @@ Soroban smart contracts for the TalentTrust freelancer escrow protocol on Stella
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
 - **Planned escrow fee model**: Configurable protocol fee accounting is not implemented in `contracts/escrow/src/lib.rs`; fee deduction is tracked in [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313) and fee withdrawal in [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
 
-Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md) and threat analysis in [docs/escrow/SECURITY.md](docs/escrow/SECURITY.md).
+Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md), threat analysis in [docs/escrow/SECURITY.md](docs/escrow/SECURITY.md), and release authorization modes in [docs/escrow/authorization.md](docs/escrow/authorization.md).
 
 ## Security Model
 

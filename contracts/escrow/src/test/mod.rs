@@ -12,6 +12,7 @@ mod pause_controls;
 mod persistence;
 mod reputation;
 mod release_authorization;
+mod authorization_matrix_validation;
 
 // --- Shared constants ---
 
