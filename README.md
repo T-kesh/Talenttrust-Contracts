@@ -15,7 +15,7 @@ The escrow implementation follows a fail-closed state machine:
 
 - contract creation requires client authorization and rejects invalid participant or milestone metadata before persisting state
 - deposits cannot exceed the required escrow total
-- releases require a valid unreleased milestone and enough funded balance to cover the payment; caller authorization is not yet implemented for `release_milestone`
+- releases require a valid unreleased milestone, caller authorization via `caller.require_auth()`, and valid non-expired approvals matching the contract's `ReleaseAuthorization` mode
 - reputation is gated behind contract completion and is issued once per contract
 - finalization records immutable close metadata for completed or disputed contracts and blocks later contract-specific mutations
 - one-time admin initialization protects pause and emergency controls; two-step admin transfer is planned in [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318)

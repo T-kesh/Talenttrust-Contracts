@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![allow(dead_code)]
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
@@ -10,6 +11,7 @@ mod emergency_controls;
 mod pause_controls;
 mod persistence;
 mod reputation;
+mod release_authorization;
 
 // --- Shared constants ---
 
@@ -75,6 +77,7 @@ pub fn create_contract_with_arbiter(
 }
 
 /// Create and fully complete a contract (all milestones released).
+/// Caller is the client address for deposit and release operations.
 pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
     let (client_addr, freelancer_addr, id) = create_contract(env, client);
     assert!(client.deposit_funds(&id, &client_addr, &total_milestone_amount()));
@@ -83,6 +86,8 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     assert!(client.approve_milestone_release(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.approve_milestone_release(&id, &client_addr, &2));
+    assert!(client.release_milestone(&id, &client_addr, &0));
+    assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }

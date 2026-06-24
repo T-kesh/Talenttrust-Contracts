@@ -91,10 +91,11 @@ pub enum DataKey {
     Finalization(u32),
 }
 
+/// Canonical contract error type for all entrypoint-facing errors.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum EscrowError {
+pub enum Error {
     InvalidParticipant = 1,
     EmptyMilestones = 2,
     InvalidMilestoneAmount = 3,
@@ -104,45 +105,75 @@ pub enum EscrowError {
     InvalidStatusTransition = 7,
     AlreadyCancelled = 8,
     ContractNotFound = 9,
-    MilestonesAlreadyReleased = 10,
+    MilestoneAlreadyReleased = 10,
     TooManyMilestones = 11,
     NotCompleted = 12,
     InvalidRating = 13,
-    DuplicateRating = 14,
-    AlreadyFinalized = 15,
-    NotReadyForFinalization = 16,
-    AlreadyReleased = 17,
-    InsufficientFunds = 18,
-    SelfRating = 19,
-    CommentTooLong = 20,
-    EmptyComment = 21,
-    AmountMustBePositive = 22,
-    FundingExceedsRequired = 23,
-    InvalidState = 24,
-    InsufficientEscrowBalance = 25,
-    MilestoneNotFound = 26,
-    AlreadyApproved = 27,
-    ReputationAlreadyIssued = 28,
-    // Pause / emergency controls
-    ContractPaused = 29,
-    EmergencyActive = 30,
-    NotInitialized = 31,
-    AlreadyInitialized = 32,
-    InvalidProtocolParameters = 33,
-    GovernanceNotInitialized = 34,
-    FreelancerMismatch = 35,
-    EmptyRefundRequest = 36,
-    DuplicateMilestoneInRefund = 37,
-    PotentialOverflow = 38,
-    NonPositiveAmount = 39,
-    AmountExceedsMaximum = 40,
-    InvalidStroopPrecision = 41,
-    ExceedsContractMaximum = 42,
-    ExactDepositRequired = 43,
-    DepositWouldExceedTotal = 44,
-    AccountingInvariantViolated = 45,
-    ArbiterRequired = 46,
-    InvalidDisputeSplit = 47,
+    AlreadyFinalized = 14,
+    AlreadyReleased = 15,
+    InsufficientFunds = 16,
+    SelfRating = 17,
+    AmountMustBePositive = 18,
+    InvalidState = 19,
+    AlreadyApproved = 20,
+    ReputationAlreadyIssued = 21,
+    ContractPaused = 22,
+    EmergencyActive = 23,
+    NotInitialized = 24,
+    AlreadyInitialized = 25,
+    FreelancerMismatch = 26,
+    EmptyRefundRequest = 27,
+    DuplicateMilestoneInRefund = 28,
+    MissingArbiter = 29,
+    InvalidArbiter = 30,
+    ContractIdOverflow = 31,
+    ContractIdCollision = 32,
+    IndexOutOfBounds = 33,
+    AlreadyRefunded = 34,
+    InsufficientApprovals = 35,
+    ApprovalExpired = 36,
+    Refunded = 37,
+    InsufficientAccumulatedFees = 38,
+}
+
+/// Alias kept for external test / migration code that references
+/// `EscrowError`.  Will be removed once all callers migrate to `Error`.
+pub type EscrowError = Error;
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Contract {
+    pub client: soroban_sdk::Address,
+    pub freelancer: soroban_sdk::Address,
+    pub arbiter: Option<soroban_sdk::Address>,
+    pub status: ContractStatus,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refunded_amount: i128,
+    pub release_authorization: ReleaseAuthorization,
+}
+
+/// Defines who can approve milestone releases
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorization {
+    /// Only client can approve
+    ClientOnly = 0,
+    /// Either client or arbiter can approve
+    ClientAndArbiter = 1,
+    /// Only arbiter can approve
+    ArbiterOnly = 2,
+    /// Both client and freelancer must approve (multi-signature)
+    MultiSig = 3,
+}
+
+/// Tracks approval status for a milestone
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
 }
 
 #[contracttype]
@@ -198,8 +229,9 @@ pub struct GovernedParameters {
     pub max_escrow_total_stroops: i128,
 }
 
-// ΓöÇΓöÇΓöÇ Indexer summary types ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ─── Indexer summary types ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 #[contracttype]

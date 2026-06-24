@@ -13,8 +13,10 @@ This document reflects the escrow API currently implemented in
   milestone count, and caps total escrow value.
 - `deposit_funds` rejects non-positive amounts, repeat exact-total deposits,
   exact-total mismatches, and incremental overfunding.
-- `release_milestone` rejects missing contracts, invalid milestone indexes,
-  duplicate release, paused/emergency state, and insufficient available balance.
+- `release_milestone` requires `caller.require_auth()`, enforces the contract's
+  `ReleaseAuthorization` mode (ClientOnly, ArbiterOnly, ClientAndArbiter, or
+  MultiSig), and checks valid non-expired approvals before releasing funds.
+  MultiSig requires both client and freelancer approvals via `check_approvals`.
 - `issue_reputation` requires the stored client as caller, matching freelancer,
   completed status, rating in `1..=5`, and no prior reputation issuance for the
   contract.
@@ -31,9 +33,6 @@ This document reflects the escrow API currently implemented in
 
 ## Known Live Gaps
 
-- `release_milestone` does not authenticate a caller. Integrators must not claim
-  client-only, arbiter-only, or approval-based release authorization until that
-  entrypoint is implemented.
 - The contract records escrow accounting only. Token custody, token transfers,
   and atomic asset movement are outside `lib.rs` and must be handled by a
   separate audited integration.
