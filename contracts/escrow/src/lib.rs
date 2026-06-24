@@ -24,6 +24,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod approvals;
+mod finalize;
 mod governance;
 mod ttl;
 mod types;
@@ -61,6 +62,21 @@ pub enum EscrowError {
     ContractPaused = 16,
     EmergencyActive = 17,
     InvalidState = 18,
+    AlreadyFinalized = 19,
+    InvalidStatusTransition = 20,
+    TooManyMilestones = 21,
+    PotentialOverflow = 22,
+    NotCompleted = 23,
+    InvalidRating = 24,
+    ReputationAlreadyIssued = 25,
+    FreelancerMismatch = 26,
+    SelfRating = 27,
+    ExactDepositRequired = 28,
+    ArbiterRequired = 29,
+    InvalidDisputeSplit = 30,
+    InvalidProtocolParameters = 31,
+    GovernanceNotInitialized = 32,
+    AccountingInvariantViolated = 33,
 }
 
 #[contracttype]
@@ -414,6 +430,8 @@ impl Escrow {
         // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
 
+        Self::require_not_finalized(&env, contract_id);
+
         // Verify contract is in Funded state
         if contract.status != ContractStatus::Funded {
             env.panic_with_error(Error::InvalidState);
@@ -572,6 +590,8 @@ impl Escrow {
 
         // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
+
+        Self::require_not_finalized(&env, contract_id);
 
         contract.client.require_auth();
 

@@ -1,5 +1,5 @@
 use super::{complete_contract, create_contract, register_client};
-use crate::{DataKey, EscrowContractData, EscrowError};
+use crate::{Contract, DataKey, EscrowError};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
@@ -72,7 +72,7 @@ fn issue_reputation_rejects_self_rating_when_client_equals_freelancer() {
 
     env.as_contract(&client.address, || {
         let key = DataKey::Contract(contract_id);
-        let mut contract: EscrowContractData = env.storage().persistent().get(&key).unwrap();
+        let mut contract: Contract = env.storage().persistent().get(&key).unwrap();
         contract.freelancer = client_addr.clone();
         env.storage().persistent().set(&key, &contract);
     });

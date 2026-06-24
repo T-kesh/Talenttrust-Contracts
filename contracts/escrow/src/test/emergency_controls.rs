@@ -1,4 +1,4 @@
-use crate::{Escrow, EscrowClient, EscrowError};
+use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, Address) {
@@ -18,17 +18,20 @@ fn setup_funded_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
+        &None,
         &milestones,
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
-    client.deposit_funds(&id, &300_i128);
+    client.deposit_funds(&id, &client_addr, &300_i128);
     (client_addr, freelancer_addr, id)
 }
 
 fn setup_completed_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
     let (client_addr, freelancer_addr, id) = setup_funded_contract(env, client);
-    client.release_milestone(&id, &0);
-    client.release_milestone(&id, &1);
+    client.approve_milestone_release(&id, &client_addr, &0);
+    client.release_milestone(&id, &client_addr, &0);
+    client.approve_milestone_release(&id, &client_addr, &1);
+    client.release_milestone(&id, &client_addr, &1);
     (client_addr, freelancer_addr, id)
 }
 
@@ -78,8 +81,9 @@ fn emergency_blocks_create_contract() {
         client.try_create_contract(
             &a,
             &b,
+            &None,
             &vec![&env, 50_i128],
-            &crate::types::DepositMode::ExactTotal,
+            &ReleaseAuthorization::ClientOnly,
         ),
         EscrowError::ContractPaused,
     );
@@ -94,8 +98,9 @@ fn emergency_blocks_deposit_funds() {
     let (_, _, id) = setup_funded_contract(&env, &client);
     client.activate_emergency_pause();
 
+    let caller = Address::generate(&env);
     super::assert_contract_error(
-        client.try_deposit_funds(&id, &50_i128),
+        client.try_deposit_funds(&id, &caller, &50_i128),
         EscrowError::ContractPaused,
     );
 }
@@ -109,8 +114,9 @@ fn emergency_blocks_release_milestone() {
     let (_, _, id) = setup_funded_contract(&env, &client);
     client.activate_emergency_pause();
 
+    let caller = Address::generate(&env);
     super::assert_contract_error(
-        client.try_release_milestone(&id, &0),
+        client.try_release_milestone(&id, &caller, &0),
         EscrowError::ContractPaused,
     );
 }
@@ -159,11 +165,12 @@ fn resolve_emergency_restores_all_operations() {
     let id = client.create_contract(
         &a,
         &b,
+        &None,
         &vec![&env, 50_i128],
-        &crate::types::DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
     assert_eq!(id, 1);
 
-    assert!(client.deposit_funds(&id, &50_i128));
+    assert!(client.deposit_funds(&id, &a, &50_i128));
     assert!(client.cancel_contract(&id, &a));
 }

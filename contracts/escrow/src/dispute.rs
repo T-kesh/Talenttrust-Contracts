@@ -1,6 +1,6 @@
 use soroban_sdk::contracttype;
 
-use crate::{safe_add_amounts, ContractStatus, EscrowContractData, EscrowError};
+use crate::{safe_add_amounts, Contract, ContractStatus, EscrowError};
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]
@@ -28,11 +28,11 @@ impl DisputeResolution {
 }
 
 pub fn resolution_payouts(
-    contract: &EscrowContractData,
+    contract: &Contract,
     resolution: &DisputeResolution,
 ) -> Result<(i128, i128), EscrowError> {
     let available = contract
-        .total_deposited
+        .funded_amount
         .checked_sub(contract.released_amount)
         .and_then(|value| value.checked_sub(contract.refunded_amount))
         .ok_or(EscrowError::AccountingInvariantViolated)?;
@@ -64,8 +64,8 @@ pub fn resolution_payouts(
     }
 }
 
-pub fn final_status_after_resolution(contract: &EscrowContractData) -> ContractStatus {
-    if contract.refunded_amount == contract.total_deposited {
+pub fn final_status_after_resolution(contract: &Contract) -> ContractStatus {
+    if contract.refunded_amount == contract.funded_amount {
         ContractStatus::Refunded
     } else {
         ContractStatus::Completed

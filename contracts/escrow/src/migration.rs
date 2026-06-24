@@ -1,7 +1,5 @@
 use crate::ttl::{read_if_live, remove_transient, store_with_ttl, PENDING_MIGRATION_TTL_LEDGERS};
-use crate::{
-    ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient, EscrowContractData, EscrowError,
-};
+use crate::{Contract, ContractStatus, DataKey, Escrow, EscrowError};
 use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracttype]
@@ -19,10 +17,10 @@ impl Escrow {
         DataKey::PendingClientMigration(contract_id)
     }
 
-    fn load_contract(env: &Env, contract_id: u32) -> EscrowContractData {
+    fn load_contract(env: &Env, contract_id: u32) -> Contract {
         env.storage()
             .persistent()
-            .get::<_, EscrowContractData>(&DataKey::Contract(contract_id))
+            .get::<_, Contract>(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
     }
 
