@@ -90,7 +90,11 @@ impl Escrow {
     }
 
     /// Accept a live pending client migration and update the contract.
-    pub(crate) fn accept_client_migration_impl(env: Env, contract_id: u32, new_client: Address) -> bool {
+    pub(crate) fn accept_client_migration_impl(
+        env: Env,
+        contract_id: u32,
+        new_client: Address,
+    ) -> bool {
         Self::require_not_paused(&env);
         new_client.require_auth();
 
@@ -128,7 +132,10 @@ impl Escrow {
     }
 
     /// Return the live pending client migration record.
-    pub(crate) fn get_pending_client_migration_impl(env: Env, contract_id: u32) -> PendingClientMigration {
+    pub(crate) fn get_pending_client_migration_impl(
+        env: Env,
+        contract_id: u32,
+    ) -> PendingClientMigration {
         read_if_live(&env, &Self::pending_migration_key(contract_id))
             .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidState))
     }

@@ -214,7 +214,14 @@ impl Escrow {
     ) -> u32 {
         Self::require_initialized(&env);
         Self::require_not_paused(&env);
-        Self::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
+        Self::create_contract_impl(
+            &env,
+            client,
+            freelancer,
+            arbiter,
+            milestones,
+            release_authorization,
+        )
     }
 
     /// Deposits funds into the contract.
@@ -527,11 +534,7 @@ impl Escrow {
     }
 
     /// Accepts a pending client migration.
-    pub fn accept_client_migration(
-        env: Env,
-        contract_id: u32,
-        new_client: Address,
-    ) -> bool {
+    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
         Self::accept_client_migration_impl(env, contract_id, new_client)
     }
 

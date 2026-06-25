@@ -41,11 +41,7 @@ fn finalize_completed_contract_allows_arbiter_finalizer() {
     let (client_addr, freelancer_addr, arbiter_addr, contract_id) =
         super::create_contract_with_arbiter(&env, &client);
 
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
 
     // Release all milestones to reach Completed state.
     for idx in 0u32..3u32 {
@@ -66,8 +62,14 @@ fn finalize_completed_contract_allows_arbiter_finalizer() {
         .expect("finalization record should exist");
     assert_eq!(record.finalizer, arbiter_addr);
     assert_eq!(record.summary.status, ContractStatus::Completed);
-    assert_eq!(record.summary.funded_amount, super::total_milestone_amount());
-    assert_eq!(record.summary.released_amount, super::total_milestone_amount());
+    assert_eq!(
+        record.summary.funded_amount,
+        super::total_milestone_amount()
+    );
+    assert_eq!(
+        record.summary.released_amount,
+        super::total_milestone_amount()
+    );
     assert_eq!(record.summary.refundable_balance, 0);
 }
 
@@ -161,11 +163,7 @@ fn finalize_rejects_funded_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Funded
@@ -222,7 +220,10 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
     let result = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
     let err = result.expect_err("expected contract panic");
     let actual = err.expect("expected Ok(Error), got InvokeError");
-    assert_eq!(actual, soroban_sdk::Error::from(EscrowError::AlreadyFinalized));
+    assert_eq!(
+        actual,
+        soroban_sdk::Error::from(EscrowError::AlreadyFinalized)
+    );
 }
 
 /// deposit_funds is rejected after finalization.
@@ -304,11 +305,7 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));

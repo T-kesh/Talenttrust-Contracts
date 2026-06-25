@@ -1,8 +1,8 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
-    safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow,
-    EscrowError, Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, EscrowError,
+    Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 /// Immutable metadata written when an escrow contract is closed.
@@ -108,9 +108,8 @@ impl Escrow {
         let after_releases =
             safe_subtract_amounts(contract.funded_amount, contract.released_amount)
                 .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
-        let refundable_balance =
-            safe_subtract_amounts(after_releases, contract.refunded_amount)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
+        let refundable_balance = safe_subtract_amounts(after_releases, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
 
         ContractSummary {
             schema_version: CONTRACT_SUMMARY_SCHEMA_VERSION,
@@ -176,7 +175,10 @@ impl Escrow {
     }
 
     /// Return immutable close metadata for `contract_id`, if it has been finalized.
-    pub(crate) fn get_finalization_record_impl(env: Env, contract_id: u32) -> Option<FinalizationRecord> {
+    pub(crate) fn get_finalization_record_impl(
+        env: Env,
+        contract_id: u32,
+    ) -> Option<FinalizationRecord> {
         env.storage()
             .persistent()
             .get(&Self::finalization_key(contract_id))
