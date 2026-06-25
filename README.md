@@ -4,8 +4,8 @@ Soroban smart contracts for the TalentTrust freelancer escrow protocol on Stella
 
 ## Repository Scope
 
-- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
-- **Planned escrow fee model**: Configurable protocol fee accounting is not implemented in `contracts/escrow/src/lib.rs`; fee deduction is tracked in [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313) and fee withdrawal in [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance. **Token custody is on-chain** via a Stellar Asset Contract (SAC) bound at admin setup; `deposit_funds` and `release_milestone` perform real `token::Client::transfer` calls.
+- **Planned escrow fee model**: Configurable protocol fee is now wired into `release_milestone` (`set_protocol_fee_bps`); fee retention into `AccumulatedProtocolFees` is implemented. A separate `withdraw_protocol_fees` entrypoint remains tracked in [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
 
 Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md), threat analysis in [docs/escrow/SECURITY.md](docs/escrow/SECURITY.md), and release authorization modes in [docs/escrow/authorization.md](docs/escrow/authorization.md).
 
@@ -14,14 +14,17 @@ Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), 
 The escrow implementation follows a fail-closed state machine:
 
 - contract creation requires client authorization and rejects invalid participant or milestone metadata before persisting state
+- a Stellar Asset Contract (SAC) settlement token is admin-bound exactly once via `bind_settlement_token`; each subsequent `deposit_funds` and `release_milestone` calls `token::Client::transfer` and updates accounting atomically
+- deposits pull SAC tokens from the client BEFORE `funded_amount` is updated, so a failed transfer leaves accounting untouched
 - deposits cannot exceed the required escrow total
+- releases pay the freelancer (less protocol fee) via SAC transfer BEFORE milestone state is updated, so a failed payout leaves state untouched
 - releases require a valid unreleased milestone, caller authorization via `caller.require_auth()`, and valid non-expired approvals matching the contract's `ReleaseAuthorization` mode
 - reputation is gated behind contract completion and is issued once per contract
 - finalization records immutable close metadata for completed or disputed contracts and blocks later contract-specific mutations
 - one-time admin initialization protects pause and emergency controls; two-step admin transfer is planned in [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318)
 - pause and emergency controls block all state-changing escrow operations while active
 
-Planned protocol-fee, governance-transfer, and migration features are explicitly labeled in the escrow docs until their entrypoints land.
+Planned governance-transfer and migration features are explicitly labeled in the escrow docs until their entrypoints land.
 
 ```bash
 # Run tests (includes 95%+ coverage negative path testing for escrow)
