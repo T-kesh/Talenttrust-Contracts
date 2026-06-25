@@ -175,8 +175,6 @@ impl Escrow {
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
 
-
-
     /// Refunds unreleased milestones back to the client.
     ///
     /// # Arguments
