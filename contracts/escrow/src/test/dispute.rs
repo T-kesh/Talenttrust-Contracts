@@ -1,4 +1,8 @@
-use crate::{ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, EscrowError};
+use crate::dispute::{final_status_after_resolution, resolution_payouts};
+use crate::{
+    Contract, ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, EscrowError,
+    ReleaseAuthorization,
+};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address) {
@@ -13,6 +17,24 @@ fn setup_initialized() -> (Env, Address) {
 
 fn create_client<'a>(env: &'a Env, contract_id: &Address) -> EscrowClient<'a> {
     EscrowClient::new(env, contract_id)
+}
+
+fn payout_contract(
+    env: &Env,
+    funded_amount: i128,
+    released_amount: i128,
+    refunded_amount: i128,
+) -> Contract {
+    Contract {
+        client: Address::generate(env),
+        freelancer: Address::generate(env),
+        arbiter: Some(Address::generate(env)),
+        status: ContractStatus::Disputed,
+        funded_amount,
+        released_amount,
+        refunded_amount,
+        release_authorization: ReleaseAuthorization::ClientAndArbiter,
+    }
 }
 
 fn funded_contract_with_arbiter(
@@ -34,6 +56,149 @@ fn funded_contract_with_arbiter(
     );
     assert!(client.deposit_funds(&contract_id, &deposit_amount));
     (client_addr, freelancer_addr, arbiter_addr, contract_id)
+}
+
+/// Verifies FullRefund conserves all available balance for the client.
+#[test]
+fn resolution_payouts_full_refund_returns_available_to_client() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 100, 20, 10);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::FullRefund),
+        Ok((70, 0))
+    );
+}
+
+/// Verifies FullPayout conserves all available balance for the freelancer.
+#[test]
+fn resolution_payouts_full_payout_returns_available_to_freelancer() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 100, 20, 10);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::FullPayout),
+        Ok((0, 70))
+    );
+}
+
+/// Verifies PartialRefund applies the documented 70/30 split with floor rounding.
+#[test]
+fn resolution_payouts_partial_refund_uses_floor_rounded_70_30_split() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 101, 0, 0);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::PartialRefund),
+        Ok((71, 30))
+    );
+}
+
+/// Verifies PartialRefund handles zero and one-stroop balances without creating value.
+#[test]
+fn resolution_payouts_partial_refund_handles_rounding_boundaries() {
+    let env = Env::default();
+    let zero_available = payout_contract(&env, 0, 0, 0);
+    let one_stroop_available = payout_contract(&env, 1, 0, 0);
+
+    assert_eq!(
+        resolution_payouts(&zero_available, &DisputeResolution::PartialRefund),
+        Ok((0, 0))
+    );
+    assert_eq!(
+        resolution_payouts(&one_stroop_available, &DisputeResolution::PartialRefund),
+        Ok((1, 0))
+    );
+}
+
+/// Verifies Split rejects negative client or freelancer payouts.
+#[test]
+fn resolution_payouts_split_rejects_negative_legs() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 100, 0, 0);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::Split(-1, 101)),
+        Err(EscrowError::InvalidDisputeSplit)
+    );
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::Split(101, -1)),
+        Err(EscrowError::InvalidDisputeSplit)
+    );
+}
+
+/// Verifies Split rejects under-sized and oversized sums that do not equal available balance.
+#[test]
+fn resolution_payouts_split_rejects_non_conserving_sums() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 100, 0, 0);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::Split(40, 59)),
+        Err(EscrowError::InvalidDisputeSplit)
+    );
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::Split(40, 61)),
+        Err(EscrowError::InvalidDisputeSplit)
+    );
+}
+
+/// Verifies Split accepts exact conservation, including zero available balance.
+#[test]
+fn resolution_payouts_split_accepts_exact_splits() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 100, 0, 0);
+    let zero_available = payout_contract(&env, 0, 0, 0);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::Split(40, 60)),
+        Ok((40, 60))
+    );
+    assert_eq!(
+        resolution_payouts(&zero_available, &DisputeResolution::Split(0, 0)),
+        Ok((0, 0))
+    );
+}
+
+/// Verifies Split uses checked addition and rejects overflowing payout sums.
+#[test]
+fn resolution_payouts_split_rejects_overflowing_sum() {
+    let env = Env::default();
+    let contract = payout_contract(&env, i128::MAX, 0, 0);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::Split(i128::MAX, 1)),
+        Err(EscrowError::PotentialOverflow)
+    );
+}
+
+/// Verifies payout math fails closed when released and refunded amounts exceed deposits.
+#[test]
+fn resolution_payouts_rejects_accounting_invariant_violation() {
+    let env = Env::default();
+    let contract = payout_contract(&env, 100, 70, 31);
+
+    assert_eq!(
+        resolution_payouts(&contract, &DisputeResolution::FullRefund),
+        Err(EscrowError::AccountingInvariantViolated)
+    );
+}
+
+/// Verifies final status is Refunded only when the full deposit has been refunded.
+#[test]
+fn final_status_after_resolution_marks_refunded_only_for_full_refund() {
+    let env = Env::default();
+    let fully_refunded = payout_contract(&env, 100, 0, 100);
+    let partially_refunded = payout_contract(&env, 100, 30, 70);
+
+    assert_eq!(
+        final_status_after_resolution(&fully_refunded),
+        ContractStatus::Refunded
+    );
+    assert_eq!(
+        final_status_after_resolution(&partially_refunded),
+        ContractStatus::Completed
+    );
 }
 
 #[test]

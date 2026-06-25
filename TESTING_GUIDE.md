@@ -1,5 +1,18 @@
 # Step-by-Step Testing Procedure for Cancel Contract State Guardrails
 
+## Dispute Payout Test Matrix
+
+Issue #423 adds focused tests for the pure dispute payout helpers in `contracts/escrow/src/test/dispute.rs`.
+
+| Resolution | Expected client refund | Expected freelancer payout | Security property |
+| --- | --- | --- | --- |
+| `FullRefund` | `available` | `0` | Conserves all available balance for the client |
+| `PartialRefund` | `available - floor(available * 30 / 100)` | `floor(available * 30 / 100)` | Conserves balance with deterministic integer rounding |
+| `FullPayout` | `0` | `available` | Conserves all available balance for the freelancer |
+| `Split(client, freelancer)` | `client` | `freelancer` | Requires non-negative legs and `client + freelancer == available` |
+
+Coverage includes zero available balance, one-stroop rounding, exact split conservation, undersized split rejection, oversized split rejection, checked-add overflow rejection, negative split rejection, and accounting invariant violation when released plus refunded exceeds deposited funds.
+
 ## Quick Summary of What Was Done
 
 You have successfully implemented security guardrails for the `cancel_contract` function in the TalentTrust escrow contract. The fix prevents fund stranding and double-resolution by rejecting cancellation attempts from `Disputed` and `Refunded` states.

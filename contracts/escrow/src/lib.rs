@@ -26,6 +26,7 @@
 mod approvals;
 mod create_contract;
 mod deposit;
+mod dispute;
 mod finalize;
 mod governance;
 mod refund;
@@ -33,6 +34,7 @@ mod release;
 mod ttl;
 mod types;
 
+pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
@@ -40,7 +42,9 @@ pub use types::{
     ReleaseAuthorization, Reputation,
 };
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
@@ -72,6 +76,9 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
+    InvalidDisputeSplit = 25,
+    AccountingInvariantViolated = 26,
+    PotentialOverflow = 27,
 }
 
 #[contracttype]
@@ -80,6 +87,10 @@ pub struct ContractData {
     pub client: Address,
     pub freelancer: Address,
     pub milestones: Vec<i128>,
+}
+
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
 }
 
 #[contractimpl]
