@@ -1,63 +1,5 @@
 use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum Error {
-    InvalidParticipants = 1,
-    MissingArbiter = 2,
-    InvalidArbiter = 3,
-    EmptyMilestones = 4,
-    InvalidMilestoneAmount = 5,
-    ContractIdCollision = 6,
-    ContractIdOverflow = 7,
-    AmountMustBePositive = 8,
-    ContractNotFound = 9,
-    UnauthorizedRole = 10,
-    InvalidState = 11,
-    IndexOutOfBounds = 12,
-    MilestoneAlreadyReleased = 13,
-    AlreadyRefunded = 14,
-    InsufficientFunds = 15,
-    EmptyRefundRequest = 16,
-    DuplicateMilestoneInRefund = 17,
-    AlreadyApproved = 18,
-    InsufficientApprovals = 19,
-    FreelancerMismatch = 20,
-    InvalidRating = 21,
-    ReputationAlreadyIssued = 22,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Contract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    ClientOnly,
-    ArbiterOnly,
-    ClientAndArbiter,
-    MultiSig,
-}
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -96,6 +38,7 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
+    InvalidParticipant = 1,
     IndexOutOfBounds = 3,
     AlreadyReleased = 4,
     EmptyRefundRequest = 6,
@@ -119,6 +62,9 @@ pub enum Error {
     InvalidMilestoneAmount = 26,
     ContractIdCollision = 27,
     ContractIdOverflow = 28,
+    NotInitialized = 29,
+    CannotProposeSelf = 30,
+    NoPendingAdminProposal = 31,
 }
 
 #[contracttype]
