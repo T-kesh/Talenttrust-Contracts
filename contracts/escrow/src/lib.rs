@@ -193,6 +193,8 @@ impl Escrow {
     /// `true` if release was successful
     ///
     /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Funded state
     /// * `InvalidMilestone` - If milestone index is out of bounds
@@ -204,6 +206,8 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not authorized to release
     ///
     /// # Security
+    /// - Pause/emergency gate runs BEFORE auth so funds cannot move while
+    ///   the contract is paused.
     /// - Requires valid approvals that haven't expired
     /// - Approvals are cleared after successful release
     /// - Fail-closed: missing or expired approvals prevent release
@@ -213,6 +217,11 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        // Pause/emergency gate: refuses any release while the contract is
+        // paused or in an active emergency. Runs BEFORE auth so a paused
+        // contract does not consume an auth cycle.
+        Self::require_not_paused(&env);
+
         // Authenticate caller before any state-dependent logic
         caller.require_auth();
 
@@ -351,6 +360,8 @@ impl Escrow {
     /// The total amount refunded
     ///
     /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `EmptyRefundRequest` - If milestone_indices is empty
     /// * `DuplicateMilestoneInRefund` - If the same milestone appears multiple times
@@ -358,11 +369,22 @@ impl Escrow {
     /// * `AlreadyReleased` - If any milestone was already released
     /// * `AlreadyRefunded` - If any milestone was already refunded
     /// * `InsufficientFunds` - If contract doesn't have enough balance to refund
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE the empty/dup/index validation
+    ///   block so paused contracts cannot perform any refund-path operation
+    ///   even via degenerate inputs.
     pub fn refund_unreleased_milestones(
         env: Env,
         contract_id: u32,
         milestone_indices: Vec<u32>,
     ) -> i128 {
+        // Pause/emergency gate: refuses any refund while the contract is
+        // paused or in an active emergency. Runs BEFORE auth and validation
+        // so paused contracts cannot perform any refund-path operation
+        // even via degenerate inputs.
+        Self::require_not_paused(&env);
+
         // Validate non-empty request
         if milestone_indices.is_empty() {
             env.panic_with_error(Error::EmptyRefundRequest);
@@ -633,7 +655,25 @@ impl Escrow {
     // Cancel contract
     // -----------------------------------------------------------------------
 
+    /// Cancels an active escrow contract.
+    ///
+    /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `UnauthorizedRole` - If caller is not client or freelancer
+    /// * `InvalidState` - If contract is not in Created, PartiallyFunded, or Funded state
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE contract state read so a paused
+    ///   contract cannot have its cancellation path tread on the record.
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        // Pause/emergency gate: refuses cancellation while the contract is
+        // paused or in an active emergency. Runs BEFORE state read so a
+        // paused contract cannot have its cancellation path tread on the
+        // contract record at all.
+        Self::require_not_paused(&env);
+
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -663,6 +703,22 @@ impl Escrow {
     // Reputation
     // -----------------------------------------------------------------------
 
+    /// Issues reputation credit for a completed contract.
+    ///
+    /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `UnauthorizedRole` - If caller is not the stored client
+    /// * `FreelancerMismatch` - If `freelancer` does not match the stored freelancer
+    /// * `InvalidRating` - If rating is not in [1, 5]
+    /// * `NotCompleted` - If contract status is not `Completed`
+    /// * `ReputationAlreadyIssued` - If reputation was already issued
+    /// * `SelfRating` - If client and freelancer are the same address
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE contract state read so paused
+    ///   contracts cannot have reputation mutated while paused.
     pub fn issue_reputation(
         env: Env,
         contract_id: u32,
@@ -670,6 +726,10 @@ impl Escrow {
         freelancer: Address,
         rating: i128,
     ) -> bool {
+        // Pause/emergency gate: refuses any reputation issuance while the
+        // contract is paused or in an active emergency.
+        Self::require_not_paused(&env);
+
         let contract: Contract = env
             .storage()
             .persistent()

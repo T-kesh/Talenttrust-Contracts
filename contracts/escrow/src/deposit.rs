@@ -16,11 +16,22 @@ impl Escrow {
     /// `true` if deposit was successful
     ///
     /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
     /// * `AmountMustBePositive` - If amount is <= 0
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Created state
     /// * `UnauthorizedRole` - If caller is not the client
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE any state read, TTL bump, auth,
+    ///   or balance change so funds cannot move while the contract is paused.
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
+        // Pause/emergency gate: refuses any deposit while the contract is
+        // paused or in an active emergency. Runs BEFORE any state read or
+        // auth so funds cannot move while paused.
+        Self::require_not_paused(&env);
+
         if amount <= 0 {
             env.panic_with_error(Error::AmountMustBePositive);
         }
