@@ -153,6 +153,109 @@ impl Escrow {
             .unwrap_or_default()
     }
 
+    /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `client` - The address of the client funding the contract
+    /// * `freelancer` - The address of the freelancer performing the work
+    /// * `arbiter` - Optional arbiter address for dispute resolution
+    /// * `milestones` - Vector of milestone amounts (in stroops)
+    /// * `release_authorization` - Authorization mode for milestone releases
+    ///
+    /// # Returns
+    /// The unique contract ID
+    ///
+    /// # Errors
+    /// * `InvalidParticipants` - If client and freelancer are the same address
+    /// * `EmptyMilestones` - If no milestones are provided
+    /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
+    /// * `MissingArbiter` - If arbiter is required but not provided
+    /// * `InvalidArbiter` - If arbiter is same as client or freelancer
+    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
+    /// * `ContractIdCollision` - If the allocated id slot is already occupied
+    pub fn create_contract(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        arbiter: Option<Address>,
+        milestones: Vec<i128>,
+        release_authorization: ReleaseAuthorization,
+    ) -> u32 {
+        create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
+    }
+
+    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `caller` - The address of the caller (must be the client)
+    /// * `amount` - The amount to deposit (in stroops)
+    ///
+    /// # Returns
+    /// `true` if deposit was successful
+    ///
+    /// # Errors
+    /// * `AmountMustBePositive` - If amount is <= 0
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `InvalidState` - If contract is not in Created state
+    /// * `UnauthorizedRole` - If caller is not the client
+    pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
+        deposit::deposit_funds_impl(&env, contract_id, caller, amount)
+    }
+
+    /// Finalize an escrow contract by writing immutable close metadata.
+    ///
+    /// `finalizer` must authorize the call and must be the stored client,
+    /// freelancer, or assigned arbiter. Finalization is allowed only while the
+    /// contract is `Completed` or `Disputed`. Once finalized, future
+    /// contract-specific mutations fail with `AlreadyFinalized`.
+    ///
+    /// # Errors
+    /// - `ContractPaused` when pause or emergency controls are active.
+    /// - `ContractNotFound` when `contract_id` is unknown.
+    /// - `AlreadyFinalized` when a close record already exists.
+    /// - `UnauthorizedRole` when `finalizer` is not a contract participant.
+    /// - `InvalidStatusTransition` unless status is `Completed` or `Disputed`.
+    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
+        finalize::finalize_contract_impl(&env, contract_id, finalizer)
+    }
+
+    /// Return immutable close metadata for `contract_id`, if it has been finalized.
+    pub fn get_finalization_record(env: Env, contract_id: u32) -> Option<finalize::FinalizationRecord> {
+        finalize::get_finalization_record_impl(&env, contract_id)
+    }
+
+    /// Propose a client migration for an existing contract.
+    ///
+    /// The current client must authorize the call. The proposed client address
+    /// must not be the freelancer or the current client. The pending migration
+    /// is stored in temporary storage with TTL.
+    pub fn propose_client_migration(
+        env: Env,
+        contract_id: u32,
+        current_client: Address,
+        new_client: Address,
+    ) -> bool {
+        migration::propose_client_migration_impl(&env, contract_id, current_client, new_client)
+    }
+
+    /// Accept a live pending client migration and update the contract.
+    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
+        migration::accept_client_migration_impl(&env, contract_id, new_client)
+    }
+
+    /// Return true if a live pending client migration exists.
+    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
+        migration::has_pending_client_migration_impl(&env, contract_id)
+    }
+
+    /// Return the live pending client migration record.
+    pub fn get_pending_client_migration(env: Env, contract_id: u32) -> PendingClientMigration {
+        migration::get_pending_client_migration_impl(&env, contract_id)
+    }
+
     /// Approves a milestone for release.
     ///
     /// Records the approval in temporary storage with TTL expiry.
