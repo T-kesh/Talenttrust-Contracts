@@ -13,6 +13,8 @@ mod persistence;
 mod reputation;
 mod release_authorization;
 mod client_migration;
+mod mainnet_readiness;
+
 
 // --- Shared constants ---
 
@@ -89,8 +91,6 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     assert!(client.approve_milestone_release(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.approve_milestone_release(&id, &client_addr, &2));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }
@@ -102,7 +102,7 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
-pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
+pub fn assert_contract_error<T: core::fmt::Debug, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
     result: Result<
         Result<T, soroban_sdk::ConversionError>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
@@ -115,8 +115,8 @@ pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
             assert_eq!(e, expected_err, "contract error code mismatch");
         }
         _other => panic!(
-            "expected contract error {:?}, got unexpected result variant",
-            expected
+            "expected contract error {:?}, got unexpected result variant: {:?}",
+            expected, _other
         ),
     }
 }

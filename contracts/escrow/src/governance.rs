@@ -1,5 +1,5 @@
-use crate::{DataKey, EscrowError};
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
+use crate::{DataKey, EscrowError, ReadinessChecklist, GovernedParameters, Escrow, EscrowClient, EscrowArgs};
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
 /// Governance-related privileged operations and audit events.
 ///
@@ -7,7 +7,7 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol};
 /// produce parseable events for off-chain indexers. Events emitted here
 /// follow the existing convention of short `symbol_short!` topics used by
 /// other lifecycle events (e.g. `init`, `paused`, `emergency`).
-#[allow(dead_code)]
+#[contractimpl]
 impl super::Escrow {
     /// Set the protocol fee (basis points). Emits an event with
     /// `(old_bps, new_bps, admin, timestamp)` under topic `protocol_fee_bps`.
@@ -131,5 +131,64 @@ impl super::Escrow {
     /// Return the current admin address.
     pub fn get_governance_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
+    }
+
+    /// Set both governance parameters at once and update the readiness checklist.
+    pub fn set_governed_params(
+        env: Env,
+        admin: Address,
+        protocol_fee_bps: u32,
+        max_escrow_total_stroops: i128,
+    ) -> bool {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&crate::DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::NotInitialized);
+        }
+
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+
+        if admin != stored_admin {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+        admin.require_auth();
+
+        if protocol_fee_bps > 10_000 {
+            env.panic_with_error(EscrowError::InvalidProtocolParameters);
+        }
+
+        let params = GovernedParameters {
+            protocol_fee_bps,
+            max_escrow_total_stroops,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernedParameters, &params);
+
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.governed_params_set = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+
+        true
+    }
+
+    /// Retrieve the current governed parameters.
+    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::GovernedParameters)
     }
 }

@@ -215,10 +215,13 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
 
     assert!(client.finalize_contract(&contract_id, &client_addr));
 
-    super::assert_contract_error(
-        client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]),
-        EscrowError::AlreadyFinalized,
-    );
+    let res = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
+    match res {
+        Err(Ok(e)) => {
+            assert_eq!(e, soroban_sdk::Error::from(EscrowError::AlreadyFinalized));
+        }
+        _ => panic!("expected contract error AlreadyFinalized"),
+    }
 }
 
 /// deposit_funds is rejected after finalization.
@@ -310,7 +313,7 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
 
-    assert!(client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]));
+    assert!(client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]) > 0);
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Completed

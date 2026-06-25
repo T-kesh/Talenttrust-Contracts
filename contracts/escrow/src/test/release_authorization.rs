@@ -18,7 +18,7 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Events, vec, Address, Env, IntoVal, Symbol, TryFromVal};
 
 use super::register_client;
 use crate::{ContractStatus, Error, Escrow, EscrowClient, ReleaseAuthorization};
@@ -69,7 +69,7 @@ fn create_contract_with_mode(
     arbiter: &Option<Address>,
     release_auth: &ReleaseAuthorization,
 ) -> u32 {
-    let milestones = vec![env, 500_i128, 300_i128];
+    let milestones = vec![env, 500_i128, 300_i128, 200_i128];
     client.create_contract(
         client_addr,
         freelancer_addr,
@@ -691,9 +691,16 @@ fn release_emits_events() {
     assert!(events.len() > 0);
 
     // Find the release event
-    let release_event = events
-        .iter()
-        .find(|event| event.0 == soroban_sdk::symbol_short!("milestone_released"));
+    let release_event = events.iter().find(|event| {
+        let topics = &event.1;
+        topics.len() > 0 && {
+            if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(0).unwrap()) {
+                sym == Symbol::new(&env, "milestone_released")
+            } else {
+                false
+            }
+        }
+    });
     assert!(release_event.is_some());
 }
 
@@ -751,10 +758,15 @@ fn rejects_refund_after_release_and_release_after_refund() {
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     let refund_ids = vec![&env, 0_u32];
     let refund_result = client.try_refund_unreleased_milestones(&contract_id, &refund_ids);
-    assert_contract_error(refund_result, Error::AlreadyReleased);
+    match refund_result {
+        Err(Ok(e)) => {
+            assert_eq!(e, soroban_sdk::Error::from(Error::AlreadyReleased));
+        }
+        _ => panic!("expected contract error AlreadyReleased"),
+    }
 
     let refund_ids = vec![&env, 1_u32];
-    assert!(client.refund_unreleased_milestones(&contract_id, &refund_ids));
+    assert!(client.refund_unreleased_milestones(&contract_id, &refund_ids) > 0);
 
     let result = client.try_release_milestone(&contract_id, &client_addr, &1);
     assert_contract_error(result, Error::AlreadyRefunded);

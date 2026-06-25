@@ -79,11 +79,13 @@ where
 
 /// Extend TTL of the NextContractId counter.
 pub fn extend_next_contract_id_ttl(env: &Env) {
-    env.storage().persistent().extend_ttl(
-        &DataKey::NextContractId,
-        PERSISTENT_BUMP_THRESHOLD,
-        PERSISTENT_TTL_LEDGERS,
-    );
+    if env.storage().persistent().has(&DataKey::NextContractId) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::NextContractId,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+    }
 }
 
 /// Extend TTL of a single contract entry.
