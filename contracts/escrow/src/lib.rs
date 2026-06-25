@@ -74,13 +74,7 @@ pub enum EscrowError {
     InvalidStatusTransition = 24,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractData {
-    pub client: Address,
-    pub freelancer: Address,
-    pub milestones: Vec<i128>,
-}
+
 
 #[contractimpl]
 impl Escrow {
@@ -670,7 +664,7 @@ impl Escrow {
         freelancer: Address,
         rating: i128,
     ) -> bool {
-        let contract: Contract = env
+        let mut contract: Contract = env
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
@@ -692,12 +686,7 @@ impl Escrow {
             env.panic_with_error(EscrowError::NotCompleted);
         }
 
-        if env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::ReputationIssued(contract_id))
-            .unwrap_or(false)
-        {
+        if contract.reputation_issued {
             env.panic_with_error(EscrowError::ReputationAlreadyIssued);
         }
 
@@ -706,9 +695,10 @@ impl Escrow {
         }
 
         caller.require_auth();
+        contract.reputation_issued = true;
         env.storage()
             .persistent()
-            .set(&DataKey::ReputationIssued(contract_id), &true);
+            .set(&DataKey::Contract(contract_id), &contract);
 
         let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
         let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);

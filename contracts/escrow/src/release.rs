@@ -1,6 +1,6 @@
 use crate::{
-    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient,
-    Milestone, ReleaseAuthorization,
+    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    ReleaseAuthorization,
 };
 use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
