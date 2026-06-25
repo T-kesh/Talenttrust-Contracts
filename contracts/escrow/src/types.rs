@@ -1,33 +1,37 @@
 use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum Error {
-    InvalidParticipants = 1,
-    MissingArbiter = 2,
-    InvalidArbiter = 3,
-    EmptyMilestones = 4,
-    InvalidMilestoneAmount = 5,
-    ContractIdCollision = 6,
-    ContractIdOverflow = 7,
-    AmountMustBePositive = 8,
-    ContractNotFound = 9,
-    UnauthorizedRole = 10,
-    InvalidState = 11,
-    IndexOutOfBounds = 12,
-    MilestoneAlreadyReleased = 13,
-    AlreadyRefunded = 14,
-    InsufficientFunds = 15,
-    EmptyRefundRequest = 16,
-    DuplicateMilestoneInRefund = 17,
-    AlreadyApproved = 18,
-    InsufficientApprovals = 19,
-    FreelancerMismatch = 20,
-    InvalidRating = 21,
-    ReputationAlreadyIssued = 22,
+// ─── Indexer summary types ────────────────────────────────────────────────────
+
+#[allow(dead_code)]
+pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneSummary {
+    pub index: u32,
+    pub amount: i128,
+    pub released: bool,
+    pub refunded: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractSummary {
+    pub schema_version: u32,
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub status: ContractStatus,
+    pub reputation_issued: bool,
+    pub total_amount: i128,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refundable_balance: i128,
+    pub released_milestone_count: u32,
+    pub milestones: Vec<MilestoneSummary>,
+}
+
+/// Main escrow contract state
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Contract {
@@ -35,28 +39,14 @@ pub struct Contract {
     pub freelancer: Address,
     pub arbiter: Option<Address>,
     pub status: ContractStatus,
+    pub total_deposited: i128,
     pub funded_amount: i128,
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    ClientOnly,
-    ArbiterOnly,
-    ClientAndArbiter,
-    MultiSig,
-}
+// ─── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +111,7 @@ pub enum Error {
     ContractIdOverflow = 28,
 }
 
+/// Contract lifecycle states
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
@@ -172,50 +163,6 @@ impl Default for ReadinessChecklist {
 pub struct GovernedParameters {
     pub protocol_fee_bps: u32,
     pub max_escrow_total_stroops: i128,
-}
-
-// ─── Indexer summary types ────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneSummary {
-    pub index: u32,
-    pub amount: i128,
-    pub released: bool,
-    pub refunded: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractSummary {
-    pub schema_version: u32,
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub reputation_issued: bool,
-    pub total_amount: i128,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refundable_balance: i128,
-    pub released_milestone_count: u32,
-    pub milestones: Vec<MilestoneSummary>,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Contract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
 }
 
 /// Defines who can approve milestone releases.
