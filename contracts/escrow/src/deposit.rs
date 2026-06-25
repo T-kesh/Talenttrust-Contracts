@@ -1,7 +1,7 @@
 use crate::{
     ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
 };
-use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
@@ -64,6 +64,11 @@ impl Escrow {
             .set(&DataKey::Contract(contract_id), &contract);
 
         ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("deposit"), contract_id),
+            (caller, amount, contract.funded_amount, env.ledger().timestamp()),
+        );
 
         true
     }

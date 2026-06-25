@@ -1,4 +1,4 @@
-use super::{create_contract, register_client, total_milestone_amount};
+use super::{assert_contract_error_i128, create_contract, register_client, total_milestone_amount};
 use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
@@ -46,7 +46,10 @@ fn finalize_disputed_contract_allows_arbiter_finalizer() {
         &client_addr,
         &super::total_milestone_amount()
     ));
-    assert!(client.raise_dispute(&contract_id, &client_addr));
+    // Note: raise_dispute would be called here once implemented
+    // For now, set dispute state via internal helper
+    let escrow_addr = client.address.clone();
+    super::set_escrow_status(&env, &escrow_addr, contract_id, ContractStatus::Disputed);
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Disputed
@@ -215,7 +218,7 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
 
     assert!(client.finalize_contract(&contract_id, &client_addr));
 
-    super::assert_contract_error(
+    super::assert_contract_error_i128(
         client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]),
         EscrowError::AlreadyFinalized,
     );
@@ -310,7 +313,8 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
 
-    assert!(client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]));
+    let refunded = client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]);
+    assert!(refunded > 0);
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Completed

@@ -8,9 +8,10 @@ use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
 use soroban_sdk::{
     testutils::Address as _,
+    testutils::Events,
     testutils::Ledger as _,
     testutils::LedgerInfo,
-    Address, Env, IntoVal, Symbol, Val,
+    Address, Env, IntoVal, Symbol, TryFromVal, Val,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -39,10 +40,15 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 // ---------------------------------------------------------------------------
 
 fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
-    let topic_val: Val = topic.into_val(env);
-    env.events().all().iter().any(|event| {
+    Events::all(&env.events()).iter().any(|event| {
         let topics = event.1;
-        topics.len() > 0 && topics.get(0).unwrap() == topic_val
+        if topics.len() == 0 {
+            return false;
+        }
+        let val = topics.get(0).unwrap();
+        // Convert the Val back to Symbol for comparison
+        <Symbol as TryFromVal<Env, Val>>::try_from_val(env, &val)
+            .map_or(false, |s| s == *topic)
     })
 }
 

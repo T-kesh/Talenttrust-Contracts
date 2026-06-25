@@ -153,6 +153,11 @@ impl Escrow {
 
         ttl::extend_contract_and_milestones_ttl(&env, contract_id);
 
+        env.events().publish(
+            (Symbol::new(&env, "milestone_released"), contract_id, milestone_index),
+            (caller, milestone.amount, contract.released_amount, env.ledger().timestamp()),
+        );
+
         true
     }
 }
