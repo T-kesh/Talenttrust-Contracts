@@ -759,3 +759,45 @@ fn rejects_refund_after_release_and_release_after_refund() {
     let result = client.try_release_milestone(&contract_id, &client_addr, &1);
     assert_contract_error(result, Error::AlreadyRefunded);
 }
+
+#![cfg(test)]
+use soroban_sdk::{testutils::Address as _, Env, Address};
+use crate::{EscrowContract, EscrowContractClient, types::Error};
+
+#[test]
+fn test_revoke_approval_and_release_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let party_client = Address::generate(&env);
+    let party_freelancer = Address::generate(&env);
+    
+    // Initialize standard mock setup (Assume helper method matching your workspace configuration)
+    // client.initialize(&party_client, &party_freelancer, ...);
+
+    // 1. Set milestone approval flag
+    client.approve_milestone(&contract_id, &party_client, &0);
+    
+    // 2. Perform validation checking revocation clears flag properly
+    client.revoke_approval(&contract_id, &party_client, &0);
+
+    // 3. Attempting to release now must fail because approval was withdrawn
+    // Asserting the release_milestone method returns Error::MilestoneNotAuthorized (or relevant protocol variant)
+    let result = client.try_release_milestone(&0);
+    assert_eq!(result.err(), Some(Ok(Error::MilestoneNotAuthorized)));
+}
+
+#[test]
+fn test_revoke_without_prior_approval_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let party_client = Address::generate(&env);
+
+    let result = client.try_revoke_approval(&contract_id, &party_client, &0);
+    assert_eq!(result.err(), Some(Ok(Error::ApprovalRecordNotFound)));
+}

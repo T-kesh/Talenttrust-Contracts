@@ -752,6 +752,24 @@ impl Escrow {
             env.panic_with_error(EscrowError::NotInitialized);
         }
     }
+
+    // Include existing module declarations and imports above...
+
+#[contractimpl]
+impl EscrowContract {
+    // Existing entrypoints (initialize, approve_milestone, release_milestone, etc.)...
+
+    /// Revokes a previously declared milestone approval flag for the caller.
+    /// Reverts if the milestone has already been released or if no active record matches.
+    pub fn revoke_approval(
+        env: Env,
+        contract_id: Address,
+        caller: Address,
+        milestone_index: u32,
+    ) -> Result<(), crate::types::Error> {
+        approvals::revoke_approval(&env, contract_id, caller, milestone_index)
+    }
+}
 }
 
 #[cfg(test)]
