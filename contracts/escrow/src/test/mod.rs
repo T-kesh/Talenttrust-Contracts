@@ -1,18 +1,46 @@
 #![cfg(test)]
 #![allow(dead_code)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Milestone, ReleaseAuthorization};
 
 // --- Submodules ---
 
-mod emergency_controls;
-mod pause_controls;
-mod persistence;
-mod reputation;
-mod release_authorization;
+mod access_control;
+mod accounting_invariants;
+mod approval_expiry;
+mod authorization_matrix_validation;
+mod cancel_contract;
 mod client_migration;
+mod contract_id_allocation;
+mod create_contract;
+mod create_contract_bounds;
+mod deposit;
+mod dispute;
+mod emergency_controls;
+mod flows;
+mod governance;
+mod governance_events;
+mod hello;
+mod input_sanitization_amounts;
+mod input_sanitization_identities;
+mod lifecycle;
+mod mainnet_readiness;
+mod milestone_schedule;
+mod pause_controls;
+mod performance;
+mod persistence;
+mod protocol_fees;
+mod refund;
+mod release;
+mod release_authorization;
+mod reputation;
+mod security;
+mod storage;
+mod summary;
+mod timeout_tests;
+mod ttl_tests;
 
 // --- Shared constants ---
 
@@ -119,4 +147,86 @@ pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
             expected
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers used by refund, release, deposit, and create_contract submodules
+// ---------------------------------------------------------------------------
+
+/// Returns `(Env, client_addr, freelancer_addr)` with all auths mocked.
+pub fn setup() -> (Env, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    (env, client_addr, freelancer_addr)
+}
+
+/// Registers the Escrow contract and returns an `EscrowClient` bound to it.
+pub fn create_client(env: &Env) -> EscrowClient<'_> {
+    register_client(env)
+}
+
+/// Creates the default 3-milestone contract (200 / 400 / 600 stroops) and returns its id.
+pub fn create_default_contract(
+    env: &Env,
+    client: &EscrowClient,
+    client_addr: &Address,
+    freelancer_addr: &Address,
+) -> u32 {
+    let milestones = vec![env, MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE];
+    client.create_contract(
+        client_addr,
+        freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    )
+}
+
+/// Asserts `funded_amount`, `released_amount`, `refunded_amount`, and `status` on a `Contract`.
+pub fn assert_contract_state(
+    contract: Contract,
+    expected_status: ContractStatus,
+    expected_funded: i128,
+    expected_released: i128,
+    expected_refunded: i128,
+) {
+    assert_eq!(contract.status, expected_status, "status mismatch");
+    assert_eq!(
+        contract.funded_amount, expected_funded,
+        "funded_amount mismatch"
+    );
+    assert_eq!(
+        contract.released_amount, expected_released,
+        "released_amount mismatch"
+    );
+    assert_eq!(
+        contract.refunded_amount, expected_refunded,
+        "refunded_amount mismatch"
+    );
+}
+
+/// Asserts `released` and `refunded` flags on the milestone at `index`.
+pub fn assert_milestone_flags(
+    milestones: Vec<Milestone>,
+    index: u32,
+    expected_released: bool,
+    expected_refunded: bool,
+) {
+    let m = milestones.get(index).expect("milestone index out of bounds");
+    assert_eq!(m.released, expected_released, "milestone.released mismatch at index {index}");
+    assert_eq!(m.refunded, expected_refunded, "milestone.refunded mismatch at index {index}");
+}
+
+/// Alias used by `hello.rs`.
+pub fn setup_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
+}
+
+/// Alias used by `hello.rs`.
+pub fn register_escrow(env: &Env) -> EscrowClient<'_> {
+    register_client(env)
 }
