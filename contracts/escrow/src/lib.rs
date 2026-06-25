@@ -353,6 +353,8 @@ impl Escrow {
     // -----------------------------------------------------------------------
 
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        Self::require_not_paused(&env);
+
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -389,6 +391,8 @@ impl Escrow {
         freelancer: Address,
         rating: i128,
     ) -> bool {
+        Self::require_not_paused(&env);
+
         let contract: Contract = env
             .storage()
             .persistent()
