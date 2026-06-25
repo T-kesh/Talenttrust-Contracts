@@ -26,9 +26,12 @@
 mod approvals;
 mod finalize;
 mod governance;
+mod migration;
 mod ttl;
 mod types;
 
+pub use migration::PendingClientMigration;
+pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
     Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
     ReleaseAuthorization, Reputation,
@@ -65,6 +68,7 @@ pub enum EscrowError {
     ReputationAlreadyIssued = 21,
     NotCompleted = 22,
     FreelancerMismatch = 23,
+    InvalidStatusTransition = 24,
 }
 
 #[contracttype]
