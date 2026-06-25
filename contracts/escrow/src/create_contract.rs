@@ -66,11 +66,10 @@ impl Escrow {
             }
         }
 
+        // Allocate the next id, verify the slot is vacant, then immediately
+        // extend the counter's TTL so it survives until the next ledger window.
         let id = next_contract_id(&env);
-
         ttl::extend_next_contract_id_ttl(&env);
-
-        let id = next_contract_id(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
@@ -103,9 +102,8 @@ impl Escrow {
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextContractId, &(id + 1));
+        // Advance the counter; checked_add guards against u32 overflow.
+        bump_next_contract_id(&env, id);
 
         env.events().publish(
             (symbol_short!("created"), id),
@@ -116,7 +114,12 @@ impl Escrow {
     }
 }
 
-/// Returns the next contract id after verifying the slot is unused.
+/// Returns the next contract id after verifying the slot is unoccupied.
+///
+/// Panics with [`Error::ContractIdCollision`] if a `Contract` entry already
+/// exists at that id — this guards against storage-level id reuse.  The
+/// counter starts at `1`; `0` is reserved as a sentinel "not found" value
+/// in off-chain indexers.
 fn next_contract_id(env: &Env) -> u32 {
     let id: u32 = env
         .storage()
@@ -137,7 +140,9 @@ fn next_contract_id(env: &Env) -> u32 {
 }
 
 /// Advances [`DataKey::NextContractId`] after a contract is persisted.
-#[allow(dead_code)]
+///
+/// Uses `checked_add` so that allocating the very last possible id (`u32::MAX`)
+/// panics with [`Error::ContractIdOverflow`] rather than silently wrapping.
 fn bump_next_contract_id(env: &Env, id: u32) {
     let next_id = id
         .checked_add(1)
