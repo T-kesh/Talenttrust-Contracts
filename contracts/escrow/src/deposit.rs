@@ -25,6 +25,10 @@ impl Escrow {
             env.panic_with_error(Error::AmountMustBePositive);
         }
 
+        // Reject if paused or emergency is active (must run before loading
+        // contract data so that unauthorised callers also get the same error).
+        Self::require_not_paused(&env);
+
         let mut contract: Contract = env
             .storage()
             .persistent()

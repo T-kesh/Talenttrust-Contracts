@@ -42,6 +42,8 @@ impl Escrow {
     ) -> bool {
         caller.require_auth();
 
+        Self::require_not_paused(&env);
+
         let mut contract: Contract = env
             .storage()
             .persistent()
