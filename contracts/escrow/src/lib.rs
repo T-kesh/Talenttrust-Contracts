@@ -72,6 +72,7 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
+    PotentialOverflow = 25,
 }
 
 #[contracttype]
@@ -304,15 +305,17 @@ impl Escrow {
         if Self::is_initialized(&env) {
             let fee_bps = Self::get_protocol_fee_bps(&env);
             if fee_bps > 0 {
-                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
+                let fee = Self::calculate_protocol_fee(&env, milestone.amount, fee_bps);
                 let current_accumulated: i128 = env
                     .storage()
                     .persistent()
                     .get(&DataKey::AccumulatedProtocolFees)
                     .unwrap_or(0);
+                let new_accumulated = Self::safe_add_amounts(current_accumulated, fee)
+                    .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
                 env.storage().persistent().set(
                     &DataKey::AccumulatedProtocolFees,
-                    &(current_accumulated + fee),
+                    &new_accumulated,
                 );
             }
         }
@@ -751,6 +754,34 @@ impl Escrow {
         {
             env.panic_with_error(EscrowError::NotInitialized);
         }
+    }
+
+    /// Checks if the escrow contract has been initialized.
+    pub fn is_initialized(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+    }
+
+    /// Returns the current protocol fee in basis points.
+    pub fn get_protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Calculates the protocol fee based on the amount and fee basis points.
+    pub fn calculate_protocol_fee(env: &Env, amount: i128, fee_bps: u32) -> i128 {
+        amount
+            .checked_mul(fee_bps as i128)
+            .and_then(|val| val.checked_div(10_000))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
+    }
+
+    fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+        a.checked_add(b)
     }
 }
 

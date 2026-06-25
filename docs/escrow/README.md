@@ -91,6 +91,10 @@ state, available funded balance, and paused state, then marks the milestone as
 released. This authorization gap is intentionally documented here until the auth
 fix lands.
 
+When a milestone is released, protocol fees are calculated and accumulated according to the formula:
+`fee = (milestone_amount * protocol_fee_bps) / 10_000`
+The calculation uses checked arithmetic and panics with `PotentialOverflow` to prevent math errors. Accumulation is routed through `safe_add_amounts`.
+
 When the final milestone is released, status becomes `Completed` and one pending
 reputation credit is added for the freelancer.
 
