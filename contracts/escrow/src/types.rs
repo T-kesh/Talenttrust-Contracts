@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, BytesN, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +23,8 @@ pub enum DataKey {
     ProtocolFeeBps,
     AccumulatedProtocolFees,
     ReadinessChecklist,
+    // Dispute metadata: stored per-contract under DataKey::Dispute(contract_id)
+    Dispute(u32),
 }
 
 #[contracterror]
@@ -74,6 +76,12 @@ pub enum EscrowError {
     ExactDepositRequired = 41,
     DepositWouldExceedTotal = 42,
     AccountingInvariantViolated = 43,
+    /// Returned when a dispute operation requires an arbiter but the contract
+    /// was created without one.
+    DisputeArbiterMissing = 44,
+    /// Returned when calling raise_dispute / resolve_dispute / get_dispute on
+    /// a contract that has no active dispute.
+    DisputeNotFound = 45,
 }
 
 #[contracttype]
@@ -87,6 +95,59 @@ pub enum ContractStatus {
     Cancelled = 5,
     Refunded = 6,
     PartiallyFunded = 7,
+}
+
+/// Outcome selected by the arbiter when resolving a dispute.
+///
+/// `Release` marks the dispute as resolved in favour of the freelancer,
+/// `Refund` in favour of the client, and `Cancel` simply terminates the
+/// contract without moving funds. Splits are issued through the dedicated
+/// [`crate::Escrow::resolve_dispute_split`] entry point because the
+/// Soroban `contracttype` macro only accepts unit variants on enums.
+#[contracttype]
+#[repr(u32)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeResolution {
+    /// Release every remaining unreleased milestone to the freelancer.
+    Release = 0,
+    /// Refund every remaining unreleased milestone to the client.
+    Refund = 1,
+    /// Cancel the contract without moving funds.
+    Cancel = 2,
+}
+
+/// Numeric code that the event-emitter publishes for the resolution
+/// variant. Kept here so it ships in lockstep with `DisputeResolution`
+/// and the [`crate::Escrow::resolve_dispute_split`] dedicated flow.
+pub const DISPUTE_RESOLUTION_RELEASE: u32 = 0;
+pub const DISPUTE_RESOLUTION_REFUND: u32 = 1;
+pub const DISPUTE_RESOLUTION_CANCEL: u32 = 2;
+pub const DISPUTE_RESOLUTION_SPLIT: u32 = 3;
+
+/// Arbiter-driven split of the available escrow balance. Carried as a
+/// separate `contracttype` struct so that the `DisputeResolution` enum can
+/// stay unit-only (which is what `#[contracttype]` supports).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeSplit {
+    /// Amount (in stroops) that goes to the client.
+    pub client_amount: i128,
+    /// Amount (in stroops) that goes to the freelancer.
+    pub freelancer_amount: i128,
+}
+
+/// Metadata recorded when a dispute is raised on a contract.
+///
+/// Persisted under [`DataKey::Dispute`] keyed by contract id.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeMetadata {
+    /// Address that raised the dispute (must be client or freelancer).
+    pub raised_by: Address,
+    /// Cryptographic hash of the off-chain reason / evidence.
+    pub reason_hash: BytesN<32>,
+    /// Ledger timestamp at which the dispute was raised.
+    pub raised_at: u64,
 }
 
 #[contracttype]

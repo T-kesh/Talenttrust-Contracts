@@ -25,13 +25,21 @@
 #![allow(clippy::module_inception)]
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
-
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Symbol, Vec};
 
 mod types;
 pub use types::{
-    ContractStatus, ContractSummary, DataKey, DepositMode, EscrowError, Milestone,
-    MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    ContractStatus, ContractSummary, DataKey, DepositMode, DisputeMetadata, DisputeResolution,
+    DisputeSplit, EscrowError, Milestone, MilestoneSummary, ReadinessChecklist,
+    CONTRACT_SUMMARY_SCHEMA_VERSION, DISPUTE_RESOLUTION_CANCEL, DISPUTE_RESOLUTION_REFUND,
+    DISPUTE_RESOLUTION_RELEASE, DISPUTE_RESOLUTION_SPLIT,
+};
+
+mod dispute;
+pub use dispute::{
+    final_status_after_resolution, final_status_after_split,
+    require_arbiter as dispute_require_arbiter, require_party as dispute_require_party,
+    split_payouts,
 };
 
 mod amount_validation;
@@ -514,6 +522,12 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
+        // In the dispute lifecycle, only the arbiter can resolve payments;
+        // direct release is blocked to make accounting decisions auditable.
+        if contract.status == ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidState);
+        }
+
         if milestone_index >= contract.milestones.len() {
             env.panic_with_error(EscrowError::InvalidMilestone);
         }
@@ -651,6 +665,389 @@ impl Escrow {
             (freelancer, rating, env.ledger().timestamp()),
         );
         true
+    }
+
+    /// Create a new escrow contract with an explicit arbiter address.
+    ///
+    /// This is the dispute-aware counterpart to [`create_contract`]: it
+    /// behaves identically except that it records `arbiter` in the contract's
+    /// metadata so that dispute flows can later authorize the arbiter via
+    /// [`Self::resolve_dispute`].
+    ///
+    /// Passing `arbiter = None` is equivalent to calling [`create_contract`].
+    /// Passing `arbiter = Some(addr)` records `addr` as the dispute
+    /// resolver. The arbiter must not equal `client` or `freelancer`.
+    ///
+    /// Blocked when the contract is paused or in emergency.
+    pub fn create_contract_with_arbiter(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        arbiter: Option<Address>,
+        milestone_amounts: Vec<i128>,
+        deposit_mode: DepositMode,
+    ) -> u32 {
+        Self::require_not_paused(&env);
+        client.require_auth();
+
+        if client == freelancer {
+            env.panic_with_error(EscrowError::InvalidParticipant);
+        }
+        if let Some(ref arb) = arbiter {
+            if arb == &client || arb == &freelancer {
+                env.panic_with_error(EscrowError::InvalidParticipant);
+            }
+        }
+        if milestone_amounts.is_empty() {
+            env.panic_with_error(EscrowError::EmptyMilestones);
+        }
+        if milestone_amounts.len() > MAX_MILESTONES {
+            env.panic_with_error(EscrowError::TooManyMilestones);
+        }
+
+        let mut total: i128 = 0;
+        for i in 0..milestone_amounts.len() {
+            let amt = milestone_amounts.get(i).unwrap();
+            if amt <= 0 {
+                env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+            }
+            total = safe_add_amounts(total, amt)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        }
+        if total > MAX_TOTAL_ESCROW_STROOPS {
+            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+        }
+
+        let id: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &(id + 1));
+
+        let data = EscrowContractData {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            arbiter,
+            milestones: milestone_amounts,
+            status: ContractStatus::Created,
+            total_deposited: 0,
+            released_amount: 0,
+            refunded_amount: 0,
+            reputation_issued: false,
+            deposit_mode,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(id), &data);
+
+        // Audit: contract created
+        Self::emit_audit_event(
+            &env,
+            id,
+            ContractStatus::Created,
+            ContractStatus::Created,
+            &client,
+        );
+
+        env.events().publish(
+            (symbol_short!("created"), id),
+            (client, freelancer, env.ledger().timestamp()),
+        );
+        id
+    }
+
+    /// Raise a dispute on a funded contract.
+    ///
+    /// Auth: only the client or the freelancer of the contract may raise a
+    /// dispute. The contract must have an arbiter configured (otherwise the
+    /// dispute has no resolver) and must currently be in `Funded` state.
+    ///
+    /// On success, the contract transitions to `Disputed` and a
+    /// `dispute_raised` audit event is emitted. Subsequent `release_milestone`
+    /// operations are rejected by the state-machine guards in the contract
+    /// implementation.
+    ///
+    /// Blocked when the contract is paused or in emergency.
+    pub fn raise_dispute(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        reason_hash: BytesN<32>,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // The contract must have an arbiter configured for disputes to be
+        // meaningful; we surface a dedicated error rather than a generic
+        // state error so integrators can distinguish these cases.
+        if contract.arbiter.is_none() {
+            env.panic_with_error(EscrowError::DisputeArbiterMissing);
+        }
+        // Only the client or freelancer can initiate the dispute.
+        dispute_require_party(&env, &contract, &caller);
+        // The contract must be ready to enter the dispute lifecycle. We
+        // permit disputes from `Funded` (and partial-funding) states; a
+        // contract already in dispute, completed, refunded, or cancelled
+        // cannot be re-disputed.
+        match contract.status {
+            ContractStatus::Funded | ContractStatus::PartiallyFunded => {}
+            _ => env.panic_with_error(EscrowError::InvalidState),
+        }
+
+        let old_status = contract.status;
+        contract.status = ContractStatus::Disputed;
+
+        // Persist dispute metadata alongside the contract state.
+        let metadata = DisputeMetadata {
+            raised_by: caller.clone(),
+            reason_hash: reason_hash.clone(),
+            raised_at: env.ledger().timestamp(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(contract_id), &metadata);
+
+        env.storage().persistent().set(&key, &contract);
+
+        // Audit: state transition into dispute resolution.
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &caller);
+
+        env.events().publish(
+            (symbol_short!("dsp_rais"), contract_id),
+            (caller, reason_hash, env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Resolve an existing dispute. Arbiter-only.
+    ///
+    /// Auth: only the configured arbiter may call `resolve_dispute`. Anyone
+    /// else (including the client, freelancer, or a third party) is rejected
+    /// with [`EscrowError::UnauthorizedRole`].
+    ///
+    /// State: the contract must currently be in `Disputed` status. Any other
+    /// status (Funded, Completed, Refunded, Cancelled, etc.) is rejected
+    /// with [`EscrowError::InvalidState`] so that payouts cannot be applied
+    /// outside the dispute lifecycle.
+    ///
+    /// The mathematical split between client and freelancer is computed by
+    /// [`crate::dispute::resolution_payouts`]; the resulting contract status
+    /// is computed by [`crate::dispute::final_status_after_resolution`]. Both
+    /// are pure helpers, so the side-effects (state writes and event
+    /// emission) live entirely in this guarded entry point.
+    ///
+    /// Emits a `dsp_resolved` event with `(caller, resolution_code,
+    /// client_payout, freelancer_payout)` so that off-chain indexers and
+    /// auditors can reconstruct the arbiter's decision deterministically.
+    ///
+    /// Blocked when the contract is paused or in emergency.
+    pub fn resolve_dispute(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        resolution: DisputeResolution,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Authorize the caller as the contract's registered arbiter. A
+        // contract that was created without an arbiter rejects the call
+        // outright via DisputeArbiterMissing, and any non-arbiter caller is
+        // rejected via UnauthorizedRole.
+        dispute_require_arbiter(&env, &contract, &caller);
+
+        // State enforcement: the contract must be in Disputed status.
+        if contract.status != ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidState);
+        }
+
+        // Validate that a dispute metadata record exists. raise_dispute
+        // must have been called previously; without it we cannot emit the
+        // resolved event coherently.
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Dispute(contract_id))
+        {
+            env.panic_with_error(EscrowError::DisputeNotFound);
+        }
+
+        // Compute payouts inline. The simple variants are derived
+        // deterministically from the contract state. Splits are validated
+        // and applied through `resolve_dispute_split`, which is the
+        // dedicated entry point for arbiter-driven split payouts.
+        let available =
+            contract.total_deposited - contract.released_amount - contract.refunded_amount;
+        let (client_payout, freelancer_payout) = match resolution {
+            DisputeResolution::Release => (0, available),
+            DisputeResolution::Refund => (available, 0),
+            DisputeResolution::Cancel => (0, 0),
+        };
+
+        // Determine the new contract status via the pure helper (post-state).
+        let new_status = final_status_after_resolution(&contract, &resolution);
+
+        // Apply accounting changes. We use the safe arithmetic helpers so
+        // that i128 overflow cannot violate the invariants.
+        let old_status = contract.status;
+        let new_released = safe_add_amounts(contract.released_amount, freelancer_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        let new_refunded = safe_add_amounts(contract.refunded_amount, client_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        contract.released_amount = new_released;
+        contract.refunded_amount = new_refunded;
+        contract.status = new_status;
+
+        // Enforce the accounting invariant before persisting.
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+
+        env.storage().persistent().set(&key, &contract);
+
+        // Audit: emit state-transition + dedicated dispute_resolved event.
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &caller);
+
+        // Numeric code for the resolution variant so the event payload is
+        // fixed-size regardless of which variant was selected. Mirrors the
+        // public constants in `types.rs` so off-chain consumers can
+        // decode the event deterministically.
+        let resolution_code: u32 = match &resolution {
+            DisputeResolution::Release => DISPUTE_RESOLUTION_RELEASE,
+            DisputeResolution::Refund => DISPUTE_RESOLUTION_REFUND,
+            DisputeResolution::Cancel => DISPUTE_RESOLUTION_CANCEL,
+        };
+        env.events().publish(
+            (symbol_short!("dsp_resl"), contract_id),
+            (
+                caller.clone(),
+                resolution_code,
+                client_payout,
+                freelancer_payout,
+                env.ledger().timestamp(),
+            ),
+        );
+        true
+    }
+
+    /// Resolve an existing dispute and split the available escrow balance
+    /// between client and freelancer per the arbiter's instruction.
+    /// Arbiter-only.
+    ///
+    /// Auth: identical to [`Self::resolve_dispute`] — only the configured
+    /// arbiter may call this method.
+    ///
+    /// State: the contract must currently be in `Disputed` status.
+    ///
+    /// Invariants enforced by the underlying pure helpers
+    /// ([`crate::dispute::split_payouts`]
+    /// and [`crate::dispute::final_status_after_split`]):
+    /// * `client_amount` and `freelancer_amount` must both be
+    ///   non-negative, else `NonPositiveAmount`.
+    /// * `client_amount + freelancer_amount` must equal the available
+    ///   escrow balance, else `AccountingInvariantViolated`.
+    ///
+    /// Emits a `dsp_resolved` event with the synthetic
+    /// `DISPUTE_RESOLUTION_SPLIT` resolution code so off-chain indexers
+    /// can attribute the resolution to the dedicated split entry point.
+    ///
+    /// Blocked when the contract is paused or in emergency.
+    pub fn resolve_dispute_split(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        split: DisputeSplit,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Auth + state checks mirror `resolve_dispute` so the dedicated
+        // split entry point cannot be abused to bypass the dispute flow.
+        dispute_require_arbiter(&env, &contract, &caller);
+        if contract.status != ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidState);
+        }
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Dispute(contract_id))
+        {
+            env.panic_with_error(EscrowError::DisputeNotFound);
+        }
+
+        // Pure helper: validates non-negativity and that the split payouts
+        // sum to the available escrow balance.
+        let (client_payout, freelancer_payout) = split_payouts(&env, &contract, &split);
+
+        let new_status = final_status_after_split(&contract, &split);
+
+        let old_status = contract.status;
+        let new_released = safe_add_amounts(contract.released_amount, freelancer_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        let new_refunded = safe_add_amounts(contract.refunded_amount, client_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        contract.released_amount = new_released;
+        contract.refunded_amount = new_refunded;
+        contract.status = new_status;
+
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+
+        env.storage().persistent().set(&key, &contract);
+
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &caller);
+
+        // Use the dedicated `DISPUTE_RESOLUTION_SPLIT` code so off-chain
+        // consumers can distinguish a split resolution from Release/Refund/
+        // Cancel via the same event topic.
+        let resolution_code: u32 = DISPUTE_RESOLUTION_SPLIT;
+        env.events().publish(
+            (symbol_short!("dsp_resl"), contract_id),
+            (
+                caller.clone(),
+                resolution_code,
+                client_payout,
+                freelancer_payout,
+                env.ledger().timestamp(),
+            ),
+        );
+        true
+    }
+
+    /// Read the dispute metadata for a contract.
+    ///
+    /// Returns [`DisputeMetadata`] with the address that raised the dispute,
+    /// the reason hash they supplied, and the ledger timestamp at which the
+    /// dispute was raised. Panics with [`EscrowError::DisputeNotFound`] when
+    /// no dispute is on record for the contract.
+    pub fn get_dispute(env: Env, contract_id: u32) -> DisputeMetadata {
+        env.storage()
+            .persistent()
+            .get::<_, DisputeMetadata>(&DataKey::Dispute(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::DisputeNotFound))
     }
 
     /// Cancel an escrow contract. Blocked when paused.
