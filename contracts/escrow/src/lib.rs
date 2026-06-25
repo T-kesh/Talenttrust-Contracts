@@ -28,6 +28,7 @@ mod create_contract;
 mod deposit;
 mod finalize;
 mod governance;
+mod migration;
 mod refund;
 mod release;
 mod ttl;
@@ -40,13 +41,16 @@ pub use types::{
     ReleaseAuthorization, Reputation,
 };
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
 pub enum EscrowError {
     InvalidParticipant = 1,
     EmptyMilestones = 2,
@@ -72,6 +76,25 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
+    AmountMustBePositive = 25,
+    PotentialOverflow = 26,
+    AccountingInvariantViolated = 27,
+    AlreadyFinalized = 28,
+    InvalidDisputeSplit = 29,
+    FundingExceedsRequired = 30,
+    InsufficientEscrowBalance = 31,
+    InvalidParticipants = 32,
+    MilestoneAlreadyReleased = 33,
+    MilestoneNotFound = 34,
+    TooManyMilestones = 35,
+    TotalExceedsMaxEscrow = 36,
+    AlreadyApproved = 37,
+    InsufficientApprovals = 38,
+    ArbiterRequired = 39,
+    GovernanceNotInitialized = 40,
+    InvalidProtocolParameters = 41,
+    ExactDepositRequired = 42,
+    TotalCapExceeded = 43,
 }
 
 #[contracttype]
@@ -556,6 +579,93 @@ impl Escrow {
         env.storage().temporary().get(&approval_key)
     }
 
+    /// Revokes the caller's active approval for a milestone.
+    ///
+    /// The approval record is removed when no approval flags remain set.
+    pub fn revoke_approval(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_index: u32,
+    ) -> bool {
+        caller.require_auth();
+
+        let contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let milestone = milestones.get(milestone_index).unwrap();
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
+        let mut approvals: MilestoneApprovals = env
+            .storage()
+            .temporary()
+            .get(&approval_key)
+            .unwrap_or_else(|| env.panic_with_error(Error::InsufficientApprovals));
+
+        let mut revoked = false;
+        if caller == contract.client {
+            if approvals.client_approved {
+                approvals.client_approved = false;
+                revoked = true;
+            }
+        } else if caller == contract.freelancer {
+            if approvals.freelancer_approved {
+                approvals.freelancer_approved = false;
+                revoked = true;
+            }
+        } else if contract.arbiter.as_ref() == Some(&caller) {
+            if approvals.arbiter_approved {
+                approvals.arbiter_approved = false;
+                revoked = true;
+            }
+        }
+
+        if !revoked {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+
+        if !approvals.client_approved
+            && !approvals.freelancer_approved
+            && !approvals.arbiter_approved
+        {
+            env.storage().temporary().remove(&approval_key);
+        } else {
+            env.storage().temporary().set(&approval_key, &approvals);
+            env.storage().temporary().extend_ttl(
+                &approval_key,
+                ttl::PENDING_APPROVAL_BUMP_THRESHOLD,
+                ttl::PENDING_APPROVAL_TTL_LEDGERS,
+            );
+        }
+
+        true
+    }
+
     // -----------------------------------------------------------------------
     // Pause / unpause
     // -----------------------------------------------------------------------
@@ -742,6 +852,20 @@ impl Escrow {
     // Internal helpers
     // -----------------------------------------------------------------------
 
+
+    fn require_not_finalized(env: &Env, contract_id: u32) {
+    let finalized = env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&DataKey::Finalized(contract_id))
+        .unwrap_or(false);
+
+    if finalized {
+        env.panic_with_error(EscrowError::AlreadyFinalized);
+    }
+    }
+
+
     fn require_initialized(env: &Env) {
         if !env
             .storage()
@@ -753,23 +877,27 @@ impl Escrow {
         }
     }
 
-    // Include existing module declarations and imports above...
-
-#[contractimpl]
-impl EscrowContract {
-    // Existing entrypoints (initialize, approve_milestone, release_milestone, etc.)...
-
-    /// Revokes a previously declared milestone approval flag for the caller.
-    /// Reverts if the milestone has already been released or if no active record matches.
-    pub fn revoke_approval(
-        env: Env,
-        contract_id: Address,
-        caller: Address,
-        milestone_index: u32,
-    ) -> Result<(), crate::types::Error> {
-        approvals::revoke_approval(&env, contract_id, caller, milestone_index)
+    fn is_initialized(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
     }
-}
+
+    fn get_protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
+        if fee_bps == 0 {
+            0
+        } else {
+            amount * fee_bps as i128 / 10_000
+        }
+    }
 }
 
 #[cfg(test)]
