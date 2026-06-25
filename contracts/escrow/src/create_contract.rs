@@ -1,6 +1,5 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
-    ReleaseAuthorization,
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone, ReleaseAuthorization,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
 
@@ -78,6 +77,7 @@ impl Escrow {
             freelancer: freelancer.clone(),
             arbiter,
             status: ContractStatus::Created,
+            total_deposited: 0,
             funded_amount: 0,
             released_amount: 0,
             refunded_amount: 0,

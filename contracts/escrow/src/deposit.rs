@@ -1,6 +1,4 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone};
 use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
 #[contractimpl]
@@ -43,6 +41,7 @@ impl Escrow {
         }
 
         contract.funded_amount += amount;
+        contract.total_deposited += amount;
 
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones: Vec<Milestone> = env

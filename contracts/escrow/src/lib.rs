@@ -41,9 +41,13 @@ pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization, Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, Milestone,
+    MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
+
+// Re-export for internal use
+pub(crate) use amount_validation::safe_subtract_amounts;
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
@@ -82,6 +86,12 @@ pub enum EscrowError {
     AccountingInvariantViolated = 27,
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
+}
+
+impl From<EscrowError> for soroban_sdk::Error {
+    fn from(e: EscrowError) -> Self {
+        soroban_sdk::Error::from_contract_error(e as u32)
+    }
 }
 
 #[contracttype]
