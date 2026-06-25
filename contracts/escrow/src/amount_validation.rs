@@ -3,8 +3,6 @@
 //! Provides centralized validation for all money-like values in the escrow contract.
 //! Ensures positivity, max bounds, and proper stroop precision handling.
 
-use soroban_sdk::contracterror;
-
 /// Maximum number of decimal places for stroop precision (7 decimal places for Stellar)
 #[allow(dead_code)] // available for callers; not used internally
 pub const STROOP_PRECISION: u8 = 7;
@@ -171,6 +169,7 @@ pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EscrowError;
 
     #[test]
     fn test_validate_single_amount() {
@@ -182,15 +181,15 @@ mod tests {
         // Invalid amounts
         assert_eq!(
             validate_single_amount(0),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(EscrowError::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(-1),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(EscrowError::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
-            Err(AmountValidationError::AmountExceedsMaximum)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
@@ -205,13 +204,13 @@ mod tests {
         let amounts2 = [100_0000000, 0, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts2),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(EscrowError::AmountMustBePositive)
         );
 
         let amounts3 = [100_0000000, -50_0000000, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts3),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(EscrowError::AmountMustBePositive)
         );
     }
 
@@ -226,7 +225,7 @@ mod tests {
         // Invalid totals
         assert_eq!(
             validate_contract_total(max_total + 1, max_total),
-            Err(AmountValidationError::ExceedsContractMaximum)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
@@ -242,7 +241,7 @@ mod tests {
         let milestones2 = [500_000_0000000, 600_000_0000000]; // 5M + 6M > 1M max
         assert_eq!(
             validate_milestone_amounts(&milestones2, max_contract_total),
-            Err(AmountValidationError::ExceedsContractMaximum)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
@@ -257,7 +256,7 @@ mod tests {
         // Invalid - would exceed maximum
         assert_eq!(
             validate_deposit_amount(600_000_0000000, 500_000_0000000, max_contract_total),
-            Err(AmountValidationError::ExceedsContractMaximum)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 

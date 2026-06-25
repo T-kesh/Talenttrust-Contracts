@@ -1,6 +1,9 @@
-use soroban_sdk::contracttype;
+use soroban_sdk::{contractimpl, contracttype, Address, Env};
 
-use crate::{safe_add_amounts, Contract, ContractStatus, EscrowError};
+use crate::{
+    safe_add_amounts, Contract, ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient,
+    EscrowError,
+};
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]
@@ -16,6 +19,31 @@ pub enum DisputeResolution {
     Split(i128, i128),
 }
 
+#[contractimpl]
+impl Escrow {
+    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        contract.status = ContractStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        true
+    }
+}
+
 impl DisputeResolution {
     pub fn code(&self) -> u32 {
         match self {
@@ -27,6 +55,7 @@ impl DisputeResolution {
     }
 }
 
+#[allow(dead_code)]
 pub fn resolution_payouts(
     contract: &Contract,
     resolution: &DisputeResolution,
@@ -64,6 +93,7 @@ pub fn resolution_payouts(
     }
 }
 
+#[allow(dead_code)]
 pub fn final_status_after_resolution(contract: &Contract) -> ContractStatus {
     if contract.refunded_amount == contract.funded_amount {
         ContractStatus::Refunded

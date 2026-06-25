@@ -3,16 +3,16 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
 // --- Submodules ---
 
+mod client_migration;
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
-mod reputation;
 mod release_authorization;
-mod client_migration;
+mod reputation;
 
 // --- Shared constants ---
 
@@ -89,8 +89,6 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     assert!(client.approve_milestone_release(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.approve_milestone_release(&id, &client_addr, &2));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }
@@ -103,10 +101,7 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
 pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
-    result: Result<
-        Result<T, soroban_sdk::ConversionError>,
-        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
-    >,
+    result: Result<T, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
     expected: E,
 ) {
     match result {

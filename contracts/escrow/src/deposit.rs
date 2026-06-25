@@ -33,12 +33,16 @@ impl Escrow {
 
         ttl::extend_contract_ttl(&env, contract_id);
 
+        Self::require_not_finalized(&env, contract_id);
+
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
         }
         caller.require_auth();
 
-        if contract.status != ContractStatus::Created {
+        if contract.status != ContractStatus::Created
+            && contract.status != ContractStatus::PartiallyFunded
+        {
             env.panic_with_error(Error::InvalidState);
         }
 
@@ -57,6 +61,8 @@ impl Escrow {
 
         if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
             contract.status = ContractStatus::Funded;
+        } else if contract.funded_amount > 0 && contract.status == ContractStatus::Created {
+            contract.status = ContractStatus::PartiallyFunded;
         }
 
         env.storage()

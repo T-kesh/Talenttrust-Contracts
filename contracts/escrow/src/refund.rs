@@ -48,10 +48,6 @@ impl Escrow {
 
         ttl::extend_contract_ttl(&env, contract_id);
 
-        Self::require_not_finalized(&env, contract_id);
-
-        contract.client.require_auth();
-
         let milestone_key = Symbol::new(&env, "milestones");
         let mut milestones: Vec<Milestone> = env
             .storage()
@@ -60,6 +56,9 @@ impl Escrow {
             .unwrap();
 
         ttl::extend_milestone_ttl(&env, contract_id);
+
+        contract.client.require_auth();
+        Self::require_not_finalized(&env, contract_id);
 
         let mut total_refund_amount: i128 = 0;
 
@@ -102,6 +101,9 @@ impl Escrow {
                 contract.status = ContractStatus::Refunded;
             } else {
                 contract.status = ContractStatus::Completed;
+                let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
+                let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+                env.storage().persistent().set(&pending_key, &(pending + 1));
             }
         }
 

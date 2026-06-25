@@ -1,4 +1,4 @@
-use super::{create_contract, register_client, total_milestone_amount};
+use super::{create_contract, register_client};
 use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
@@ -41,11 +41,7 @@ fn finalize_disputed_contract_allows_arbiter_finalizer() {
     let (client_addr, _freelancer_addr, arbiter_addr, contract_id) =
         super::create_contract_with_arbiter(&env, &client);
 
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     assert!(client.raise_dispute(&contract_id, &client_addr));
     assert_eq!(
         client.get_contract(&contract_id).status,
@@ -59,7 +55,10 @@ fn finalize_disputed_contract_allows_arbiter_finalizer() {
         .expect("finalization record should exist");
     assert_eq!(record.finalizer, arbiter_addr);
     assert_eq!(record.summary.status, ContractStatus::Disputed);
-    assert_eq!(record.summary.funded_amount, super::total_milestone_amount());
+    assert_eq!(
+        record.summary.funded_amount,
+        super::total_milestone_amount()
+    );
     assert_eq!(record.summary.released_amount, 0);
     assert_eq!(
         record.summary.refundable_balance,
@@ -94,7 +93,7 @@ fn try_get_contract_reports_missing_state_without_mutating_storage() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 10_i128];
-    let created = client.create_contract(
+    let _created = client.create_contract(
         &client_addr,
         &freelancer_addr,
         &None,
@@ -109,7 +108,7 @@ fn finalize_allows_freelancer_finalizer() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+    let (_client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
     assert!(client.finalize_contract(&contract_id, &freelancer_addr));
 
@@ -157,11 +156,7 @@ fn finalize_rejects_funded_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Funded
@@ -300,17 +295,14 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
 
-    assert!(client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]));
+    let refunded = client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]);
+    assert!(refunded > 0);
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Completed
@@ -322,7 +314,10 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
         .get_finalization_record(&contract_id)
         .expect("finalization record should exist");
     assert_eq!(record.summary.status, ContractStatus::Completed);
-    assert_eq!(record.summary.released_amount, super::MILESTONE_ONE + super::MILESTONE_TWO);
+    assert_eq!(
+        record.summary.released_amount,
+        super::MILESTONE_ONE + super::MILESTONE_TWO
+    );
     assert_eq!(record.summary.refundable_balance, 0);
     assert_eq!(record.summary.released_milestone_count, 2);
 }

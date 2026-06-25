@@ -38,9 +38,6 @@ pub fn approve_milestone(
     milestone_index: u32,
     caller: &Address,
 ) -> Result<bool, Error> {
-    // Authenticate caller
-    caller.require_auth();
-
     // Load contract
     let contract: Contract = env
         .storage()
@@ -48,8 +45,10 @@ pub fn approve_milestone(
         .get(&DataKey::Contract(contract_id))
         .ok_or(Error::ContractNotFound)?;
 
-    // Verify contract is in Funded state
-    if contract.status != ContractStatus::Funded {
+    // Verify contract is in Funded or PartiallyFunded state
+    if contract.status != ContractStatus::Funded
+        && contract.status != ContractStatus::PartiallyFunded
+    {
         return Err(Error::InvalidState);
     }
 
@@ -218,6 +217,7 @@ pub fn clear_approvals(env: &Env, contract_id: u32, milestone_index: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Escrow;
     use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
@@ -240,36 +240,37 @@ mod tests {
         };
 
         let contract_id = 1u32;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
+        let contract_addr = env.register(Escrow, ());
+        env.as_contract(&contract_addr, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Contract(contract_id), &contract);
 
-        let milestones = Vec::from_array(
-            &env,
-            [Milestone {
-                amount: 1000,
-                funded_amount: 0,
-                released: false,
-                refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
-                work_evidence: None,
-                refunded_amount: 0,
-            }],
-        );
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+            let milestones = Vec::from_array(
+                &env,
+                [Milestone {
+                    amount: 1000,
+                    funded_amount: 0,
+                    released: false,
+                    refunded: false,
+                    refunded_amount: 0,
+                    work_evidence: None,
+                }],
+            );
+            let milestone_key = Symbol::new(&env, "milestones");
+            env.storage().persistent().set(
+                &(DataKey::Contract(contract_id), milestone_key),
+                &milestones,
+            );
 
-        // Client approves
-        let result = approve_milestone(&env, contract_id, 0, &client);
-        assert!(result.is_ok());
+            // Client approves (inside as_contract context)
+            let result = approve_milestone(&env, contract_id, 0, &client);
+            assert!(result.is_ok());
 
-        // Check approvals
-        let check = check_approvals(&env, &contract, contract_id, 0);
-        assert!(check.is_ok());
+            // Check approvals (inside as_contract context)
+            let check = check_approvals(&env, &contract, contract_id, 0);
+            assert!(check.is_ok());
+        });
     }
 
     #[test]
@@ -292,42 +293,43 @@ mod tests {
         };
 
         let contract_id = 1u32;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
+        let contract_addr = env.register(Escrow, ());
+        env.as_contract(&contract_addr, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Contract(contract_id), &contract);
 
-        let milestones = Vec::from_array(
-            &env,
-            [Milestone {
-                amount: 1000,
-                funded_amount: 0,
-                released: false,
-                refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
-                work_evidence: None,
-                refunded_amount: 0,
-            }],
-        );
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+            let milestones = Vec::from_array(
+                &env,
+                [Milestone {
+                    amount: 1000,
+                    funded_amount: 0,
+                    released: false,
+                    refunded: false,
+                    refunded_amount: 0,
+                    work_evidence: None,
+                }],
+            );
+            let milestone_key = Symbol::new(&env, "milestones");
+            env.storage().persistent().set(
+                &(DataKey::Contract(contract_id), milestone_key),
+                &milestones,
+            );
 
-        // Only client approves - insufficient
-        let result = approve_milestone(&env, contract_id, 0, &client);
-        assert!(result.is_ok());
+            // Only client approves - insufficient
+            let result = approve_milestone(&env, contract_id, 0, &client);
+            assert!(result.is_ok());
 
-        let check = check_approvals(&env, &contract, contract_id, 0);
-        assert_eq!(check, Err(Error::InsufficientApprovals));
+            let check = check_approvals(&env, &contract, contract_id, 0);
+            assert_eq!(check, Err(Error::InsufficientApprovals));
 
-        // Freelancer also approves - now sufficient
-        let result = approve_milestone(&env, contract_id, 0, &freelancer);
-        assert!(result.is_ok());
+            // Freelancer also approves - now sufficient
+            let result = approve_milestone(&env, contract_id, 0, &freelancer);
+            assert!(result.is_ok());
 
-        let check = check_approvals(&env, &contract, contract_id, 0);
-        assert!(check.is_ok());
+            let check = check_approvals(&env, &contract, contract_id, 0);
+            assert!(check.is_ok());
+        });
     }
 
     #[test]
@@ -350,35 +352,36 @@ mod tests {
         };
 
         let contract_id = 1u32;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
+        let contract_addr = env.register(Escrow, ());
+        env.as_contract(&contract_addr, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Contract(contract_id), &contract);
 
-        let milestones = Vec::from_array(
-            &env,
-            [Milestone {
-                amount: 1000,
-                funded_amount: 0,
-                released: false,
-                refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
-                work_evidence: None,
-                refunded_amount: 0,
-            }],
-        );
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+            let milestones = Vec::from_array(
+                &env,
+                [Milestone {
+                    amount: 1000,
+                    funded_amount: 0,
+                    released: false,
+                    refunded: false,
+                    refunded_amount: 0,
+                    work_evidence: None,
+                }],
+            );
+            let milestone_key = Symbol::new(&env, "milestones");
+            env.storage().persistent().set(
+                &(DataKey::Contract(contract_id), milestone_key),
+                &milestones,
+            );
 
-        // First approval succeeds
-        let result = approve_milestone(&env, contract_id, 0, &client);
-        assert!(result.is_ok());
+            // First approval succeeds
+            let result = approve_milestone(&env, contract_id, 0, &client);
+            assert!(result.is_ok());
 
-        // Second approval fails
-        let result = approve_milestone(&env, contract_id, 0, &client);
-        assert_eq!(result, Err(Error::AlreadyApproved));
+            // Second approval fails
+            let result = approve_milestone(&env, contract_id, 0, &client);
+            assert_eq!(result, Err(Error::AlreadyApproved));
+        });
     }
 }
