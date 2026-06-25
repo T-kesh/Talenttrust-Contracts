@@ -13,7 +13,8 @@ use soroban_sdk::{Address, Env, Symbol, Vec};
 /// * `env` - The contract environment
 /// * `contract_id` - The contract ID
 /// * `milestone_index` - The index of the milestone to approve
-/// * `caller` - The address of the caller (must be client, freelancer, or arbiter)
+/// * `caller` - The address of the caller. In MultiSig mode, exactly the
+///   client and freelancer can approve, and both approvals are required.
 ///
 /// # Returns
 /// `true` if approval was recorded successfully
@@ -28,7 +29,7 @@ use soroban_sdk::{Address, Env, Symbol, Vec};
 ///
 /// # Security
 /// - Caller must be authenticated via require_auth()
-/// - Only authorized parties (client/freelancer/arbiter) can approve
+/// - Only parties authorized by the contract's release mode can approve
 /// - Approvals are stored with TTL and auto-expire
 /// - Duplicate approvals from the same party are rejected
 pub fn approve_milestone(
@@ -165,6 +166,7 @@ pub fn approve_milestone(
 ///
 /// # Security
 /// - Fail-closed: missing or expired approvals prevent release
+/// - MultiSig requires both client and freelancer approvals
 /// - TTL expiry is enforced by Soroban's temporary storage
 pub fn check_approvals(
     env: &Env,
