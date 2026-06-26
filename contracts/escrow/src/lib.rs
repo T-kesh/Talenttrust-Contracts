@@ -301,7 +301,17 @@ impl Escrow {
 
     /// Approves a milestone for release.
     ///
-    /// Records the approval in temporary storage with TTL expiry.
+    /// Records the caller's approval in temporary storage with a TTL of
+    /// `PENDING_APPROVAL_TTL_LEDGERS` (~7 days). Each call resets the TTL.
+    /// Duplicate approvals from the same party are rejected.
+    ///
+    /// Required approvers per mode:
+    /// - `ClientOnly` — client only
+    /// - `ArbiterOnly` — arbiter only
+    /// - `ClientAndArbiter` — client or arbiter (one is enough)
+    /// - `MultiSig` — both client and freelancer must approve
+    ///
+    /// See `docs/escrow/approvals-and-release.md` for the full flow.
     pub fn approve_milestone_release(
         env: Env,
         contract_id: u32,
@@ -320,6 +330,13 @@ impl Escrow {
     /// MultiSig semantics are client-and-freelancer approval. A MultiSig
     /// milestone can be released only by the stored client or freelancer after
     /// both of those addresses have approved the same milestone.
+    ///
+    /// Approvals are cleared from temporary storage after a successful release.
+    /// Missing or expired approvals are fail-closed — they produce
+    /// `InsufficientApprovals` and the call panics without mutating state.
+    ///
+    /// See `approve_milestone_release`, `get_milestone_approvals`, and
+    /// `docs/escrow/approvals-and-release.md` for the full flow.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -650,15 +667,12 @@ impl Escrow {
     }
 
     /// Retrieves approval status for a milestone.
-    /// Returns None if approvals have expired or don't exist.
     ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `milestone_index` - The milestone index
+    /// Returns `None` when no approval record exists or when the TTL has
+    /// elapsed. Treat `None` and an all-`false` struct identically — neither
+    /// unblocks `release_milestone`.
     ///
-    /// # Returns
-    /// Optional MilestoneApprovals struct
+    /// See `approve_milestone_release` and `docs/escrow/approvals-and-release.md`.
     pub fn get_milestone_approvals(
         env: Env,
         contract_id: u32,
