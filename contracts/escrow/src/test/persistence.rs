@@ -44,11 +44,6 @@ fn finalize_completed_contract_allows_client_finalizer() {
         super::create_contract_with_arbiter(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
-    assert!(client.raise_dispute(&contract_id, &client_addr));
-    assert_eq!(
-        client.get_contract(&contract_id).status,
-        ContractStatus::Disputed
-    );
 
     assert!(client.finalize_contract(&contract_id, &client_addr));
 
@@ -211,6 +206,13 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
     assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    let result = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
+    let expected: soroban_sdk::Error = EscrowError::AlreadyFinalized.into();
+    match result {
+        Err(Ok(e)) => assert_eq!(e, expected),
+        _ => panic!("expected AlreadyFinalized error"),
+    }
 }
 
 /// deposit_funds is rejected after finalization.

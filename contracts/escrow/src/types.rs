@@ -38,7 +38,38 @@ pub enum DataKey {
 
 
 /// Canonical contract error type for all entrypoint-facing errors.
-    // Removed duplicate canonical error enum; using unified definition from errors.rs
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    InvalidParticipant = 1,
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
+    NotInitialized = 29,
+    CannotProposeSelf = 30,
+    NoPendingAdminProposal = 31,
+}
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

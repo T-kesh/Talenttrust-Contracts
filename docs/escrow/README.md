@@ -45,6 +45,14 @@ Operational controls:
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
 
+Governance admin transfer (two-step):
+
+- `propose_governance_admin(proposed) -> bool`
+- `accept_governance_admin() -> bool`
+- `cancel_governance_admin_proposal() -> bool`
+- `get_governance_admin() -> Option<Address>`
+- `get_pending_governance_admin() -> Option<Address>`
+
 ## Canonical Happy Path
 
 ### 1. Initialize Operational Admin
@@ -140,6 +148,38 @@ The contract writes one immutable `FinalizationRecord` containing the finalizer,
 ledger timestamp, and a `ContractSummary` snapshot. After the record exists,
 contract-specific mutating calls reject with `AlreadyFinalized`.
 
+## Two-Step Governance Admin Transfer
+
+The admin transfer uses a propose-accept (two-step) pattern:
+
+```rust
+// Step 1: current admin proposes next admin
+escrow.propose_governance_admin(&next_admin);
+
+// Step 2: next admin accepts (requires next_admin.require_auth())
+escrow.accept_governance_admin();
+```
+
+### Rules
+- **Self-proposal is rejected**: proposing the current admin as the new admin
+  panics with `CannotProposeSelf`.
+- **Re-proposing overwrites**: calling `propose_governance_admin` while a
+  pending proposal exists silently replaces it (no explicit cancellation
+  required).
+- **Cancellation**: `cancel_governance_admin_proposal` is admin-gated (only
+  the current admin may cancel). It clears the pending admin and emits a
+  `("admin", "cancelled")` event.
+- **No stale acceptance**: accepting after cancellation panics with
+  `InvalidState` because the pending proposal has been removed.
+- All operations require the contract to be initialized.
+
+### Events
+| Topic | Data | Trigger |
+|---|---|---|
+| `("admin", "proposed")` | `(admin, proposed, timestamp)` | `propose_governance_admin` |
+| `("admin", "accepted")` | `(old_admin, new_admin, timestamp)` | `accept_governance_admin` |
+| `("admin", "cancelled")` | `(admin, cancelled_proposal, timestamp)` | `cancel_governance_admin_proposal` |
+
 ## Pause and Emergency Controls
 
 `pause`, `unpause`, `activate_emergency_pause`, and `resolve_emergency` require
@@ -171,6 +211,9 @@ deposit and fee events are planned in
 
 - Creation and reputation issue require explicit address authentication.
 - Pause and emergency controls are admin-authenticated.
+- Admin transfer uses a two-step propose-accept pattern. The current admin
+  cannot propose themselves. Only the current admin can cancel a pending
+  proposal. Re-proposing overwrites without error.
 - Deposits cannot exceed the exact milestone total.
 - Releases fail on duplicate milestone release, invalid milestone id, missing
   contract, paused state, and insufficient funded balance.
@@ -187,8 +230,6 @@ deposit and fee events are planned in
 
 These features are not implemented entrypoints today:
 
-- Two-step admin transfer: planned in
-  [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318).
 - Protocol fee deduction on release: planned in
   [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313).
 - Protocol fee treasury withdrawal: planned in

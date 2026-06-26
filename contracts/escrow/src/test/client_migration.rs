@@ -7,8 +7,8 @@ use crate::{
     Contract, Escrow, EscrowClient, EscrowError,
 };
 use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, IntoVal,
-    Symbol, Val,
+    testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo,
+    Address, Env, Symbol, TryFromVal,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -37,18 +37,14 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 // ---------------------------------------------------------------------------
 
 fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
-    use soroban_sdk::IntoVal;
-    let topic_val: Val = topic.clone().into_val(env);
-    let topic_sym = topic.clone();
+    let topic_clone = topic.clone();
     env.events().all().iter().any(|event| {
         let topics = event.1;
-        if topics.len() == 0 {
-            return false;
-        }
-        let first_val = topics.get(0).unwrap();
-        let first_sym: Symbol =
-            soroban_sdk::TryFromVal::try_from_val(env, &first_val).unwrap_or(Symbol::new(env, ""));
-        first_sym == topic_sym
+        topics.len() > 0
+            && Symbol::try_from_val(env, &topics.get(0).unwrap())
+                .ok()
+                .as_ref()
+                == Some(&topic_clone)
     })
 }
 

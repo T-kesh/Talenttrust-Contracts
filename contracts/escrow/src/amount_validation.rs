@@ -3,6 +3,7 @@
 //! Provides centralized validation for all money-like values in the escrow contract.
 //! Ensures positivity, max bounds, and proper stroop precision handling.
 
+use crate::EscrowError;
 use soroban_sdk::contracterror;
 
 /// Maximum number of decimal places for stroop precision (7 decimal places for Stellar)
@@ -171,6 +172,7 @@ pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EscrowError;
 
     #[test]
     fn test_validate_single_amount() {
@@ -180,15 +182,15 @@ mod tests {
 
         assert_eq!(
             validate_single_amount(0),
-            Err(crate::Error::AmountMustBePositive)
+            Err(EscrowError::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(-1),
-            Err(crate::Error::AmountMustBePositive)
+            Err(EscrowError::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
@@ -201,53 +203,47 @@ mod tests {
         let amounts2 = [100_0000000, 0, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts2),
-            Err(crate::Error::AmountMustBePositive)
+            Err(EscrowError::AmountMustBePositive)
         );
 
         let amounts3 = [100_0000000, -50_0000000, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts3),
-            Err(crate::Error::AmountMustBePositive)
+            Err(EscrowError::AmountMustBePositive)
         );
     }
 
     #[test]
     fn test_validate_contract_total() {
         let max_total = 1_000_000_0000000;
-
         assert!(validate_contract_total(100_0000000, max_total).is_ok());
         assert!(validate_contract_total(max_total, max_total).is_ok());
-
         assert_eq!(
             validate_contract_total(max_total + 1, max_total),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
     #[test]
     fn test_validate_milestone_amounts() {
         let max_contract_total = 1_000_000_0000000;
-
         let milestones1 = [100_0000000, 200_0000000, 300_0000000];
         assert!(validate_milestone_amounts(&milestones1, max_contract_total).is_ok());
-
         let milestones2 = [500_000_0000000, 600_000_0000000];
         assert_eq!(
             validate_milestone_amounts(&milestones2, max_contract_total),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
     #[test]
     fn test_validate_deposit_amount() {
         let max_contract_total = 1_000_000_0000000;
-
         assert!(validate_deposit_amount(100_0000000, 0, max_contract_total).is_ok());
         assert!(validate_deposit_amount(100_0000000, 500_0000000, max_contract_total).is_ok());
-
         assert_eq!(
             validate_deposit_amount(600_000_0000000, 500_000_0000000, max_contract_total),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(EscrowError::InvalidMilestoneAmount)
         );
     }
 
@@ -255,7 +251,6 @@ mod tests {
     fn test_safe_arithmetic() {
         assert_eq!(safe_add_amounts(100, 200), Some(300));
         assert_eq!(safe_add_amounts(i128::MAX, 1), None);
-
         assert_eq!(safe_subtract_amounts(300, 100), Some(200));
         assert_eq!(safe_subtract_amounts(0, 1), Some(-1));
         assert_eq!(safe_subtract_amounts(i128::MIN, 1), None);

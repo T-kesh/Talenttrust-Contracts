@@ -9,6 +9,8 @@ use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 mod client_migration;
 mod emergency_controls;
+mod governance;
+mod governance_events;
 mod pause_controls;
 mod persistence;
 mod release_authorization;
