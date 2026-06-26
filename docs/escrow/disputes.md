@@ -32,64 +32,6 @@ stateDiagram-v2
 
 ## Entrypoints
 
-`raise_dispute` and `resolve_dispute` have a single authoritative contract
-entrypoint pair in `contracts/escrow/src/lib.rs`. The dispute module keeps only
-the shared `DisputeResolution`, `resolution_payouts`, and
-`final_status_after_resolution` helpers so every external dispute call passes
-through the same arbiter, status, pause, finalization, and accounting guards.
-
-### `assign_arbiter`
-
-Assigns an arbiter to a contract that was created without one.
-
-**Signature:**
-```rust
-pub fn assign_arbiter(
-    env: Env,
-    contract_id: u32,
-    caller: Address,
-    arbiter: Address,
-) -> bool
-```
-
-**Parameters:**
-- `contract_id` - The contract to update
-- `caller` - Client or freelancer initiating the assignment
-- `arbiter` - Neutral address to assign as dispute arbiter
-
-**Mutual consent scheme:**
-The entrypoint requires authorization from both stored parties. `caller` must
-be either the client or freelancer, and the transaction must also carry auth
-from the other party before the arbiter is stored.
-
-**Requirements:**
-- Caller must be authenticated
-- Caller must be either the client or freelancer
-- Client and freelancer must both authorize the transaction
-- Contract must not already have an arbiter
-- Arbiter must not equal the client or freelancer
-- Contract must be in `Created`, `Funded`, or `PartiallyFunded` state
-- Contract must not be paused or under emergency controls
-- Contract must not be finalized
-
-**Effects:**
-- Stores `contract.arbiter = Some(arbiter)`
-- Emits `(arbiter, assigned)` with the contract id, caller, arbiter, and timestamp
-- Enables `raise_dispute` for contracts that were originally created without an arbiter
-
-**Error Codes:**
-- `UnauthorizedRole` - Caller is not client or freelancer
-- `InvalidArbiter` - Arbiter equals the client or freelancer
-- `InvalidState` - Contract already has an arbiter or is not pre-dispute
-- `ContractPaused` - Pause or emergency controls active
-- `AlreadyFinalized` - Contract has been finalized
-
-**Example:**
-```rust
-let result = escrow_client.assign_arbiter(&contract_id, &client_address, &arbiter_address);
-assert!(result);
-```
-
 ### `raise_dispute`
 
 Opens a dispute on a funded or partially funded contract.
@@ -160,9 +102,7 @@ pub fn resolve_dispute(
 
 **Effects:**
 - Updates `released_amount` and/or `refunded_amount`
-- Verifies `released_amount + refunded_amount == funded_amount`
 - Sets final status (`Completed` or `Refunded`)
-- Adds one pending reputation credit for the freelancer when the resolution completes the contract
 - Emits `(dispute, resolved)` event with resolution code
 
 **Error Codes:**

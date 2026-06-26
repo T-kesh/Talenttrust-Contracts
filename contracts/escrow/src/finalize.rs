@@ -2,7 +2,7 @@ use soroban_sdk::{contracttype, symbol_short, Address, Env, Vec};
 
 use crate::{
     safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, EscrowError,
-    MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 /// Immutable metadata written when an escrow contract is closed.
@@ -144,7 +144,9 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
     Escrow::require_not_finalized(&env, contract_id);
     Escrow::require_finalizer_role(&env, &contract, &finalizer);
 
-    if contract.status != ContractStatus::Completed && contract.status != ContractStatus::Disputed {
+    if contract.status != ContractStatus::Completed
+        && contract.status != ContractStatus::Disputed
+    {
         env.panic_with_error(EscrowError::InvalidStatusTransition);
     }
 
@@ -158,8 +160,6 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
         .persistent()
         .set(&Escrow::finalization_key(contract_id), &record);
 
-    crate::ttl::extend_finalization_ttl(&env, contract_id);
-
     env.events().publish(
         (symbol_short!("finalized"), contract_id),
         (finalizer, record.timestamp),
@@ -170,7 +170,6 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
 
 /// Return immutable close metadata for `contract_id`, if it has been finalized.
 pub fn get_finalization_record_impl(env: &Env, contract_id: u32) -> Option<FinalizationRecord> {
-    crate::ttl::extend_finalization_ttl(env, contract_id);
     env.storage()
         .persistent()
         .get(&Escrow::finalization_key(contract_id))

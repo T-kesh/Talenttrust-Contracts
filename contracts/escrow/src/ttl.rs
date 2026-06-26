@@ -7,7 +7,7 @@
 //! "expired".
 
 use crate::{DataKey, Error, Milestone};
-use soroban_sdk::{Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec};
+use soroban_sdk::{Env, IntoVal, Symbol, TryFromVal, Val, Vec};
 
 pub const LEDGERS_PER_DAY: u32 = 17_280;
 
@@ -103,10 +103,7 @@ pub fn store_milestones(env: &Env, contract_id: u32, milestones: &Vec<Milestone>
 }
 
 pub(crate) fn milestone_storage_key(env: &Env, contract_id: u32) -> (DataKey, Symbol) {
-    (
-        DataKey::Contract(contract_id),
-        Symbol::new(env, "milestones"),
-    )
+    (DataKey::Contract(contract_id), Symbol::new(env, "milestones"))
 }
 
 /// Extend TTL of the NextContractId counter.
@@ -152,3 +149,4 @@ pub fn extend_participant_contract_index_ttl(env: &Env, key: &crate::DataKey) {
         .persistent()
         .extend_ttl(key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS);
 }
+
