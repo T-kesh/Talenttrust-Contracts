@@ -1,6 +1,10 @@
 use crate::{DataKey, EscrowError, ReadinessChecklist, GovernedParameters, Escrow, EscrowClient, EscrowArgs};
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
+/// Maximum allowed protocol fee in basis points (99.99%).
+/// Values >= 10_000 would result in fees equal to or greater than the released amount.
+const MAX_PROTOCOL_FEE_BPS: u32 = 10_000;
+
 /// Governance-related privileged operations and audit events.
 ///
 /// This module implements a small set of admin-facing functions that
@@ -11,6 +15,22 @@ use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 impl super::Escrow {
     /// Set the protocol fee (basis points). Emits an event with
     /// `(old_bps, new_bps, admin, timestamp)` under topic `protocol_fee_bps`.
+    ///
+    /// Requirements:
+    /// - Contract must be initialized.
+    /// - Caller must be the stored admin.
+    /// - `new_bps` must be strictly less than 10_000 (fee < 100% of amount).
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `new_bps` - The new fee rate in basis points (0 to 9999 inclusive)
+    ///
+    /// # Panics
+    /// Panics with `EscrowError::ProtocolFeeBpsExceedsMaximum` if `new_bps >= 10_000`.
+    ///
+    /// # Security
+    /// - Fees are capped to be strictly less than the milestone amount
+    /// - No fee can exceed 99.99% of any release
     pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
         if !env
             .storage()
@@ -19,6 +39,11 @@ impl super::Escrow {
             .unwrap_or(false)
         {
             env.panic_with_error(EscrowError::NotInitialized);
+        }
+
+        // Validate fee bps is within sane bounds (< 10_000)
+        if new_bps >= MAX_PROTOCOL_FEE_BPS {
+            env.panic_with_error(EscrowError::ProtocolFeeBpsExceedsMaximum);
         }
 
         let admin: Address = env

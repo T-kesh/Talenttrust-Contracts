@@ -355,19 +355,17 @@ lifecycle calls fail with `ContractPaused`; read-only queries remain available.
 
 Implemented events:
 
-- `("evidence", contract_id)` on `submit_work_evidence` (payload: milestone_index, freelancer, timestamp)
-- `("init", "admin_set")` on `initialize`
-- `("settl_tok", "bound")` on `bind_settlement_token`
+- `("init", "admin_set")` on `initialize` (payload: `admin`, `timestamp`)
+- `("init", "config")` on `initialize` (payload: `admin`, `timestamp`, `protocol_fee_bps`, `governed_parameters`)
 - `("paused", timestamp)` on `pause`
 - `("unpaused", timestamp)` on `unpause`
 - `("emergency", "activated")` and `("emergency", "resolved")`
 - `("audit", contract_id)` for lifecycle state transitions
-- `("created", contract_id)` on contract creation
-- `("deposited", contract_id)` on deposit (with payload `(caller, amount, funded_amount, total, settlement_token)`)
-- `("released", contract_id, milestone_index)` on release (with payload `(freelancer, payout, fee, settlement_token)`)
+- `("created", contract_id)` on contract creation (payload: `client`, `freelancer`, `timestamp`)
+- `("released", contract_id, milestone_index)` on release (payload: `caller`, `timestamp`)
 - `("rep_issd", contract_id)` on reputation issuance
-- `("cancelled", contract_id)` on cancellation
-- `("finalized", contract_id)` on finalization
+- `("cancelled", contract_id)` on cancellation (payload: `caller`, `previous_status`, `timestamp`)
+- `("finalized", contract_id)` on finalization (payload: `finalizer`, `timestamp`)
 
 The `("deposited", contract_id)` event is emitted on every successful
 `deposit_funds` call (previously only status-changing deposits surfaced an
@@ -401,60 +399,14 @@ indexers can reconcile the escrow's accounting against the SAC's
 - Accounting is checked after balance-changing operations.
 - The contract stores accounting state only; token custody and token transfers
   are not implemented in `lib.rs` and must be handled by an audited integration.
-- Storage uses persistent keys for live contract state. Pending client
-  migrations are written to temporary storage with a 21-day TTL (see
-  [Client Migration](#client-migration)); the pending-approval TTL constant
-  exists for a planned approval flow with no current writing entrypoint.
-  contract, paused state, missing settlement token, and insufficient funded
-  balance.
-- Arithmetic for escrow totals, deposits, and releases uses checked helpers
-  and panics with `PotentialOverflow` or `InvalidDepositAmount` on overflow.
-- Accounting is checked after balance-changing operations; SAC balance and
-  accounting counter cannot diverge through any tested path.
-
-## Refund Accounting Invariant
-
-`get_refundable_balance` is the security-critical query that answers "how much
-of the escrowed funds can still be returned or released?". Its definition is:
-
-```
-refundable_balance = funded_amount - released_amount - refunded_amount
-```
-
-This identity must hold at every point in the contract's lifecycle. Violating
-it would mean the contract could either over-pay (release or refund more than
-was funded) or leave funds permanently locked.
-
-### Properties the invariant guarantees
-
-| Property | Explanation |
-|---|---|
-| Non-negative | `refundable_balance >= 0` at all times — the contract never becomes insolvent. |
-| Zero iff all milestones terminal | Balance reaches `0` only when every milestone is in `released` or `refunded` state. |
-| Additive decomposition | `funded_amount == released_amount + refunded_amount + refundable_balance` always. |
-| Status consistency | When balance is `0` and any milestone was released, status is `Completed`; when all were refunded, status is `Refunded`. |
-
-### When balance changes
-
-- `deposit_funds` increases `funded_amount`, so balance increases.
-- `release_milestone` increases `released_amount` by the milestone amount, so balance decreases.
-- `refund_unreleased_milestones` increases `refunded_amount` by the sum of the refunded milestones, so balance decreases.
-- No other entrypoint mutates these three fields.
-
-### Test coverage
-
-`contracts/escrow/src/test/refund.rs` contains a dedicated suite of accounting
-invariant tests (`assert_balance_invariant`) that verify this property after
-every operation order:
-
-- balance equals `funded_amount` before any release or refund
-- release-then-refund sequence
-- refund-then-release sequence
-- all milestones released → balance zero, status `Completed`
-- all milestones refunded → balance zero, status `Refunded`
-- interleaved alternating operations at every step
-- cross-check that `get_refundable_balance` matches `get_contract` fields exactly
-- partial deposit with partial refund never goes negative
+- Storage uses persistent keys. TTL constants exist for planned pending approval
+  and migration flows, but no current public entrypoint writes those pending
+  records.
+- The `cancelled` event is emitted only after a successful state transition to
+  `Cancelled`, ensuring indexers receive on-chain signals for cancellations.
+- The `("init", "config")` event is emitted after the `initialized` readiness
+  checklist flag is set, carrying the initial `protocol_fee_bps` and
+  `governed_parameters` for bootstrap observability.
 
 ## Planned Features
 

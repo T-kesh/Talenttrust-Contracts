@@ -3,7 +3,7 @@ use super::{
     generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO,
 };
 use crate::{ContractStatus, DataKey, EscrowError, ReadinessChecklist, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, Symbol};
 
 // ─── Initialized / Admin ──────────────────────────────────────────────────────
 
@@ -39,6 +39,49 @@ fn admin_written_on_initialize() {
         let stored: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         assert_eq!(stored, admin);
     });
+}
+
+#[test]
+fn initialize_emits_config_event_with_protocol_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let admin = Address::generate(&env);
+
+    // Pre-populate protocol state so the init event captures it
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeBps, &100u32);
+        env.storage().persistent().set(
+            &DataKey::GovernedParameters,
+            &crate::types::GovernedParameters {
+                protocol_fee_bps: 100,
+                max_escrow_total_stroops: 500_000_000_000_i128,
+            },
+        );
+    });
+
+    client.initialize(&admin);
+
+    let events = env.events().all();
+    let config_events: Vec<_> = events
+        .iter()
+        .filter(|(topic, _)| {
+            topic == &(soroban_sdk::symbol_short!("init"), Symbol::new(&env, "config"))
+        })
+        .collect();
+
+    assert_eq!(
+        config_events.len(),
+        1,
+        "init config event must be emitted exactly once on initialize"
+    );
+
+    let (_, payload) = config_events[0];
+    assert_eq!(payload.get(0).unwrap(), admin);
+    assert_eq!(payload.get(2).unwrap(), 100u32);
+    assert_eq!(payload.get(3).unwrap(), 500_000_000_000_i128);
 }
 
 #[test]
