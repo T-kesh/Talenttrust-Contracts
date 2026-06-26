@@ -2,6 +2,35 @@
 
 This document reflects the escrow API currently implemented in `contracts/escrow/src/lib.rs`.
 
+## Checks-Effects-Interactions Ordering (#401)
+
+All state-mutating entrypoints that will eventually call into an external token
+contract follow the strict **checks → effects → interactions** ordering:
+
+1. **Checks** — validate inputs, authorization, contract status, and
+   approval state. Any failure panics before state is touched.
+2. **Effects** — write all persistent state mutations (`milestone.released`,
+   `milestone.refunded`, `contract.released_amount`, `contract.status`, …).
+   The Soroban host commits these atomically.
+3. **Interactions** — external token transfer (`token::Client::transfer`)
+   is the **last** operation. A re-entrant call on the same milestone will
+   observe `released = true` or `refunded = true` and be rejected before any
+   funds move a second time.
+
+This ordering is enforced in:
+- `release_milestone` — `milestone.released = true` and accounting writes
+  precede the token transfer placeholder.
+- `refund_unreleased_milestones` — `milestone.refunded = true` and
+  `contract.refunded_amount` update precede any refund transfer.
+- `cancel_contract` — `contract.status = Cancelled` is written before any
+  future token return.
+- `accept_contract` — `contract.status = Accepted` is written before the
+  event emission.
+
+Regression tests in `contracts/escrow/src/test/security.rs` verify that a
+second call on a released/refunded/cancelled entity is rejected with the
+appropriate error code, proving state is committed before the function returns.
+
 ## Implemented Controls
 
 - `initialize(admin)` is single-use and requires `admin.require_auth()`.

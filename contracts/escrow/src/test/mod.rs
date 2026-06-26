@@ -10,10 +10,13 @@ use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Release
 mod client_migration;
 mod dispute;
 mod emergency_controls;
+mod lifecycle;
 mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
 mod release_authorization;
+mod security;
+mod ttl_tests;
 
 // --- Shared constants ---
 
