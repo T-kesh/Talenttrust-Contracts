@@ -51,9 +51,7 @@ pub use types::{
 };
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
@@ -92,9 +90,9 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    AmountMustBePositive = 25,
-    PotentialOverflow = 26,
-    AlreadyFinalized = 27,
+    AlreadyFinalized = 25,
+    EvidenceTooLong = 26,
+    PotentialOverflow = 27,
     AccountingInvariantViolated = 28,
 }
 
@@ -915,80 +913,106 @@ impl Escrow {
     }
 
     // -----------------------------------------------------------------------
-    // Governed parameters
+    // Work evidence
     // -----------------------------------------------------------------------
 
-    /// Sets protocol fee (basis points) and maximum escrow total per contract.
+    /// Records a deliverable reference (e.g. IPFS CID or URL hash) for an
+    /// unreleased milestone.
     ///
-    /// Requires initialization. Only the stored admin may call this.
-    /// `fee_bps` must be ≤ 10 000; `max_escrow_total_stroops` must be > 0.
-    /// Sets `governed_params_set` in the readiness checklist on success.
-    pub fn set_governed_params(
+    /// Only the contract's freelancer may call this. The contract must be in
+    /// `Funded` status and the target milestone must not yet be released or
+    /// refunded. Evidence may be overwritten before release.
+    ///
+    /// # Arguments
+    /// * `contract_id` - The escrow contract to update
+    /// * `caller`      - Must equal the stored `freelancer`; requires auth
+    /// * `milestone_index` - Zero-based index of the milestone
+    /// * `evidence`    - Deliverable reference; max 256 bytes
+    ///
+    /// # Errors
+    /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
+    /// * `ContractNotFound`   — unknown `contract_id`
+    /// * `AlreadyFinalized`   — contract has been finalized
+    /// * `UnauthorizedRole`   — `caller` is not the freelancer
+    /// * `InvalidState`       — contract is not `Funded`
+    /// * `IndexOutOfBounds`   — `milestone_index` exceeds milestone count
+    /// * `MilestoneAlreadyReleased` — milestone is already released
+    /// * `AlreadyRefunded`    — milestone has been refunded
+    /// * `EvidenceTooLong`    — evidence string exceeds 256 bytes
+    pub fn submit_work_evidence(
         env: Env,
+        contract_id: u32,
         caller: Address,
-        fee_bps: u32,
-        max_escrow_total_stroops: i128,
+        milestone_index: u32,
+        evidence: String,
     ) -> bool {
-        Self::require_initialized(&env);
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        if caller != admin {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
-        }
+        Self::require_not_paused(&env);
         caller.require_auth();
-        if fee_bps > 10_000 || max_escrow_total_stroops <= 0 {
-            env.panic_with_error(EscrowError::InvalidProtocolParameters);
-        }
-        let params = GovernedParameters { protocol_fee_bps: fee_bps, max_escrow_total_stroops };
-        env.storage()
-            .persistent()
-            .set(&DataKey::GovernedParameters, &params);
-        let mut checklist: ReadinessChecklist = env
+
+        let contract: Contract = env
             .storage()
             .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        checklist.governed_params_set = true;
-        env.storage()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        if caller != contract.freelancer {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+
+        if contract.status != ContractStatus::Funded {
+            env.panic_with_error(Error::InvalidState);
+        }
+
+        // Bound evidence to 256 bytes to prevent storage bloat.
+        if evidence.len() > 256 {
+            env.panic_with_error(EscrowError::EvidenceTooLong);
+        }
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
             .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let mut milestone = milestones.get(milestone_index).unwrap();
+
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        milestone.work_evidence = Some(evidence.clone());
+        milestones.set(milestone_index, milestone);
+
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
+
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("evidence"), contract_id),
+            (
+                milestone_index,
+                contract.freelancer,
+                env.ledger().timestamp(),
+            ),
+        );
+
         true
-    }
-
-    /// Returns the current governed parameters, if set.
-    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::GovernedParameters)
-    }
-
-    // -----------------------------------------------------------------------
-    // Governance: treasury rotation with timelock
-    // -----------------------------------------------------------------------
-
-    /// Propose a new admin. Stores the pending admin proposal (with the
-    /// current ledger sequence for timelock enforcement) and emits an event.
-    ///
-    /// Requires initialization; current admin must authorize.
-    pub fn propose_governance_admin(env: Env, proposed: Address) -> bool {
-        Self::propose_governance_admin_impl(env, proposed)
-    }
-
-    /// Accept a pending admin proposal. The proposed admin must authorize.
-    ///
-    /// Fails with `TimelockNotElapsed` if fewer than
-    /// `ADMIN_ROTATION_MIN_DELAY_LEDGERS` have elapsed since the proposal.
-    pub fn accept_governance_admin(env: Env) -> bool {
-        Self::accept_governance_admin_impl(env)
-    }
-
-    /// Return the currently pending admin address, if any.
-    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        Self::get_pending_governance_admin_impl(env)
-    }
-
-    /// Return the current admin address.
-    pub fn get_governance_admin(env: Env) -> Option<Address> {
-        Self::get_governance_admin_impl(env)
     }
 
     // -----------------------------------------------------------------------

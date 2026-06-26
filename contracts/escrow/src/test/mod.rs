@@ -12,6 +12,8 @@ mod emergency_controls;
 mod input_sanitization_amounts;
 mod pause_controls;
 mod persistence;
+mod release;
+mod reputation;
 mod release_authorization;
 mod reputation;
 
