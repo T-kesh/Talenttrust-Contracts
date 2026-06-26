@@ -18,7 +18,8 @@ issues so integrators can distinguish live API from roadmap.
 Lifecycle and reputation:
 
 - `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
-- `deposit_funds(contract_id, amount) -> bool`
+- `accept_contract(contract_id, freelancer) -> bool` *(optional; freelancer opt-in before funding; transitions `Created → Accepted`)*
+- `deposit_funds(contract_id, amount) -> bool` *(allowed from `Created` or `Accepted`)*
 - `submit_work_evidence(contract_id, caller, milestone_index, evidence) -> bool`
 - `release_milestone(contract_id, milestone_index) -> bool`
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`

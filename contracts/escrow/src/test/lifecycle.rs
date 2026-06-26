@@ -213,3 +213,123 @@ fn pause_blocks_finalization() {
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
+
+// ─── accept_contract tests (#419) ────────────────────────────────────────────
+
+#[test]
+fn accept_contract_transitions_created_to_accepted() {
+    let (env, cid) = setup();
+    let client = escrow_client(&env, &cid);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &vec![&env, 100_i128],
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    assert!(client.accept_contract(&contract_id, &freelancer_addr));
+    assert_eq!(
+        client.get_contract(&contract_id).status,
+        ContractStatus::Accepted
+    );
+}
+
+#[test]
+fn accept_contract_rejects_wrong_freelancer() {
+    let (env, cid) = setup();
+    let client = escrow_client(&env, &cid);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &vec![&env, 100_i128],
+        &ReleaseAuthorization::ClientOnly,
+    );
+    let wrong = Address::generate(&env);
+
+    super::assert_contract_error(
+        client.try_accept_contract(&contract_id, &wrong),
+        EscrowError::FreelancerMismatch,
+    );
+}
+
+#[test]
+fn accept_contract_rejects_already_accepted() {
+    let (env, cid) = setup();
+    let client = escrow_client(&env, &cid);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &vec![&env, 100_i128],
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    assert!(client.accept_contract(&contract_id, &freelancer_addr));
+    super::assert_contract_error(
+        client.try_accept_contract(&contract_id, &freelancer_addr),
+        EscrowError::InvalidStatusTransition,
+    );
+}
+
+#[test]
+fn accept_contract_rejects_after_funded() {
+    let (env, cid) = setup();
+    let client = escrow_client(&env, &cid);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &vec![&env, 100_i128],
+        &ReleaseAuthorization::ClientOnly,
+    );
+    client.deposit_funds(&contract_id, &client_addr, &100_i128);
+
+    super::assert_contract_error(
+        client.try_accept_contract(&contract_id, &freelancer_addr),
+        EscrowError::InvalidStatusTransition,
+    );
+}
+
+#[test]
+fn deposit_allowed_from_accepted_status() {
+    let (env, cid) = setup();
+    let client = escrow_client(&env, &cid);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &vec![&env, 100_i128],
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    assert!(client.accept_contract(&contract_id, &freelancer_addr));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &100_i128));
+    assert_eq!(
+        client.get_contract(&contract_id).status,
+        ContractStatus::Funded
+    );
+}
+
+#[test]
+fn accept_contract_rejects_unknown_contract() {
+    let (env, cid) = setup();
+    let client = escrow_client(&env, &cid);
+    let freelancer_addr = Address::generate(&env);
+
+    super::assert_contract_error(
+        client.try_accept_contract(&9999u32, &freelancer_addr),
+        EscrowError::ContractNotFound,
+    );
+}

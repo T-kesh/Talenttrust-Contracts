@@ -35,7 +35,7 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     }
     caller.require_auth();
 
-    if contract.status != ContractStatus::Created {
+    if contract.status != ContractStatus::Created && contract.status != ContractStatus::Accepted {
         env.panic_with_error(Error::InvalidState);
     }
 
@@ -53,7 +53,7 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
 
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-    if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+    if contract.funded_amount >= total_amount {
         contract.status = ContractStatus::Funded;
     }
 
