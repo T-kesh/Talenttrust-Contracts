@@ -298,6 +298,7 @@ fn pause_blocks_finalization() {
 #[test]
 fn finalize_completed_with_mixed_releases_and_refunds() {
     let env = Env::default();
+
     env.mock_all_auths();
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
@@ -308,6 +309,7 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
         &client_addr,
         &super::total_milestone_amount()
     ));
+
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
