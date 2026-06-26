@@ -140,6 +140,7 @@ impl Escrow {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Initialized, &true);
         env.storage().persistent().set(&DataKey::Admin, &admin);
+        ttl::extend_admin_ttl(&env);
         env.storage()
             .persistent()
             .set(&DataKey::NextContractId, &1u32);
@@ -164,6 +165,7 @@ impl Escrow {
 
     /// Returns the stored governance admin address.
     pub fn get_admin(env: Env) -> Option<Address> {
+        ttl::extend_admin_ttl(&env);
         env.storage().persistent().get(&DataKey::Admin)
     }
 
@@ -228,21 +230,68 @@ impl Escrow {
         create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
     }
 
-    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    /// Accept a contract as the assigned freelancer, transitioning status from
+    /// `Created` to `Accepted`.
+    ///
+    /// This gives the freelancer an on-chain opt-in before any funds are locked.
+    /// Acceptance is optional — `deposit_funds` is permitted from both `Created`
+    /// and `Accepted` so client-first funding workflows remain unblocked.
     ///
     /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `caller` - The address of the caller (must be the client)
-    /// * `amount` - The amount to deposit (in stroops)
+    /// * `contract_id` — the contract to accept
+    /// * `freelancer`  — must match the stored freelancer; requires `require_auth()`
     ///
-    /// # Returns
-    /// `true` if deposit was successful
+    /// # Errors
+    /// * `ContractNotFound`        — unknown `contract_id`
+    /// * `FreelancerMismatch`      — `freelancer` does not match stored address
+    /// * `InvalidStatusTransition` — contract is not in `Created` status
+    /// * `ContractPaused`          — pause or emergency controls are active
+    /// * `AlreadyFinalized`        — contract has already been finalized
+    pub fn accept_contract(env: Env, contract_id: u32, freelancer: Address) -> bool {
+        Self::require_not_paused(&env);
+        freelancer.require_auth();
+
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        if freelancer != contract.freelancer {
+            env.panic_with_error(EscrowError::FreelancerMismatch);
+        }
+
+        if contract.status != ContractStatus::Created {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        // ── CEI: Effect before any future interaction ──────────────────────
+        contract.status = ContractStatus::Accepted;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "accepted"), contract_id),
+            (freelancer, env.ledger().timestamp()),
+        );
+
+        true
+    }
+
+    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    ///
+    /// Accepts deposits from contracts in `Created` or `Accepted` status, so
+    /// client-first funding and freelancer-acceptance-first workflows both work.
     ///
     /// # Errors
     /// * `AmountMustBePositive` - If amount is <= 0
     /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Created state
+    /// * `InvalidState` - If contract is not in Created or Accepted state
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         deposit::deposit_funds_impl(&env, contract_id, caller, amount)
@@ -434,6 +483,11 @@ impl Escrow {
         }
 
         let _release_amount = milestone.amount;
+        // ── CEI: Effects before Interactions ───────────────────────────────
+        // State mutations are committed BEFORE any external token transfer so
+        // that a re-entrant call observes the final `released = true` flag and
+        // cannot trigger a double-spend. When real SAC transfers land they must
+        // remain the last operation in this function.
         milestone.released = true;
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
@@ -441,6 +495,7 @@ impl Escrow {
         // Accumulate protocol fees if initialized with a fee rate
         if Self::is_initialized(&env) {
             let fee_bps = Self::get_protocol_fee_bps(&env);
+            ttl::extend_protocol_fee_bps_ttl(&env);
             if fee_bps > 0 {
                 let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
                 let current_accumulated: i128 = env
@@ -452,6 +507,7 @@ impl Escrow {
                     &DataKey::AccumulatedProtocolFees,
                     &(current_accumulated + fee),
                 );
+                ttl::extend_accumulated_fees_ttl(&env);
             }
         }
 
@@ -578,7 +634,8 @@ impl Escrow {
             env.panic_with_error(Error::InsufficientFunds);
         }
 
-        // Mark milestones as refunded
+        // ── CEI: Effects before Interactions ───────────────────────────────
+        // Mark milestones as refunded before any external token transfer.
         for idx in milestone_indices.iter() {
             let mut milestone = milestones.get(idx).unwrap();
             milestone.refunded = true;
@@ -859,6 +916,8 @@ impl Escrow {
 
         caller.require_auth();
         Self::require_not_finalized(&env, contract_id);
+        // ── CEI: Effects before Interactions ───────────────────────────────
+        // Status is written before any future token refund transfer.
         contract.status = ContractStatus::Cancelled;
         env.storage()
             .persistent()
@@ -938,6 +997,7 @@ impl Escrow {
             env.panic_with_error(EscrowError::InvalidState);
         }
         env.storage().persistent().set(&pending_key, &(pending - 1));
+        ttl::extend_pending_reputation_credits_ttl(&env, &contract.freelancer);
 
         let rep_key = DataKey::Reputation(contract.freelancer.clone());
         let mut rep: types::Reputation =
@@ -946,11 +1006,13 @@ impl Escrow {
         rep.total_rating += rating as i128;
         rep.last_rating = rating as i128;
         env.storage().persistent().set(&rep_key, &rep);
+        ttl::extend_reputation_ttl(&env, &contract.freelancer);
 
         true
     }
 
     pub fn get_reputation(env: Env, address: Address) -> Option<types::Reputation> {
+        ttl::extend_reputation_ttl(&env, &address);
         env.storage()
             .persistent()
             .get(&DataKey::Reputation(address))

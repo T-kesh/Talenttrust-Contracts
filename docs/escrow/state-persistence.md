@@ -5,6 +5,27 @@ This document maps the currently implemented `DataKey` storage used by
 declared-but-unused keys, is tracked in
 [#342](https://github.com/Talenttrust/Talenttrust-Contracts/issues/342).
 
+## Persistent-Key TTL Policy (#400)
+
+All critical persistent keys are bumped to 30 days (17 280 ledgers × 30) whenever they
+are read or written. The bump is skipped when the key is absent (no-op guard).
+
+| Key | TTL Extend-to | Bump Threshold | Bumped by |
+| --- | --- | --- | --- |
+| `Admin` | 30 days | 7 days | `initialize`, `get_admin`, `set_protocol_fee_bps` |
+| `GovernanceAdmin` | 30 days | 7 days | governance admin reads/writes |
+| `ProtocolFeeBps` | 30 days | 7 days | `set_protocol_fee_bps`, `release_milestone` (fee read) |
+| `AccumulatedProtocolFees` | 30 days | 7 days | `release_milestone` (fee write) |
+| `Finalization(id)` | 30 days | 7 days | `finalize_contract`, `get_finalization_record` |
+| `Reputation(addr)` | 30 days | 7 days | `issue_reputation`, `get_reputation` |
+| `PendingReputationCredits(addr)` | 30 days | 7 days | `issue_reputation` |
+| `Contract(id)` / milestones | 30 days | 7 days | all lifecycle entrypoints |
+| `NextContractId` | 30 days | 7 days | `create_contract` |
+
+Constants live in `contracts/escrow/src/ttl.rs`:
+- `PERSISTENT_TTL_LEDGERS = LEDGERS_PER_DAY * 30` (≈ 30 days)
+- `PERSISTENT_BUMP_THRESHOLD = LEDGERS_PER_DAY * 7` (≈ 7 days)
+
 ## Live Storage Keys
 
 These participant indexes are **append-only**: every `create_contract` appends the new id to the appropriate index vectors.

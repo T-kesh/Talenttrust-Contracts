@@ -36,6 +36,8 @@ impl super::Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::ProtocolFeeBps, &new_bps);
+        crate::ttl::extend_protocol_fee_bps_ttl(&env);
+        crate::ttl::extend_admin_ttl(&env);
 
         env.events().publish(
             (Symbol::new(env, "protocol_fee_bps"),),
