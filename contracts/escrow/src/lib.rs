@@ -38,11 +38,12 @@ mod types;
 mod utils;
 
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
-    Contract, ContractStatus, ContractSummary, DataKey, Error, Milestone, MilestoneApprovals,
-    MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
+    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, Milestone,
+    MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 pub type EscrowError = Error;
@@ -81,11 +82,11 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    PotentialOverflow = 25,
-    AccountingInvariantViolated = 26,
-    InvalidDisputeSplit = 27,
-    AlreadyFinalized = 28,
-    AmountMustBePositive = 29,
+    AlreadyFinalized = 25,
+    PotentialOverflow = 26,
+    AccountingInvariantViolated = 27,
+    AmountMustBePositive = 28,
+    InvalidDisputeSplit = 29,
 }
 
 #[contracttype]

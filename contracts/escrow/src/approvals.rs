@@ -251,7 +251,6 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                refunded_amount: 0,
                 work_evidence: None,
             }],
         );
@@ -301,7 +300,6 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                refunded_amount: 0,
                 work_evidence: None,
             }],
         );
@@ -357,7 +355,6 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                refunded_amount: 0,
                 work_evidence: None,
             }],
         );
