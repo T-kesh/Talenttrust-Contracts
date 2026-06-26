@@ -1,126 +1,115 @@
 use crate::{
-    ttl, validate_single_amount, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs,
-    EscrowClient, Milestone, ReleaseAuthorization,
+    ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
-impl Escrow {
-    /// Core logic for creating a new escrow contract.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `client` - The address of the client funding the contract
-    /// * `freelancer` - The address of the freelancer performing the work
-    /// * `arbiter` - Optional arbiter address for dispute resolution
-    /// * `milestones` - Vector of milestone amounts (in stroops)
-    /// * `release_authorization` - Authorization mode for milestone releases
-    ///
-    /// # Returns
-    /// The unique contract ID
-    ///
-    /// # Errors
-    /// * `ContractPaused` - If the contract is paused while not in emergency mode
-    /// * `EmergencyActive` - If the contract is in an active emergency pause
-    /// * `InvalidParticipants` - If client and freelancer are the same address
-    /// * `EmptyMilestones` - If no milestones are provided
-    /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
-    /// * `MissingArbiter` - If arbiter is required but not provided
-    /// * `InvalidArbiter` - If arbiter is same as client or freelancer
-    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
-    /// * `ContractIdCollision` - If the allocated id slot is already occupied
-    ///
-    /// # Security
-    /// * Pause/emergency gate runs BEFORE any other state read or auth so
-    ///   funds cannot be re-allocated while the contract is paused.
-    pub fn create_contract(
-        env: Env,
-        client: Address,
-        freelancer: Address,
-        arbiter: Option<Address>,
-        milestones: Vec<i128>,
-        release_authorization: ReleaseAuthorization,
-    ) -> u32 {
-        Self::require_not_paused(&env);
-        client.require_auth();
+/// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `client` - The address of the client funding the contract
+/// * `freelancer` - The address of the freelancer performing the work
+/// * `arbiter` - Optional arbiter address for dispute resolution
+/// * `milestones` - Vector of milestone amounts (in stroops)
+/// * `release_authorization` - Authorization mode for milestone releases
+///
+/// # Returns
+/// The unique contract ID
+///
+/// # Errors
+/// * `InvalidParticipants` - If client and freelancer are the same address
+/// * `EmptyMilestones` - If no milestones are provided
+/// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
+/// * `MissingArbiter` - If arbiter is required but not provided
+/// * `InvalidArbiter` - If arbiter is same as client or freelancer
+/// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
+/// * `ContractIdCollision` - If the allocated id slot is already occupied
+pub fn create_contract_impl(
+    env: &Env,
+    client: Address,
+    freelancer: Address,
+    arbiter: Option<Address>,
+    milestones: Vec<i128>,
+    release_authorization: ReleaseAuthorization,
+) -> u32 {
+    client.require_auth();
 
-        if client == freelancer {
-            env.panic_with_error(Error::InvalidParticipants);
-        }
-
-        match release_authorization {
-            ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
-                if arbiter.is_none() =>
-            {
-                env.panic_with_error(Error::MissingArbiter);
-            }
-            _ => {}
-        }
-
-        if let Some(ref arb) = arbiter {
-            if arb == &client || arb == &freelancer {
-                env.panic_with_error(Error::InvalidArbiter);
-            }
-        }
-
-        if milestones.is_empty() {
-            env.panic_with_error(Error::EmptyMilestones);
-        }
-
-        for amount in milestones.iter() {
-            if validate_single_amount(amount).is_err() {
-                env.panic_with_error(Error::InvalidMilestoneAmount);
-            }
-        }
-
-        let id = next_contract_id(env);
-
-        ttl::extend_next_contract_id_ttl(&env);
-
-        let freelancer_addr = freelancer.clone();
-        let contract = Contract {
-            client: client.clone(),
-            freelancer: freelancer.clone(),
-            arbiter,
-            status: ContractStatus::Created,
-            funded_amount: 0,
-            released_amount: 0,
-            refunded_amount: 0,
-            release_authorization,
-            reputation_issued: false,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(id), &contract);
-
-        let mut milestone_vec: Vec<Milestone> = Vec::new(env);
-        for amount in milestones.iter() {
-            milestone_vec.push_back(Milestone {
-                amount,
-                funded_amount: 0,
-                released: false,
-                refunded: false,
-                work_evidence: None,
-                refunded_amount: 0,
-                deadline: None,
-            });
-        }
-        let milestone_key = Symbol::new(env, "milestones");
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
-
-        // Track pending reputation credit for the freelancer.
-        let pending_key = DataKey::PendingReputationCredits(freelancer_addr.clone());
-        let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
-        env.storage().persistent().set(&pending_key, &(pending + 1));
-
-        env.events().publish(
-            (symbol_short!("created"), id),
-            (client, freelancer_addr, env.ledger().timestamp()),
-        );
-
-        id
+    if client == freelancer {
+        env.panic_with_error(Error::InvalidParticipants);
     }
+
+    match release_authorization {
+        ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
+            if arbiter.is_none() =>
+        {
+            env.panic_with_error(Error::MissingArbiter);
+        }
+        _ => {}
+    }
+
+    if let Some(ref arb) = arbiter {
+        if arb == &client || arb == &freelancer {
+            env.panic_with_error(Error::InvalidArbiter);
+        }
+    }
+
+    if milestones.is_empty() {
+        env.panic_with_error(Error::EmptyMilestones);
+    }
+
+    for amount in milestones.iter() {
+        if amount <= 0 {
+            env.panic_with_error(Error::InvalidMilestoneAmount);
+        }
+    }
+
+    let id = next_contract_id(&env);
+
+    ttl::extend_next_contract_id_ttl(&env);
+
+    let freelancer_addr = freelancer.clone();
+    let contract = Contract {
+        client: client.clone(),
+        freelancer: freelancer.clone(),
+        arbiter,
+        status: ContractStatus::Created,
+        total_deposited: 0,
+        funded_amount: 0,
+        released_amount: 0,
+        refunded_amount: 0,
+        release_authorization,
+    };
+    env.storage()
+        .persistent()
+        .set(&DataKey::Contract(id), &contract);
+
+    let mut milestone_vec: Vec<Milestone> = Vec::new(&env);
+    for amount in milestones.iter() {
+        milestone_vec.push_back(Milestone {
+            amount,
+            funded_amount: 0,
+            released: false,
+            refunded: false,
+            work_evidence: None,
+            refunded_amount: 0,
+        });
+    }
+    let milestone_key = Symbol::new(&env, "milestones");
+    env.storage()
+        .persistent()
+        .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextContractId, &(id + 1));
+
+    env.events().publish(
+        (symbol_short!("created"), id),
+        (client, freelancer_addr, env.ledger().timestamp()),
+    );
+
+    id
+}
 
 /// Returns the next contract id after verifying the slot is unused.
 pub(crate) fn next_contract_id(env: &Env) -> u32 {
