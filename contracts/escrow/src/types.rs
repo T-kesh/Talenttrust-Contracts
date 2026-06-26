@@ -31,20 +31,7 @@ pub struct ContractSummary {
     pub milestones: Vec<MilestoneSummary>,
 }
 
-/// Main escrow contract state
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Contract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub total_deposited: i128,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
-}
+// Removed duplicate Contract definition with missing fields
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -65,6 +52,7 @@ pub enum DataKey {
     ReputationIssued(u32),
     PendingReputationCredits(Address),
     Reputation(Address),
+    ReputationComment(u32),
     // Client migration
     PendingClientMigration(u32),
     // Protocol / governance
@@ -184,38 +172,7 @@ pub enum DepositMode {
     Incremental = 1,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DataKey {
-    // Admin / pause / emergency
-    Initialized,
-    Admin,
-    Paused,
-    Emergency,
-    // Contract storage
-    Contract(u32),
-    NextContractId,
-    MilestoneReleased(u32, u32),
-    MilestoneApprovals(u32, u32),
-    // Reputation (keep ReputationIssued for backwards compatibility, but we'll use the field in Contract)
-    ReputationIssued(u32),
-    PendingReputationCredits(Address),
-    Reputation(Address),
-    // Client migration
-    PendingClientMigration(u32),
-    // Protocol / governance
-    GovernanceAdmin,
-    PendingGovernanceAdmin,
-    ProtocolParameters,
-    ProtocolFeeBps,
-    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
-    PendingAdmin,
-    AccumulatedProtocolFees,
-    GovernedParameters,
-    ReadinessChecklist,
-    // Finalization
-    Finalization(u32),
-}
+// Removed duplicate DataKey
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
 #[contracttype]

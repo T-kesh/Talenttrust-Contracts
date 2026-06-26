@@ -33,7 +33,16 @@ The escrow test suite now includes dedicated coverage for the `issue_reputation`
 - duplicate issuance
 - verified reputation aggregation and pending credit decrement on success
 
-## Average Rating Accessor
+## Readers / Accessors
+
+### Comment Accessor
+
+The contract exposes `get_reputation_comment(contract_id) -> Option<String>` to read back the written feedback provided when reputation was issued.
+
+- The comment is stored persistently keyed by `DataKey::ReputationComment(contract_id)`.
+- The storage TTL is aligned with the core contract lifetime.
+
+### Average Rating Accessor
 
 The contract exposes `get_average_rating(freelancer) -> Option<i128>` as a read-only helper for consumer convenience. The returned integer is scaled by 100, so `450` represents an average rating of `4.50`.
 

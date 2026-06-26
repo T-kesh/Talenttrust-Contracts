@@ -127,6 +127,30 @@ fn issue_reputation_updates_reputation_record_and_pending_credits() {
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
 }
 
+#[test]
+fn get_reputation_comment_returns_none_if_unissued() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+
+    assert!(client.get_reputation_comment(&contract_id).is_none());
+}
+
+#[test]
+fn get_reputation_comment_returns_stored_comment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = complete_contract(&env, &client);
+    
+    let comment = String::from_str(&env, "Excellent worker!");
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5, &comment));
+    
+    let stored = client.get_reputation_comment(&contract_id).expect("should have comment");
+    assert_eq!(stored, comment);
+}
+
 // ---------------------------------------------------------------------------
 // get_average_rating tests
 // ---------------------------------------------------------------------------
