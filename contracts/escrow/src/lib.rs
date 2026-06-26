@@ -23,7 +23,7 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-pub mod amount_validation;
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -31,27 +31,28 @@ mod dispute;
 mod finalize;
 mod governance;
 mod migration;
-mod refund;
-mod release;
 mod ttl;
 mod types;
 mod amount_validation;
 mod utils;
 
-pub use amount_validation::{
-    safe_add_amounts, safe_subtract_amounts, validate_deposit_amount, validate_milestone_amounts,
-    validate_single_amount, MAX_SINGLE_AMOUNT_STROOPS, MIN_POSITIVE_AMOUNT, STROOP_PRECISION,
-};
+pub use amount_validation::safe_add_amounts;
+pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization, Reputation, ContractSummary, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
-    GovernedParameters,
+    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, Milestone,
+    MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+// Re-export for internal use
+pub(crate) use amount_validation::safe_subtract_amounts;
+
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
@@ -90,10 +91,12 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    AlreadyFinalized = 25,
-    EvidenceTooLong = 26,
-    PotentialOverflow = 27,
-    AccountingInvariantViolated = 28,
+    ArbiterRequired = 25,
+    InvalidDisputeSplit = 26,
+    AccountingInvariantViolated = 27,
+    PotentialOverflow = 28,
+    AlreadyFinalized = 29,
+    AmountMustBePositive = 30,
 }
 
 
@@ -193,31 +196,108 @@ impl Escrow {
         true
     }
 
-    /// Returns the bound SAC settlement token address, or `None` if no token
-    /// has been bound via `bind_settlement_token` yet.
-    pub fn get_settlement_token(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::SettlementToken)
-    }
-
-    /// Returns the current mainnet readiness checklist.
+    /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
     ///
-    /// Read-only and requires no authorization. The `caps_set`, `protocol_version`,
-    /// and `max_escrow_total_stroops` fields are always populated from compile-time
-    /// constants regardless of storage state.
-    pub fn get_mainnet_readiness_info(env: Env) -> ReadinessChecklist {
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        // Always reflect compile-time constants, never rely on stored values for these.
-        checklist.caps_set = MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS > 0;
-        checklist.protocol_version = MAINNET_PROTOCOL_VERSION;
-        checklist.max_escrow_total_stroops = MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS;
-        checklist
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `client` - The address of the client funding the contract
+    /// * `freelancer` - The address of the freelancer performing the work
+    /// * `arbiter` - Optional arbiter address for dispute resolution
+    /// * `milestones` - Vector of milestone amounts (in stroops)
+    /// * `release_authorization` - Authorization mode for milestone releases
+    ///
+    /// # Returns
+    /// The unique contract ID
+    ///
+    /// # Errors
+    /// * `InvalidParticipants` - If client and freelancer are the same address
+    /// * `EmptyMilestones` - If no milestones are provided
+    /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
+    /// * `MissingArbiter` - If arbiter is required but not provided
+    /// * `InvalidArbiter` - If arbiter is same as client or freelancer
+    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
+    /// * `ContractIdCollision` - If the allocated id slot is already occupied
+    pub fn create_contract(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        arbiter: Option<Address>,
+        milestones: Vec<i128>,
+        release_authorization: ReleaseAuthorization,
+    ) -> u32 {
+        create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
     }
 
-    // ── Approvals ────────────────────────────────────────────────────────────
+    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `caller` - The address of the caller (must be the client)
+    /// * `amount` - The amount to deposit (in stroops)
+    ///
+    /// # Returns
+    /// `true` if deposit was successful
+    ///
+    /// # Errors
+    /// * `AmountMustBePositive` - If amount is <= 0
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `InvalidState` - If contract is not in Created state
+    /// * `UnauthorizedRole` - If caller is not the client
+    pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
+        deposit::deposit_funds_impl(&env, contract_id, caller, amount)
+    }
+
+    /// Finalize an escrow contract by writing immutable close metadata.
+    ///
+    /// `finalizer` must authorize the call and must be the stored client,
+    /// freelancer, or assigned arbiter. Finalization is allowed only while the
+    /// contract is `Completed` or `Disputed`. Once finalized, future
+    /// contract-specific mutations fail with `AlreadyFinalized`.
+    ///
+    /// # Errors
+    /// - `ContractPaused` when pause or emergency controls are active.
+    /// - `ContractNotFound` when `contract_id` is unknown.
+    /// - `AlreadyFinalized` when a close record already exists.
+    /// - `UnauthorizedRole` when `finalizer` is not a contract participant.
+    /// - `InvalidStatusTransition` unless status is `Completed` or `Disputed`.
+    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
+        finalize::finalize_contract_impl(&env, contract_id, finalizer)
+    }
+
+    /// Return immutable close metadata for `contract_id`, if it has been finalized.
+    pub fn get_finalization_record(env: Env, contract_id: u32) -> Option<finalize::FinalizationRecord> {
+        finalize::get_finalization_record_impl(&env, contract_id)
+    }
+
+    /// Propose a client migration for an existing contract.
+    ///
+    /// The current client must authorize the call. The proposed client address
+    /// must not be the freelancer or the current client. The pending migration
+    /// is stored in temporary storage with TTL.
+    pub fn propose_client_migration(
+        env: Env,
+        contract_id: u32,
+        current_client: Address,
+        new_client: Address,
+    ) -> bool {
+        migration::propose_client_migration_impl(&env, contract_id, current_client, new_client)
+    }
+
+    /// Accept a live pending client migration and update the contract.
+    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
+        migration::accept_client_migration_impl(&env, contract_id, new_client)
+    }
+
+    /// Return true if a live pending client migration exists.
+    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
+        migration::has_pending_client_migration_impl(&env, contract_id)
+    }
+
+    /// Return the live pending client migration record.
+    pub fn get_pending_client_migration(env: Env, contract_id: u32) -> PendingClientMigration {
+        migration::get_pending_client_migration_impl(&env, contract_id)
+    }
 
     /// Approves a milestone for release.
     ///
@@ -1140,26 +1220,174 @@ impl Escrow {
     }
 
     fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        if fee_bps == 0 {
-            0
-        } else {
-            amount * fee_bps as i128 / 10_000
-        }
+        let fee_bps_i128 = fee_bps as i128;
+        amount
+            .checked_mul(fee_bps_i128)
+            .and_then(|v| v.checked_div(10000))
+            .unwrap_or(0)
     }
-}
 
-// -----------------------------------------------------------------------
-// Shared helpers
-// -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Dispute management
+    // -----------------------------------------------------------------------
 
-/// Safe subtraction that returns `None` on underflow.
-pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_sub(b)
-}
+    /// Opens a dispute for a funded or partially funded escrow contract.
+    ///
+    /// This entrypoint transitions the contract status to `Disputed`, preventing
+    /// further milestone releases until an assigned arbiter resolves the dispute.
+    /// Only the client or freelancer can open a dispute, and an arbiter must be
+    /// assigned to the contract.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `caller` - The address opening the dispute (must be client or freelancer)
+    ///
+    /// # Returns
+    /// `true` if the dispute was successfully opened
+    ///
+    /// # Errors
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `UnauthorizedRole` - If caller is not client or freelancer
+    /// * `ArbiterRequired` - If no arbiter is assigned to the contract
+    /// * `InvalidState` - If contract is not in a disputable state
+    /// * `ContractPaused` - If pause or emergency controls are active
+    /// * `AlreadyFinalized` - If contract has been finalized
+    ///
+    /// # Security
+    /// - Only contract parties (client/freelancer) can open disputes
+    /// - Requires arbiter assignment for resolution
+    /// - Blocks milestone releases while disputed
+    /// - Respects pause and emergency controls
+    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
 
-/// Subtracts `b` from `a`, returning `None` if the result would underflow.
-pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_sub(b)
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        // Verify caller is client or freelancer
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        // Require arbiter assignment
+        if contract.arbiter.is_none() {
+            env.panic_with_error(EscrowError::ArbiterRequired);
+        }
+
+        // Verify contract is in a disputable state (Funded or PartiallyFunded)
+        match contract.status {
+            ContractStatus::Funded | ContractStatus::PartiallyFunded => {}
+            _ => env.panic_with_error(EscrowError::InvalidState),
+        }
+
+        contract.status = ContractStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("dispute"), symbol_short!("opened")),
+            (contract_id, caller),
+        );
+
+        true
+    }
+
+    /// Resolves an open dispute by applying the arbiter-selected resolution.
+    ///
+    /// This entrypoint applies the dispute resolution (FullRefund, PartialRefund,
+    /// FullPayout, or custom Split) to the remaining escrowed balance. The resolution
+    /// must be authorized by the assigned arbiter and must conserve the available funds.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `arbiter` - The arbiter address (must match contract's assigned arbiter)
+    /// * `resolution` - The resolution decision (FullRefund, PartialRefund, FullPayout, or Split)
+    ///
+    /// # Returns
+    /// `true` if the dispute was successfully resolved
+    ///
+    /// # Errors
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `UnauthorizedRole` - If caller is not the assigned arbiter
+    /// * `InvalidStatusTransition` - If contract is not in Disputed state
+    /// * `InvalidDisputeSplit` - If custom split doesn't match available balance
+    /// * `AccountingInvariantViolated` - If accounting state is inconsistent
+    /// * `PotentialOverflow` - If amount calculations would overflow
+    /// * `ContractPaused` - If pause or emergency controls are active
+    /// * `AlreadyFinalized` - If contract has been finalized
+    ///
+    /// # Security
+    /// - Only the assigned arbiter can resolve disputes
+    /// - Split amounts must exactly match available balance
+    /// - Updates released_amount and refunded_amount atomically
+    /// - Emits dispute resolution event for indexers
+    /// - Sets final contract status based on resolution outcome
+    pub fn resolve_dispute(
+        env: Env,
+        contract_id: u32,
+        arbiter: Address,
+        resolution: DisputeResolution,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        arbiter.require_auth();
+
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        // Verify contract is in Disputed state
+        if contract.status != ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        // Verify caller is the assigned arbiter
+        match &contract.arbiter {
+            Some(contract_arbiter) if *contract_arbiter == arbiter => {}
+            _ => env.panic_with_error(EscrowError::UnauthorizedRole),
+        }
+
+        // Compute payouts based on resolution
+        let (client_payout, freelancer_payout) =
+            dispute::resolution_payouts(&contract, &resolution)
+                .unwrap_or_else(|e| env.panic_with_error(e));
+
+        // Update contract accounting
+        contract.refunded_amount += client_payout;
+        contract.released_amount += freelancer_payout;
+
+        // Set final status
+        contract.status = dispute::final_status_after_resolution(&contract);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("dispute"), symbol_short!("resolved")),
+            (contract_id, resolution.code()),
+        );
+
+        true
+    }
 }
 
 #[cfg(test)]
