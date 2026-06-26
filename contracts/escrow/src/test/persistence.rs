@@ -1,10 +1,13 @@
 use super::{
     assert_contract_error, complete_contract, create_contract, default_milestones,
-    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_THREE,
-    MILESTONE_TWO,
+    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE,
+    MILESTONE_THREE, MILESTONE_TWO,
 };
 use crate::{ttl, ContractStatus, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, testutils::storage::Persistent, vec, Address, Env, Symbol};
+use soroban_sdk::{
+    testutils::storage::Persistent, testutils::Address as _, testutils::Ledger, vec, Address, Env,
+    Symbol,
+};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
@@ -89,7 +92,12 @@ fn participant_metadata_and_pending_credits_persist_until_reputation_is_issued()
     assert_eq!(completed.status, ContractStatus::Completed);
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
 
-    assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
+    assert!(client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great")
+    ));
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
 }
 

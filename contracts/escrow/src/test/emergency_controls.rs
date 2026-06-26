@@ -130,7 +130,12 @@ fn emergency_blocks_issue_reputation() {
     client.activate_emergency_pause();
 
     super::assert_contract_error(
-        client.try_issue_reputation(&id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
+        client.try_issue_reputation(
+            &id,
+            &client_addr,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         EscrowError::ContractPaused,
     );
 }
