@@ -270,6 +270,7 @@ mod tests {
             released_amount: 0,
             refunded_amount: 0,
             release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         };
 
         let contract_id = 1u32;
@@ -325,6 +326,7 @@ mod tests {
             released_amount: 0,
             refunded_amount: 0,
             release_authorization: ReleaseAuthorization::MultiSig,
+            reputation_issued: false,
         };
 
         let contract_id = 1u32;
@@ -387,6 +389,7 @@ mod tests {
             released_amount: 0,
             refunded_amount: 0,
             release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         };
 
         let contract_id = 1u32;

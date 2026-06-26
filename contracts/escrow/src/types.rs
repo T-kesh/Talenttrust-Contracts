@@ -44,6 +44,7 @@ pub struct Contract {
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
+    pub reputation_issued: bool,
 }
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
@@ -164,6 +165,12 @@ pub enum Error {
     ContractIdOverflow = 28,
     EmptyComment = 29,
     CommentTooLong = 30,
+    EvidenceTooLong = 31,
+    PotentialOverflow = 32,
+    NotInitialized = 33,
+    ArbiterRequired = 34,
+    InvalidDisputeSplit = 35,
+    AccountingInvariantViolated = 36,
 }
 
 /// Contract lifecycle states
@@ -258,4 +265,11 @@ impl Default for ReadinessChecklist {
 pub struct GovernedParameters {
     pub protocol_fee_bps: u32,
     pub max_escrow_total_stroops: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAdminProposal {
+    pub proposed: Address,
+    pub proposed_at_ledger: u32,
 }

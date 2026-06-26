@@ -1,4 +1,7 @@
-use crate::{DataKey, EscrowError, ReadinessChecklist, GovernedParameters, Escrow, EscrowClient, EscrowArgs};
+use crate::{
+    DataKey, EscrowError, GovernedParameters, PendingAdminProposal, ReadinessChecklist,
+    ADMIN_ROTATION_MIN_DELAY_LEDGERS, Escrow, EscrowClient, EscrowArgs,
+};
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
 /// Governance-related privileged operations and audit events.
@@ -25,7 +28,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
         let old_bps: u32 = env
@@ -38,7 +41,7 @@ impl super::Escrow {
             .set(&DataKey::ProtocolFeeBps, &new_bps);
 
         env.events().publish(
-            (Symbol::new(env, "protocol_fee_bps"),),
+            (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
         );
         true
@@ -59,7 +62,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
         env.storage().persistent().set(
@@ -71,7 +74,7 @@ impl super::Escrow {
         );
 
         env.events().publish(
-            (symbol_short!("admin"), Symbol::new(env, "proposed")),
+            (symbol_short!("admin"), Symbol::new(&env, "proposed")),
             (admin, proposed.clone(), env.ledger().timestamp()),
         );
         true
@@ -91,7 +94,7 @@ impl super::Escrow {
         let pending: Option<PendingAdminProposal> =
             env.storage().persistent().get(&DataKey::PendingAdmin);
         if pending.is_none() {
-            env.panic_with_error(crate::Error::InvalidState);
+            env.panic_with_error(EscrowError::InvalidState);
         }
         let proposal = pending.unwrap();
 
@@ -112,7 +115,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
 
         env.storage()
             .persistent()
@@ -120,7 +123,7 @@ impl super::Escrow {
         env.storage().persistent().remove(&DataKey::PendingAdmin);
 
         env.events().publish(
-            (symbol_short!("admin"), Symbol::new(env, "accepted")),
+            (symbol_short!("admin"), Symbol::new(&env, "accepted")),
             (old_admin, pending_admin.clone(), env.ledger().timestamp()),
         );
         true
