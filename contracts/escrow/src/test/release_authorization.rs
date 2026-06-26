@@ -756,8 +756,9 @@ fn rejects_refund_after_release_and_release_after_refund() {
     fund_contract(&env, &client, &contract_id);
 
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
-    let refund_ids = vec![&env, 1_u32];
-    let _refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);
+    let refund_ids = vec![&env, 0_u32];
+    let refund_result = client.try_refund_unreleased_milestones(&contract_id, &refund_ids);
+    assert_contract_error(refund_result, Error::MilestoneAlreadyReleased);
 
     let refund_ids = vec![&env, 1_u32];
     let _refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);

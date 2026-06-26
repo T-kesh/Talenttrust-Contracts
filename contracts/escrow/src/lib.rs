@@ -31,22 +31,16 @@ mod dispute;
 mod finalize;
 mod governance;
 mod migration;
-mod refund;
-mod release;
 mod ttl;
 mod types;
 mod utils;
 
-pub const MAX_MILESTONES: u32 = 10;
-pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
-
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
-pub use dispute::DisputeResolution;
+pub use amount_validation::safe_subtract_amounts;
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
-    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, Milestone,
-    MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
+    Contract, ContractStatus, ContractSummary, DataKey, Error, Milestone, MilestoneApprovals,
+    MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 pub type EscrowError = Error;
@@ -60,6 +54,7 @@ pub struct Escrow;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
 pub enum EscrowError {
     InvalidParticipant = 1,
     EmptyMilestones = 2,
@@ -85,7 +80,25 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    PotentialOverflow = 25,
+    AmountMustBePositive = 25,
+    PotentialOverflow = 26,
+    AccountingInvariantViolated = 27,
+    AlreadyFinalized = 28,
+    InvalidDisputeSplit = 29,
+    FundingExceedsRequired = 30,
+    InsufficientEscrowBalance = 31,
+    InvalidParticipants = 32,
+    MilestoneAlreadyReleased = 33,
+    MilestoneNotFound = 34,
+    TooManyMilestones = 35,
+    TotalExceedsMaxEscrow = 36,
+    AlreadyApproved = 37,
+    InsufficientApprovals = 38,
+    ArbiterRequired = 39,
+    GovernanceNotInitialized = 40,
+    InvalidProtocolParameters = 41,
+    ExactDepositRequired = 42,
+    TotalCapExceeded = 43,
 }
 
 #[contracttype]
@@ -566,23 +579,91 @@ impl Escrow {
         env.storage().temporary().get(&approval_key)
     }
 
-    /// Returns the current protocol fee rate in basis points (bps).
+    /// Revokes the caller's active approval for a milestone.
     ///
-    /// This is a read-only view that does not mutate storage or bump TTL.
-    /// Defaults to 0 if the fee rate is unset or the contract is not initialized.
-    pub fn get_protocol_fee_bps(env: Env) -> u32 {
-        release::get_protocol_fee_bps(&env)
-    }
+    /// The approval record is removed when no approval flags remain set.
+    pub fn revoke_approval(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_index: u32,
+    ) -> bool {
+        caller.require_auth();
 
-    /// Returns the accumulated protocol fees that have accrued from milestone releases.
-    ///
-    /// This is a read-only view that does not mutate storage or bump TTL.
-    /// Defaults to 0 if no fees have accrued yet.
-    pub fn get_accumulated_protocol_fees(env: Env) -> i128 {
-        env.storage()
+        let contract: Contract = env
+            .storage()
             .persistent()
-            .get(&DataKey::AccumulatedProtocolFees)
-            .unwrap_or(0)
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let milestone = milestones.get(milestone_index).unwrap();
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
+        let mut approvals: MilestoneApprovals = env
+            .storage()
+            .temporary()
+            .get(&approval_key)
+            .unwrap_or_else(|| env.panic_with_error(Error::InsufficientApprovals));
+
+        let mut revoked = false;
+        if caller == contract.client {
+            if approvals.client_approved {
+                approvals.client_approved = false;
+                revoked = true;
+            }
+        } else if caller == contract.freelancer {
+            if approvals.freelancer_approved {
+                approvals.freelancer_approved = false;
+                revoked = true;
+            }
+        } else if contract.arbiter.as_ref() == Some(&caller) {
+            if approvals.arbiter_approved {
+                approvals.arbiter_approved = false;
+                revoked = true;
+            }
+        }
+
+        if !revoked {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+
+        if !approvals.client_approved
+            && !approvals.freelancer_approved
+            && !approvals.arbiter_approved
+        {
+            env.storage().temporary().remove(&approval_key);
+        } else {
+            env.storage().temporary().set(&approval_key, &approvals);
+            env.storage().temporary().extend_ttl(
+                &approval_key,
+                ttl::PENDING_APPROVAL_BUMP_THRESHOLD,
+                ttl::PENDING_APPROVAL_TTL_LEDGERS,
+            );
+        }
+
+        true
     }
 
     // -----------------------------------------------------------------------
@@ -966,32 +1047,26 @@ impl Escrow {
         }
     }
 
-    /// Checks if the escrow contract has been initialized.
-    pub fn is_initialized(env: &Env) -> bool {
+    fn is_initialized(env: &Env) -> bool {
         env.storage()
             .persistent()
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
     }
 
-    /// Returns the current protocol fee in basis points.
-    pub fn get_protocol_fee_bps(env: &Env) -> u32 {
+    fn get_protocol_fee_bps(env: &Env) -> u32 {
         env.storage()
             .persistent()
             .get::<_, u32>(&DataKey::ProtocolFeeBps)
             .unwrap_or(0)
     }
 
-    /// Calculates the protocol fee based on the amount and fee basis points.
-    pub fn calculate_protocol_fee(env: &Env, amount: i128, fee_bps: u32) -> i128 {
-        amount
-            .checked_mul(fee_bps as i128)
-            .and_then(|val| val.checked_div(10_000))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
-    }
-
-    fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-        a.checked_add(b)
+    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
+        if fee_bps == 0 {
+            0
+        } else {
+            amount * fee_bps as i128 / 10_000
+        }
     }
 }
 

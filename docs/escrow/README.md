@@ -207,3 +207,13 @@ These features are not implemented entrypoints today:
 
 Any documentation that describes one of these items as available should be
 treated as roadmap text, not live integration guidance.
+
+
+### Milestone Approval and Revocation
+
+Participants can approve milestone items prior to fund distribution payouts. If an authorization mistake is discovered prior to complete disbursement release configurations, the approving party can rescind authority.
+
+#### `revoke_approval(contract_id: Address, caller: Address, milestone_index: u32)`
+- **Authorization Required:** `caller.require_auth()`
+- **Behavior:** Explicitly removes individual state flags (`client_approved` | `freelancer_approved` | `arbiter_approved`). When all structural components drop to `false`, temporary records are scrubbed entirely to maximize gas savings.
+- **Errors raised:** `Error::MilestoneAlreadyReleased`, `Error::ApprovalRecordNotFound`.
