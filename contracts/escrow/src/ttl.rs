@@ -6,7 +6,7 @@
 //! elapsed, so `read_if_live` returns `None` for both "never set" and
 //! "expired".
 
-use crate::{DataKey, Error, Milestone};
+use crate::{DataKey, EscrowError, Milestone};
 use soroban_sdk::{Env, IntoVal, Symbol, TryFromVal, Val, Vec};
 
 pub const LEDGERS_PER_DAY: u32 = 17_280;
@@ -90,7 +90,7 @@ pub fn load_milestones(env: &Env, contract_id: u32) -> Vec<Milestone> {
         .storage()
         .persistent()
         .get(&key)
-        .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
     extend_milestone_ttl(env, contract_id);
     milestones
 }

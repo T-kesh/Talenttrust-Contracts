@@ -1,7 +1,23 @@
 #![cfg(test)]
 
+use crate::dispute::{resolution_payouts, final_status_after_resolution};
 use crate::{ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Events}, vec, Address, Env, TryIntoVal};
+
+fn payout_contract(env: &Env, funded: i128, released: i128, refunded: i128) -> crate::Contract {
+    crate::Contract {
+        client: Address::generate(env),
+        freelancer: Address::generate(env),
+        arbiter: None,
+        status: ContractStatus::Disputed,
+        total_deposited: funded,
+        funded_amount: funded,
+        released_amount: released,
+        refunded_amount: refunded,
+        release_authorization: ReleaseAuthorization::ClientOnly,
+        reputation_issued: false,
+    }
+}
 
 fn setup_initialized() -> (Env, Address, EscrowClient<'static>) {
     let env = Env::default();
@@ -633,11 +649,15 @@ fn dispute_events_are_emitted() {
     // Check for dispute opened event
     let events = env.events().all();
     let dispute_opened = events.iter().any(|e| {
-        if let Some((topics, _data)) = e.try_into() {
-            topics == (soroban_sdk::symbol_short!("dispute"), soroban_sdk::symbol_short!("opened"))
-        } else {
-            false
+        let topics = &e.1;
+        if topics.len() >= 2 {
+            let t0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+            let t1: Result<soroban_sdk::Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            if let (Ok(sym0), Ok(sym1)) = (t0, t1) {
+                return sym0 == soroban_sdk::symbol_short!("dispute") && sym1 == soroban_sdk::symbol_short!("opened");
+            }
         }
+        false
     });
     assert!(dispute_opened, "dispute opened event not found");
     
@@ -647,11 +667,15 @@ fn dispute_events_are_emitted() {
     // Check for dispute resolved event
     let events = env.events().all();
     let dispute_resolved = events.iter().any(|e| {
-        if let Some((topics, _data)) = e.try_into() {
-            topics == (soroban_sdk::symbol_short!("dispute"), soroban_sdk::symbol_short!("resolved"))
-        } else {
-            false
+        let topics = &e.1;
+        if topics.len() >= 2 {
+            let t0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+            let t1: Result<soroban_sdk::Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            if let (Ok(sym0), Ok(sym1)) = (t0, t1) {
+                return sym0 == soroban_sdk::symbol_short!("dispute") && sym1 == soroban_sdk::symbol_short!("resolved");
+            }
         }
+        false
     });
     assert!(dispute_resolved, "dispute resolved event not found");
 }

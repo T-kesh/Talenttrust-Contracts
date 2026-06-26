@@ -1,4 +1,4 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone};
+use crate::{ttl, Contract, ContractStatus, DataKey, EscrowError, Milestone};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -19,24 +19,24 @@ use soroban_sdk::{Address, Env, Symbol, Vec};
 /// * `UnauthorizedRole` - If caller is not the client
 pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: i128) -> bool {
     if amount <= 0 {
-        env.panic_with_error(Error::AmountMustBePositive);
+        env.panic_with_error(EscrowError::AmountMustBePositive);
     }
 
     let mut contract: Contract = env
         .storage()
         .persistent()
         .get(&DataKey::Contract(contract_id))
-        .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
     ttl::extend_contract_ttl(&env, contract_id);
 
     if caller != contract.client {
-        env.panic_with_error(Error::UnauthorizedRole);
+        env.panic_with_error(EscrowError::UnauthorizedRole);
     }
     caller.require_auth();
 
     if contract.status != ContractStatus::Created {
-        env.panic_with_error(Error::InvalidState);
+        env.panic_with_error(EscrowError::InvalidState);
     }
 
     contract.funded_amount += amount;

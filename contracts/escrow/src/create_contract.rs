@@ -1,5 +1,5 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization,
+    ttl, Contract, ContractStatus, DataKey, EscrowError, Milestone, ReleaseAuthorization,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -35,31 +35,31 @@ pub fn create_contract_impl(
     client.require_auth();
 
     if client == freelancer {
-        env.panic_with_error(Error::InvalidParticipants);
+        env.panic_with_error(EscrowError::InvalidParticipants);
     }
 
     match release_authorization {
         ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
             if arbiter.is_none() =>
         {
-            env.panic_with_error(Error::MissingArbiter);
+            env.panic_with_error(EscrowError::MissingArbiter);
         }
         _ => {}
     }
 
     if let Some(ref arb) = arbiter {
         if arb == &client || arb == &freelancer {
-            env.panic_with_error(Error::InvalidArbiter);
+            env.panic_with_error(EscrowError::InvalidArbiter);
         }
     }
 
     if milestones.is_empty() {
-        env.panic_with_error(Error::EmptyMilestones);
+        env.panic_with_error(EscrowError::EmptyMilestones);
     }
 
     for amount in milestones.iter() {
         if amount <= 0 {
-            env.panic_with_error(Error::InvalidMilestoneAmount);
+            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
         }
     }
 
@@ -78,6 +78,7 @@ pub fn create_contract_impl(
         released_amount: 0,
         refunded_amount: 0,
         release_authorization,
+        reputation_issued: false,
     };
     env.storage()
         .persistent()
@@ -119,16 +120,13 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
 
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Contract>(&DataKey::Contract(id))
-            .is_some()
-        {
-            env.panic_with_error(Error::ContractIdCollision);
-        }
-
-        id
+    if env
+        .storage()
+        .persistent()
+        .get::<_, Contract>(&DataKey::Contract(id))
+        .is_some()
+    {
+        env.panic_with_error(EscrowError::ContractIdCollision);
     }
 
     id

@@ -1,21 +1,15 @@
-use crate::{DataKey, EscrowError, ReadinessChecklist, GovernedParameters, Escrow, EscrowClient, EscrowArgs};
-use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
+use crate::{DataKey, EscrowError, ReadinessChecklist, Escrow, types::{PendingAdminProposal, GovernedParameters}, ADMIN_ROTATION_MIN_DELAY_LEDGERS};
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 /// Governance-related privileged operations and audit events.
-///
-/// This module implements a small set of admin-facing functions that
-/// produce parseable events for off-chain indexers. Events emitted here
-/// follow the existing convention of short `symbol_short!` topics used by
-/// other lifecycle events (e.g. `init`, `paused`, `emergency`).
-#[contractimpl]
-impl super::Escrow {
+impl Escrow {
     /// Set the protocol fee (basis points). Emits an event with
     /// `(old_bps, new_bps, admin, timestamp)` under topic `protocol_fee_bps`.
-    pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
+    pub(crate) fn set_protocol_fee_bps_impl(env: &Env, new_bps: u32) -> bool {
         if !env
             .storage()
             .persistent()
-            .get::<_, bool>(&crate::DataKey::Initialized)
+            .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
             env.panic_with_error(EscrowError::NotInitialized);
@@ -25,7 +19,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
         let old_bps: u32 = env
@@ -38,18 +32,17 @@ impl super::Escrow {
             .set(&DataKey::ProtocolFeeBps, &new_bps);
 
         env.events().publish(
-            (Symbol::new(env, "protocol_fee_bps"),),
+            (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
         );
         true
     }
 
-    /// Internal: propose a new admin with a timelock.
-    pub(crate) fn propose_governance_admin_impl(env: Env, proposed: Address) -> bool {
+    pub fn propose_governance_admin(env: Env, proposed: Address) -> bool {
         if !env
             .storage()
             .persistent()
-            .get::<_, bool>(&crate::DataKey::Initialized)
+            .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
             env.panic_with_error(EscrowError::NotInitialized);
@@ -59,7 +52,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
         env.storage().persistent().set(
@@ -71,18 +64,17 @@ impl super::Escrow {
         );
 
         env.events().publish(
-            (symbol_short!("admin"), Symbol::new(env, "proposed")),
+            (symbol_short!("admin"), Symbol::new(&env, "proposed")),
             (admin, proposed.clone(), env.ledger().timestamp()),
         );
         true
     }
 
-    /// Internal: accept a pending admin proposal, enforcing the timelock.
-    pub(crate) fn accept_governance_admin_impl(env: Env) -> bool {
+    pub fn accept_governance_admin(env: Env) -> bool {
         if !env
             .storage()
             .persistent()
-            .get::<_, bool>(&crate::DataKey::Initialized)
+            .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
             env.panic_with_error(EscrowError::NotInitialized);
@@ -91,7 +83,7 @@ impl super::Escrow {
         let pending: Option<PendingAdminProposal> =
             env.storage().persistent().get(&DataKey::PendingAdmin);
         if pending.is_none() {
-            env.panic_with_error(crate::Error::InvalidState);
+            env.panic_with_error(EscrowError::InvalidState);
         }
         let proposal = pending.unwrap();
 
@@ -112,7 +104,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
 
         env.storage()
             .persistent()
@@ -120,26 +112,24 @@ impl super::Escrow {
         env.storage().persistent().remove(&DataKey::PendingAdmin);
 
         env.events().publish(
-            (symbol_short!("admin"), Symbol::new(env, "accepted")),
+            (symbol_short!("admin"), Symbol::new(&env, "accepted")),
             (old_admin, pending_admin.clone(), env.ledger().timestamp()),
         );
         true
     }
 
-    /// Internal: return the currently pending admin address, if any.
-    pub(crate) fn get_pending_governance_admin_impl(env: Env) -> Option<Address> {
+    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
         let proposal: Option<PendingAdminProposal> =
             env.storage().persistent().get(&DataKey::PendingAdmin);
         proposal.map(|p| p.proposed)
     }
 
-    /// Internal: return the current admin address.
-    pub(crate) fn get_governance_admin_impl(env: Env) -> Option<Address> {
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
     }
 
     /// Set both governance parameters at once and update the readiness checklist.
-    pub fn set_governed_params(
+    pub(crate) fn set_governed_params_impl(
         env: Env,
         admin: Address,
         protocol_fee_bps: u32,
@@ -148,7 +138,7 @@ impl super::Escrow {
         if !env
             .storage()
             .persistent()
-            .get::<_, bool>(&crate::DataKey::Initialized)
+            .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
             env.panic_with_error(EscrowError::NotInitialized);
@@ -191,7 +181,7 @@ impl super::Escrow {
     }
 
     /// Retrieve the current governed parameters.
-    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
+    pub(crate) fn get_governed_parameters_impl(env: Env) -> Option<GovernedParameters> {
         env.storage()
             .persistent()
             .get(&DataKey::GovernedParameters)

@@ -1,6 +1,10 @@
-use super::{create_contract, register_client};
-use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use super::{
+    create_contract, register_client, default_milestones, generated_participants, 
+    assert_contract_error, total_milestone_amount, complete_contract, 
+    MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE
+};
+use crate::{ContractStatus, EscrowError, ReleaseAuthorization, ttl};
+use soroban_sdk::{testutils::{Address as _, Ledger, storage::Persistent}, vec, Address, Env, Symbol};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
@@ -39,7 +43,7 @@ fn finalize_completed_contract_allows_arbiter_finalizer() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (client_addr, freelancer_addr, arbiter_addr, contract_id) =
+    let (client_addr, _freelancer_addr, arbiter_addr, contract_id) =
         super::create_contract_with_arbiter(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
@@ -85,7 +89,8 @@ fn participant_metadata_and_pending_credits_persist_until_reputation_is_issued()
     assert_eq!(completed.status, ContractStatus::Completed);
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
 
-    assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5));
+    let comment = soroban_sdk::String::from_str(&env, "Good job");
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &comment));
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
 }
 
@@ -549,10 +554,10 @@ fn get_refundable_balance_panics_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(
-        client.try_get_refundable_balance(&999),
-        EscrowError::ContractNotFound,
-    );
+    match client.try_get_refundable_balance(&999) {
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        _ => panic!("expected ContractNotFound"),
+    }
 }
 
 /// `get_refundable_balance` panics with `ContractNotFound` for the zero id.
@@ -562,10 +567,10 @@ fn get_refundable_balance_panics_for_zero_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(
-        client.try_get_refundable_balance(&0),
-        EscrowError::ContractNotFound,
-    );
+    match client.try_get_refundable_balance(&0) {
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        _ => panic!("expected ContractNotFound"),
+    }
 }
 
 // ── get_refundable_balance: success ───────────────────────────────────────────
@@ -918,10 +923,10 @@ fn read_getters_fail_for_arbitrary_unknown_id() {
             client.try_get_milestones(&4_242),
             EscrowError::ContractNotFound,
         );
-        assert_contract_error(
-            client.try_get_refundable_balance(&4_242),
-            EscrowError::ContractNotFound,
-        );
+        match client.try_get_refundable_balance(&4_242) {
+            Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+            _ => panic!("expected ContractNotFound"),
+        }
 
         // State flags must remain unchanged after the failed reads.
         assert_eq!(
@@ -965,10 +970,10 @@ fn read_getters_succeed_after_creating_contract_at_zero_index() {
         client.try_get_milestones(&0),
         EscrowError::ContractNotFound,
     );
-    assert_contract_error(
-        client.try_get_refundable_balance(&0),
-        EscrowError::ContractNotFound,
-    );
+    match client.try_get_refundable_balance(&0) {
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        _ => panic!("expected ContractNotFound"),
+    }
 
     let (c, f) = generated_participants(&env);
     let id = client.create_contract(
@@ -1035,8 +1040,8 @@ fn read_getters_unchanged_after_pause() {
         client.try_get_milestones(&9999),
         EscrowError::ContractNotFound,
     );
-    assert_contract_error(
-        client.try_get_refundable_balance(&9999),
-        EscrowError::ContractNotFound,
-    );
+    match client.try_get_refundable_balance(&9999) {
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        _ => panic!("expected ContractNotFound"),
+    }
 }

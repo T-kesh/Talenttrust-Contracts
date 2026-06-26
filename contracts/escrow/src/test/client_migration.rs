@@ -7,8 +7,8 @@ use crate::{
     Contract, Escrow, EscrowClient, EscrowError,
 };
 use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, IntoVal,
-    Symbol, Val,
+    testutils::Address as _, testutils::Ledger as _, testutils::Events, testutils::LedgerInfo, Address, Env, IntoVal,
+    Symbol, Val, TryIntoVal,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -40,7 +40,8 @@ fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
     env.events().all().iter().any(|event| {
         let topics = &event.1;
         topics.len() > 0 && {
-            if let Ok(sym) = Symbol::try_from_val(env, &topics.get(0).unwrap()) {
+            let sym_res: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
+            if let Ok(sym) = sym_res {
                 sym == *topic
             } else {
                 false
