@@ -14,7 +14,6 @@ mod persistence;
 mod release_authorization;
 mod reputation;
 
-
 // --- Shared constants ---
 
 pub const MILESTONE_ONE: i128 = 200_0000000;

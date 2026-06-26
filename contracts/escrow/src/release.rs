@@ -22,8 +22,8 @@ impl Escrow {
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Funded state
-    /// * `InvalidMilestone` - If milestone index is out of bounds
-    /// * `AlreadyReleased` - If milestone was already released
+    /// * `IndexOutOfBounds` - If milestone index is invalid
+    /// * `MilestoneAlreadyReleased` - If milestone was already released
     /// * `AlreadyRefunded` - If milestone was already refunded
     /// * `InsufficientFunds` - If contract doesn't have enough funded balance
     /// * `InsufficientApprovals` - If required approvals are missing
@@ -31,9 +31,10 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not authorized to release
     ///
     /// # Security
-    /// - Requires valid approvals that haven't expired
-    /// - Approvals are cleared after successful release
-    /// - Fail-closed: missing or expired approvals prevent release
+    /// - **Caller Authentication**: Enforced right at entry layer via `caller.require_auth()`.
+    /// - Requires valid approvals that haven't expired under temporary tracking storage keys.
+    /// - Approvals are cleared instantly after a successful milestone release execution loop.
+    /// - Fail-closed: missing or expired approvals prevent downstream release logic.
     pub fn release_milestone(
         env: Env,
         contract_id: u32,

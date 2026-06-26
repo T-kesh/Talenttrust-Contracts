@@ -7,8 +7,8 @@ use crate::{
     Contract, Escrow, EscrowClient, EscrowError,
 };
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, testutils::LedgerInfo,
-    Address, Env, IntoVal, Symbol, Val,
+    testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, IntoVal,
+    Symbol, Val,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
