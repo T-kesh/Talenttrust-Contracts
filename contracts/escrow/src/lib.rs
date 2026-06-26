@@ -27,6 +27,7 @@ mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
+mod dispute;
 mod finalize;
 mod governance;
 mod migration;
@@ -36,11 +37,11 @@ mod ttl;
 mod types;
 mod utils;
 
-pub use amount_validation::safe_subtract_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
-    Contract, ContractStatus, ContractSummary, DataKey, Error, EscrowError, Milestone,
+    Contract, ContractStatus, ContractSummary, DataKey, Error, Error as EscrowError, Milestone,
     MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
@@ -49,6 +50,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, E
 
 #[contract]
 pub struct Escrow;
+
+
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,6 +153,40 @@ impl Escrow {
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
+
+    /// Releases a specific milestone, transferring funds to the freelancer.
+    ///
+    /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
+    ///
+    /// MultiSig semantics are client-and-freelancer approval. A MultiSig
+    /// milestone can be released only by the stored client or freelancer after
+    /// both of those addresses have approved the same milestone.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `caller` - The address of the caller (must be authorized)
+    /// * `milestone_index` - The index of the milestone to release
+    ///
+    /// # Returns
+    /// `true` if release was successful
+    ///
+    /// # Errors
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `InvalidState` - If contract is not in Funded state
+    /// * `InvalidMilestone` - If milestone index is out of bounds
+    /// * `AlreadyReleased` - If milestone was already released
+    /// * `AlreadyRefunded` - If milestone was already refunded
+    /// * `InsufficientFunds` - If contract doesn't have enough funded balance
+    /// * `InsufficientApprovals` - If required approvals are missing
+    /// * `ApprovalExpired` - If approvals have expired
+    /// * `UnauthorizedRole` - If caller is not authorized to release
+    ///
+    /// # Security
+    /// - Requires valid approvals that haven't expired
+    /// - Approvals are cleared after successful release
+    /// - Fail-closed: missing or expired approvals prevent release
+
 
     /// Retrieves contract information.
     ///
