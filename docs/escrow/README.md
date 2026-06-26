@@ -209,8 +209,10 @@ escrow.release_milestone(&contract_id, &client_addr, &0);
    the milestone is marked released and the contract status is updated — so
    a token-transfer failure leaves the contract untouched.
 
-When the final milestone is released, status becomes `Completed` and one
-pending reputation credit is added for the freelancer.
+Whenever a contract successfully transitions to the `Completed` status—either 
+through the final milestone release, a refund operation that leaves some 
+milestones released, or a dispute resolution—exactly one pending reputation 
+credit is granted to the freelancer.
 
 `PendingReputationCredits` is a non-negative counter that tracks completed
 contracts awaiting client-issued reputation for a freelancer. `issue_reputation`

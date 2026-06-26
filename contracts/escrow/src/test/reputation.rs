@@ -128,6 +128,72 @@ fn issue_reputation_updates_reputation_record_and_pending_credits() {
 }
 
 // ---------------------------------------------------------------------------
+// Reputation credit tests for alternate completion paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pending_reputation_credits_granted_on_dispute_resolution_completed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let milestones = super::default_milestones(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &Some(arbiter_addr.clone()),
+        &milestones,
+        &crate::ReleaseAuthorization::ClientOnly,
+    );
+    let total = super::total_milestone_amount();
+    client.deposit_funds(&contract_id, &client_addr, &total);
+
+    client.raise_dispute(&contract_id, &client_addr);
+    client.resolve_dispute(
+        &contract_id,
+        &arbiter_addr,
+        &crate::dispute::DisputeResolution::FullPayout,
+    );
+
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5, &valid_comment(&env)));
+}
+
+#[test]
+fn pending_reputation_credits_granted_on_partial_refund_completed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = super::default_milestones(&env);
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &crate::ReleaseAuthorization::ClientOnly,
+    );
+    let total = super::total_milestone_amount();
+    client.deposit_funds(&contract_id, &client_addr, &total);
+
+    // Release first milestone
+    client.approve_milestone_release(&contract_id, &client_addr, &0);
+    client.release_milestone(&contract_id, &client_addr, &0);
+
+    // Refund the rest
+    let indices = soroban_sdk::vec![&env, 1, 2];
+    client.refund_unreleased_milestones(&contract_id, &client_addr, &indices);
+
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5, &valid_comment(&env)));
+}
+
+// ---------------------------------------------------------------------------
 // get_average_rating tests
 // ---------------------------------------------------------------------------
 

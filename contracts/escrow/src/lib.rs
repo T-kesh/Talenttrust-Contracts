@@ -313,6 +313,17 @@ impl Escrow {
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
 
+    /// Grants exactly one pending reputation credit to the freelancer.
+    ///
+    /// This is called exactly once when a contract successfully transitions to
+    /// the `Completed` state, either through the final milestone release
+    /// or via dispute resolution. It enables the client to later issue reputation.
+    fn grant_pending_reputation_credit(env: &Env, freelancer: &Address) {
+        let pending_key = DataKey::PendingReputationCredits(freelancer.clone());
+        let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+        env.storage().persistent().set(&pending_key, &(pending + 1));
+    }
+
     /// Releases a specific milestone, transferring funds to the freelancer.
     ///
     /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
@@ -462,6 +473,7 @@ impl Escrow {
         let all_released = milestones.iter().all(|m| m.released || m.refunded);
         if all_released {
             contract.status = ContractStatus::Completed;
+            Self::grant_pending_reputation_credit(&env, &contract.freelancer);
         }
 
         env.storage().persistent().set(
@@ -596,6 +608,7 @@ impl Escrow {
             } else {
                 // Some released, some refunded
                 contract.status = ContractStatus::Completed;
+                Self::grant_pending_reputation_credit(&env, &contract.freelancer);
             }
         }
 
@@ -1374,6 +1387,9 @@ impl Escrow {
 
         // Set final status
         contract.status = dispute::final_status_after_resolution(&contract);
+        if contract.status == ContractStatus::Completed {
+            Self::grant_pending_reputation_credit(&env, &contract.freelancer);
+        }
 
         env.storage()
             .persistent()
