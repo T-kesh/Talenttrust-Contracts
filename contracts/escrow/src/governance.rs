@@ -1,6 +1,5 @@
 use crate::{
-    types::PendingAdminProposal, DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError,
-    ReadinessChecklist, ADMIN_ROTATION_MIN_DELAY_LEDGERS,
+    DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters, ReadinessChecklist,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
@@ -221,7 +220,7 @@ impl Escrow {
     }
 
     /// Retrieve the current governed parameters.
-    pub fn get_governed_parameters(env: Env) -> Option<super::types::GovernedParameters> {
+    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
         env.storage().persistent().get(&DataKey::GovernedParameters)
     }
 }

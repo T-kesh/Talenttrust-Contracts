@@ -35,7 +35,7 @@ mod ttl;
 mod types;
 mod utils;
 
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, MAX_TOTAL_ESCROW_STROOPS};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -92,11 +92,9 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
-    EvidenceTooLong = 31,
-    TimelockNotElapsed = 32,
-    InvalidProtocolParameters = 33,
-    EmptyComment = 34,
-    CommentTooLong = 35,
+    MilestoneNotFound = 31,
+    EvidenceTooLong = 32,
+    InvalidArbiter = 33,
 }
 
 #[contractimpl]
@@ -239,59 +237,6 @@ impl Escrow {
             milestones,
             release_authorization,
         )
-    }
-
-    /// Accept a contract as the assigned freelancer, transitioning status from
-    /// `Created` to `Accepted`.
-    ///
-    /// This gives the freelancer an on-chain opt-in before any funds are locked.
-    /// Acceptance is optional — `deposit_funds` is permitted from both `Created`
-    /// and `Accepted` so client-first funding workflows remain unblocked.
-    ///
-    /// # Arguments
-    /// * `contract_id` — the contract to accept
-    /// * `freelancer`  — must match the stored freelancer; requires `require_auth()`
-    ///
-    /// # Errors
-    /// * `ContractNotFound`        — unknown `contract_id`
-    /// * `FreelancerMismatch`      — `freelancer` does not match stored address
-    /// * `InvalidStatusTransition` — contract is not in `Created` status
-    /// * `ContractPaused`          — pause or emergency controls are active
-    /// * `AlreadyFinalized`        — contract has already been finalized
-    pub fn accept_contract(env: Env, contract_id: u32, freelancer: Address) -> bool {
-        Self::require_not_paused(&env);
-        freelancer.require_auth();
-
-        let mut contract: Contract = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
-
-        ttl::extend_contract_ttl(&env, contract_id);
-        Self::require_not_finalized(&env, contract_id);
-
-        if freelancer != contract.freelancer {
-            env.panic_with_error(EscrowError::FreelancerMismatch);
-        }
-
-        if contract.status != ContractStatus::Created {
-            env.panic_with_error(EscrowError::InvalidStatusTransition);
-        }
-
-        // ── CEI: Effect before any future interaction ──────────────────────
-        contract.status = ContractStatus::Accepted;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
-        ttl::extend_contract_ttl(&env, contract_id);
-
-        env.events().publish(
-            (Symbol::new(&env, "accepted"), contract_id),
-            (freelancer, env.ledger().timestamp()),
-        );
-
-        true
     }
 
     /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -1333,6 +1278,84 @@ impl Escrow {
     // -----------------------------------------------------------------------
     // Dispute management
     // -----------------------------------------------------------------------
+
+    /// Assigns an arbiter to an existing arbiter-less contract by mutual consent.
+    ///
+    /// The supplied `caller` must be either the stored client or freelancer, and
+    /// both the client and freelancer must authorize the transaction. Assignment
+    /// is only available before a dispute is opened, while the contract is in
+    /// `Created`, `Funded`, or `PartiallyFunded` status, and only when no arbiter
+    /// has already been assigned.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract to update
+    /// * `caller` - Client or freelancer initiating the mutually authorized call
+    /// * `arbiter` - Neutral arbiter address to assign
+    ///
+    /// # Returns
+    /// `true` if the arbiter was successfully assigned
+    ///
+    /// # Errors
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `UnauthorizedRole` - If caller is not client or freelancer
+    /// * `InvalidArbiter` - If arbiter equals the client or freelancer
+    /// * `InvalidState` - If an arbiter already exists or status is not pre-dispute
+    /// * `ContractPaused` - If pause or emergency controls are active
+    /// * `AlreadyFinalized` - If contract has been finalized
+    ///
+    /// # Security
+    /// - Requires authorization from both the client and freelancer
+    /// - Prevents overwriting an existing arbiter
+    /// - Prevents assigning either party as the arbiter
+    /// - Respects pause, emergency, and finalization controls
+    pub fn assign_arbiter(env: Env, contract_id: u32, caller: Address, arbiter: Address) -> bool {
+        Self::require_not_paused(&env);
+
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        caller.require_auth();
+        contract.client.require_auth();
+        contract.freelancer.require_auth();
+
+        if arbiter == contract.client || arbiter == contract.freelancer {
+            env.panic_with_error(EscrowError::InvalidArbiter);
+        }
+
+        if contract.arbiter.is_some() {
+            env.panic_with_error(EscrowError::InvalidState);
+        }
+
+        match contract.status {
+            ContractStatus::Created | ContractStatus::Funded | ContractStatus::PartiallyFunded => {}
+            _ => env.panic_with_error(EscrowError::InvalidState),
+        }
+
+        contract.arbiter = Some(arbiter.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("arbiter"), symbol_short!("assigned")),
+            (contract_id, caller, arbiter, env.ledger().timestamp()),
+        );
+
+        true
+    }
 
     /// Opens a dispute for a funded or partially funded escrow contract.
     ///
