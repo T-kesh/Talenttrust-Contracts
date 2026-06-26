@@ -2,6 +2,7 @@ extern crate std;
 
 use soroban_sdk::{testutils::Address as _, testutils::Events, Address, Env};
 
+use super::{complete_contract, register_client};
 use crate::{Escrow, EscrowClient, EscrowError};
 
 /// Returns a fresh (Env, contract Address) pair with all auths mocked.
@@ -235,6 +236,25 @@ fn double_initialize_panics() {
     client.initialize(&admin);
     // Second call must panic.
     client.initialize(&admin);
+}
+
+// ── 4.13 ────────────────────────────────────────────────────────────────────
+// Finalized records carry the current CONTRACT_SUMMARY_SCHEMA_VERSION.
+#[test]
+fn finalized_record_carries_current_schema_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer, contract_id) = complete_contract(&env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    let record = client.get_finalization_record(&contract_id).unwrap();
+    assert_eq!(
+        record.summary.schema_version,
+        client.get_summary_schema_version(),
+        "finalized record must carry the current schema version"
+    );
 }
 
 /// Confirms that a fresh contract (no successful initialize) still reports

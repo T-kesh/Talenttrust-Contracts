@@ -2,7 +2,13 @@ use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
 // ─── Indexer summary types ────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+/// Schema version stamped into every [`ContractSummary`] at finalization time.
+///
+/// Bump this constant and add a migration path in
+/// `docs/escrow/contract-summary-schema-versioning.md` whenever the summary
+/// layout changes in a backward-incompatible way. Indexers compare the stored
+/// version against `get_contract_summary_schema_version()` to detect when a
+/// record needs re-processing.
 pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 #[contracttype]
