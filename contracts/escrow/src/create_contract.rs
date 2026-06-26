@@ -111,7 +111,6 @@ pub fn create_contract_impl(
     id
 }
 
-/// Returns the next contract id after verifying the slot is unused.
 pub(crate) fn next_contract_id(env: &Env) -> u32 {
     let id: u32 = env
         .storage()
@@ -127,9 +126,6 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
     {
         env.panic_with_error(Error::ContractIdCollision);
     }
-
-    id
-}
 
     id
 }
