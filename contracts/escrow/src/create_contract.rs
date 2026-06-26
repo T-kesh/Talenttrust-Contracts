@@ -73,7 +73,6 @@ pub fn create_contract_impl(
         freelancer: freelancer.clone(),
         arbiter,
         status: ContractStatus::Created,
-        total_deposited: 0,
         funded_amount: 0,
         released_amount: 0,
         refunded_amount: 0,

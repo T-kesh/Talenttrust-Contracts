@@ -171,7 +171,7 @@ fn finalized_contract_rejects_subsequent_mutations() {
         EscrowError::AlreadyFinalized,
     );
     super::assert_contract_error(
-        client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128),
+        client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
         EscrowError::AlreadyFinalized,
     );
     super::assert_contract_error(

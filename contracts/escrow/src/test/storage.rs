@@ -327,7 +327,7 @@ fn reputation_issued_written_and_reputation_updated() {
     let client = register_client(&env);
 
     let (c, f, id) = complete_contract(&env, &client);
-    client.issue_reputation(&id, &c, &f, &5);
+    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     env.as_contract(&client.address, || {
         let issued: bool = env
@@ -351,10 +351,10 @@ fn double_issue_reputation_fails() {
     let client = register_client(&env);
 
     let (c, f, id) = complete_contract(&env, &client);
-    client.issue_reputation(&id, &c, &f, &4);
+    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &c, &f, &4),
+        client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
         EscrowError::ReputationAlreadyIssued,
     );
 }
@@ -378,7 +378,7 @@ fn pending_reputation_credits_decremented_on_issue() {
     let (c, f, id) = complete_contract(&env, &client);
     assert_eq!(client.get_pending_reputation_credits(&f), 1);
 
-    client.issue_reputation(&id, &c, &f, &3);
+    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     assert_eq!(client.get_pending_reputation_credits(&f), 0);
 }
 
@@ -398,7 +398,7 @@ fn reputation_not_issuable_before_completion() {
     );
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &c, &f, &5),
+        client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
         EscrowError::NotCompleted,
     );
 }
@@ -413,7 +413,7 @@ fn reputation_requires_client_caller() {
     let stranger = Address::generate(&env);
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &stranger, &f, &5),
+        client.try_issue_reputation(&id, &stranger, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
         EscrowError::UnauthorizedRole,
     );
 }

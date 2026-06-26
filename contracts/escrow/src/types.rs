@@ -45,6 +45,7 @@ pub enum ContractStatus {
     PartiallyFunded = 7,
 }
 
+/// Main escrow contract state
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseAuthorization {

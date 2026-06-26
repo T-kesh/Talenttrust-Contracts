@@ -18,7 +18,7 @@ mod tests {
             funded_amount: available,
             released_amount: 0,
             refunded_amount: 0,
-            total_deposited: available,
+
             status: ContractStatus::Funded,
             // other fields defaulted/zeroed as needed
             ..Default::default()

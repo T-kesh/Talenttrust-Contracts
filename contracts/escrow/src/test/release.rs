@@ -1,8 +1,10 @@
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, String};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Events, vec, Address, Env, String, Symbol,
+    TryFromVal, Val,
+};
 
 use super::{
-    assert_contract_error, create_contract, register_client, total_milestone_amount,
-    MILESTONE_ONE,
+    assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE,
 };
 use crate::{ContractStatus, Error, EscrowError, ReleaseAuthorization};
 
@@ -161,7 +163,13 @@ fn work_evidence_emits_evidence_event() {
     assert!(escrow.submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev));
 
     let events = env.events().all();
-    assert!(events.iter().any(|e| e.0 == symbol_short!("evidence")));
+    use soroban_sdk::{Symbol, TryFromVal};
+    assert!(events.iter().any(|e| {
+        e.1.get(0)
+            .and_then(|v| Symbol::try_from_val(&env, &v).ok())
+            .as_ref()
+            == Some(&symbol_short!("evidence"))
+    }));
 }
 
 #[test]
@@ -323,4 +331,70 @@ fn work_evidence_rejects_unknown_contract() {
     let ev = evidence(&env, "ipfs://QmTest");
     let result = escrow.try_submit_work_evidence(&9999, &freelancer, &0, &ev);
     assert_contract_error(result, Error::ContractNotFound);
+}
+
+// ---------------------------------------------------------------------------
+// get_work_evidence tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_work_evidence_returns_some_when_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &escrow);
+    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    let ev = evidence(&env, "ipfs://QmMilestone0Evidence");
+    assert!(escrow.submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev));
+
+    let result = escrow.get_work_evidence(&contract_id, &0);
+    assert_eq!(result, Some(ev));
+}
+
+#[test]
+fn get_work_evidence_returns_none_when_unset() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &escrow);
+    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    let result = escrow.get_work_evidence(&contract_id, &1);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn get_work_evidence_returns_none_for_out_of_bounds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &escrow);
+    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    let result = escrow.get_work_evidence(&contract_id, &99);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn get_work_evidence_panics_for_unknown_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register_client(&env);
+
+    let result = escrow.try_get_work_evidence(&9999, &0);
+    assert_contract_error(result, Error::ContractNotFound);
+}
+
+#[test]
+fn get_work_evidence_returns_none_for_unreleased_milestone_without_evidence() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &escrow);
+    // no deposit — contract stays in Created status, milestones exist but have no evidence
+    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    let result = escrow.get_work_evidence(&contract_id, &2);
+    assert_eq!(result, None);
 }

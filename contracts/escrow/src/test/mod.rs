@@ -13,6 +13,7 @@ mod emergency_controls;
 mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
+mod release;
 mod release_authorization;
 
 // --- Shared constants ---

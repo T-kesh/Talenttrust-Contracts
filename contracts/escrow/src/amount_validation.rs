@@ -39,10 +39,6 @@ pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
         return Err(crate::EscrowError::InvalidMilestoneAmount);
     }
 
-    // Check stroop precision (must be integer, which i128 already guarantees)
-    // In Stellar, stroop is the smallest unit, so any integer is valid
-    // This check is more for documentation and future-proofing
-
     Ok(())
 }
 
