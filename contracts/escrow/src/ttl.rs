@@ -110,3 +110,13 @@ pub fn extend_contract_and_milestones_ttl(env: &Env, contract_id: u32) {
     extend_contract_ttl(env, contract_id);
     extend_milestone_ttl(env, contract_id);
 }
+
+/// Extend TTL for a participant contract index entry (e.g. client or freelancer id list).
+///
+/// This is called on index writes to avoid index entries expiring during normal usage.
+pub fn extend_participant_contract_index_ttl(env: &Env, key: &crate::DataKey) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS);
+}
+
