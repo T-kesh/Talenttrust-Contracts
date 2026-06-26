@@ -1,10 +1,9 @@
 #![cfg(test)]
 
-use crate::{
-    dispute::{final_status_after_resolution, resolution_payouts},
-    ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
-};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use crate::dispute::{final_status_after_resolution, resolution_payouts};
+use crate::{Contract, ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::{vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, EscrowClient<'static>) {
     let env = Env::default();
@@ -37,6 +36,22 @@ fn create_funded_contract_with_arbiter(
     assert!(client.deposit_funds(&contract_id, &client_addr, &deposit_amount));
 
     (client_addr, freelancer_addr, arbiter_addr, contract_id)
+}
+
+/// Create a minimal Contract struct for testing payout math.
+fn payout_contract(env: &Env, funded: i128, released: i128, refunded: i128) -> Contract {
+    Contract {
+        client: Address::generate(env),
+        freelancer: Address::generate(env),
+        arbiter: None,
+        status: ContractStatus::Funded,
+        total_deposited: funded,
+        funded_amount: funded,
+        released_amount: released,
+        refunded_amount: refunded,
+        release_authorization: ReleaseAuthorization::ClientOnly,
+        reputation_issued: false,
+    }
 }
 
 /// Verifies FullRefund conserves all available balance for the client.

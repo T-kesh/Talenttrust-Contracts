@@ -325,7 +325,7 @@ mod tests {
             funded_amount: 1000,
             released_amount: 0,
             refunded_amount: 0,
-            release_authorization: ReleaseAuthorization::ClientOnly,
+            release_authorization: ReleaseAuthorization::MultiSig,
             reputation_issued: false,
         };
 

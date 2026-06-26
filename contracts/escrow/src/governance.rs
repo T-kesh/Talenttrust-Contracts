@@ -1,5 +1,6 @@
 use crate::{
-    DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters, ReadinessChecklist,
+    DataKey, EscrowError, GovernedParameters, PendingAdminProposal, ReadinessChecklist,
+    ADMIN_ROTATION_MIN_DELAY_LEDGERS, Escrow, EscrowClient, EscrowArgs,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
@@ -100,7 +101,7 @@ impl Escrow {
         );
 
         env.events().publish(
-            (symbol_short!("admin"), Symbol::new(env, "proposed")),
+            (symbol_short!("admin"), Symbol::new(&env, "proposed")),
             (admin, proposed.clone(), env.ledger().timestamp()),
         );
         true
@@ -149,7 +150,7 @@ impl Escrow {
         env.storage().persistent().remove(&DataKey::PendingAdmin);
 
         env.events().publish(
-            (symbol_short!("admin"), Symbol::new(env, "accepted")),
+            (symbol_short!("admin"), Symbol::new(&env, "accepted")),
             (old_admin, pending_admin.clone(), env.ledger().timestamp()),
         );
         true

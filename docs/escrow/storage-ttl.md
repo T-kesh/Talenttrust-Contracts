@@ -5,15 +5,15 @@ This document defines the deterministic, auditable TTL (time-to-live) policy for
 unbounded state growth from orphaned pending approvals and pending migrations
 that are never resolved by counterparties.
 
-See also: [state-persistence.md](./state-persistence.md) for the persistent
-storage model; [upgradeable-storage.md](./upgradeable-storage.md) for upgrade
-semantics.
+See also: [state-persistence.md](./state-persistence.md) for the **full storage
+map** including persistent keys, value types, and bump-on-access policy;
+[upgradeable-storage.md](./upgradeable-storage.md) for upgrade semantics.
 
 ## Scope
 
-Applies to keys stored in `env.storage().temporary()`. Persistent keys (e.g.
-`Contract(id)`, `NextId`) are unaffected — their TTL management is covered in
-[architecture.md](./architecture.md).
+Applies to keys stored in `env.storage().temporary()`. Persistent keys are
+catalogued in [state-persistence.md](./state-persistence.md) — their TTL policy
+is summarised below and detailed per-key in the reference table.
 
 ## Units
 
@@ -22,26 +22,33 @@ ledger is ~5 seconds on Stellar mainnet. This avoids any coupling to
 wall-clock timestamps and keeps expiry deterministic as a function of
 `env.ledger().sequence()`.
 
-| Named constant | Ledgers | Rough duration |
-|---|---:|---|
-| `LEDGERS_PER_DAY` | 17 280 | 1 day |
-| `PENDING_APPROVAL_TTL_LEDGERS` | 120 960 | 7 days |
-| `PENDING_APPROVAL_BUMP_THRESHOLD` | 17 280 | 1 day |
-| `PENDING_MIGRATION_TTL_LEDGERS` | 362 880 | 21 days |
-| `PENDING_MIGRATION_BUMP_THRESHOLD` | 51 840 | 3 days |
+| Named constant | Ledgers | Rough duration | Scope |
+|---|---:|---:|---|
+| `LEDGERS_PER_DAY` | 17 280 | 1 day | — |
+| `PERSISTENT_TTL_LEDGERS` | 518 400 | 30 days | Persistent keys |
+| `PERSISTENT_BUMP_THRESHOLD` | 120 960 | 7 days | Persistent keys |
+| `PENDING_APPROVAL_TTL_LEDGERS` | 120 960 | 7 days | Temporary (`MilestoneApprovals`) |
+| `PENDING_APPROVAL_BUMP_THRESHOLD` | 17 280 | 1 day | Temporary (`MilestoneApprovals`) |
+| `PENDING_MIGRATION_TTL_LEDGERS` | 362 880 | 21 days | Temporary (`PendingClientMigration`) |
+| `PENDING_MIGRATION_BUMP_THRESHOLD` | 51 840 | 3 days | Temporary (`PendingClientMigration`) |
 
 Constants live in
 [contracts/escrow/src/ttl.rs](../../contracts/escrow/src/ttl.rs).
 
 ## Transient Keys
 
-| Key | TTL | Bump threshold | Rationale |
-|---|---:|---:|---|
-| `PendingApproval(contract_id)` | 7 days | 1 day | Counterparties are expected to respond within one business week; short enough to reclaim state on abandonment. |
-| `PendingMigration` | 21 days | 3 days | Migrations are rarer and more consequential; reviewers need more lead time. |
+| DataKey | TTL | Bump threshold | Bumped on read? | Rationale |
+|---|---|---|---:|---|
+| `MilestoneApprovals(u32, u32)` | 7 days | 1 day | No (set on write only) | Counterparties expected to respond within one business week; short TTL reclaims state on abandonment. |
+| `PendingClientMigration(u32)` | 21 days | 3 days | No (set once) | Migrations are rarer and more consequential; reviewers need more lead time. |
 
-`PendingMigration` is a **single-slot** key: at most one migration may be
-pending at any time.
+> **Note:** `MilestoneApprovals` TTL is managed **manually** via
+> `env.storage().temporary().extend_ttl()` — it does **not** go through
+> `ttl::store_with_ttl`. All other transient helpers in `ttl.rs` apply only to
+> `PendingClientMigration`. See [security notes](#security-notes).
+
+`PendingClientMigration` is per-contract: at most one migration may be pending
+per contract at any time.
 
 ## TTL Helper API
 
@@ -91,13 +98,21 @@ environments produce identical expiry values. This is verified by
 
 ## Security Notes
 
-- All writes use `store_with_ttl`; no direct `.temporary().set` bypass is
-  permitted, ensuring TTL is always set at write time.
-- `remove_transient` is used for explicit cleanup (e.g. after an approval is
-  consumed or cancelled) so stale entries do not linger until auto-eviction.
+- **`MilestoneApprovals` bypasses `store_with_ttl`**. It uses
+  `env.storage().temporary().set()` + `extend_ttl` directly in
+  `approve_milestone`. This is a one-off pattern; all future transient keys
+  should use `ttl::store_with_ttl`.
+- `remove_transient` is used for explicit cleanup (e.g. after a migration is
+  accepted) so stale entries do not linger until auto-eviction.
+- `clear_approvals` removes `MilestoneApprovals` entries after a successful
+  milestone release.
 - The fail-closed design means a `None` from `read_if_live` always blocks the
   dependent operation, regardless of whether the entry expired or was never
   created.
+- **No persistent key** has TTL bumping on read except `Contract(u32)`,
+  `(Contract(u32), "milestones")`, and `NextContractId`. See
+  [state-persistence.md](./state-persistence.md#security-notes) for the full
+  list and associated risks.
 
 ## Testing
 
@@ -128,6 +143,7 @@ auto-eviction.
 ## Reviewer Checklist
 
 1. Every new transient key has an entry in the table above.
-2. Every write uses `ttl::store_with_ttl` (no direct `.temporary().set` bypass).
+2. Every write uses `ttl::store_with_ttl` (no direct `.temporary().set` bypass) — unless there is a documented reason (as with `MilestoneApprovals`).
 3. Every read path uses `ttl::read_if_live` and handles `None` as "absent or expired".
 4. A corresponding TTL test exists when a new transient key is introduced.
+5. Every new persistent key is documented in [state-persistence.md](./state-persistence.md) with tier, value type, and TTL policy.

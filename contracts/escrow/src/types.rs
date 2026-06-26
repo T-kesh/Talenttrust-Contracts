@@ -48,35 +48,89 @@ pub struct Contract {
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
 
+/// Mapping from every `DataKey` variant to its storage tier, value type, and TTL
+/// behavior. See `docs/escrow/state-persistence.md` for the full reference table.
+///
+/// # Storage tiers
+/// - **Persistent** — `env.storage().persistent()`; TTL managed manually via `extend_ttl`.
+/// - **Temporary** — `env.storage().temporary()`; auto-evicted by Soroban after TTL elapses.
+/// - **Instance** — `env.storage().instance()`; not used by any current variant.
+///
+/// # TTL constants (from `crate::ttl`)
+/// - `PERSISTENT_TTL_LEDGERS` = 30 d, `PERSISTENT_BUMP_THRESHOLD` = 7 d
+/// - `PENDING_APPROVAL_TTL_LEDGERS` = 7 d, `PENDING_APPROVAL_BUMP_THRESHOLD` = 1 d
+/// - `PENDING_MIGRATION_TTL_LEDGERS` = 21 d, `PENDING_MIGRATION_BUMP_THRESHOLD` = 3 d
+///
+/// # Security
+/// Most persistent keys are never TTL-bumped on read (see "Security Notes" in
+/// `state-persistence.md`). Only `Contract(u32)`, its composite milestone key,
+/// `NextContractId`, and `MilestoneApprovals` receive explicit TTL extension.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
-    // Admin / pause / emergency
+    /// Persistent · `bool` · Written by `initialize` · **No TTL bump on access**.
+    /// Guard against double-init.
     Initialized,
+    /// Persistent · `Address` · Written by `initialize`, `accept_governance_admin` · **No TTL bump on access**.
+    /// The operational admin address for governance operations.
     Admin,
+    /// Persistent · `bool` · Written by `pause`, `unpause`, emergency controls · **No TTL bump on access**.
     Paused,
+    /// Persistent · `bool` · Written by `activate_emergency_pause`, `resolve_emergency` · **No TTL bump on access**.
+    /// Indicates the contract is in emergency lockdown.
     Emergency,
     // Contract storage
+    /// Persistent · `Contract` · Written by create/deposit/release/refund/cancel/migration · **Bumped on every access** (30 d).
+    /// The primary escrow contract record. Milestones stored under composite key `(Contract(id), "milestones")`.
     Contract(u32),
+    /// Persistent · `u32` · Written by `create_contract`, `bump_next_contract_id` · **Bumped on every write** (30 d).
+    /// Monotonically incrementing counter for contract ID allocation.
     NextContractId,
+    /// Persistent · `bool` · **Not written** after Milestone.released field became canonical.
+    /// Legacy variant kept for backward-compatible indexing.
+    MilestoneReleased(u32, u32),
+    /// **Temporary** · `MilestoneApprovals` · Written by `approve_milestone` · TTL = 7 d, bump threshold = 1 d.
+    /// Multi-sig approval tracking. Auto-evicted by Soroban; fail-closed on expiry.
     MilestoneApprovals(u32, u32),
-    // Reputation (keep ReputationIssued for backwards compatibility, but we'll use the field in Contract)
+    // Reputation
+    /// Persistent · `bool` · Written by `issue_reputation` · **No TTL bump on access**.
+    /// Prevents double-issuance per contract.
     ReputationIssued(u32),
+    /// Persistent · `i128` · Written by reputation logic · **No TTL bump on access**.
+    /// Counter of reputation credits awaiting issuance for an address.
     PendingReputationCredits(Address),
+    /// Persistent · `Reputation` · Written by `issue_reputation` · **No TTL bump on access**.
+    /// Aggregate reputation record (completed contracts, ratings).
     Reputation(Address),
     // Client migration
+    /// **Temporary** · `PendingClientMigration` · Written by `propose_client_migration` · TTL = 21 d.
+    /// Pending client transfer request. Cleared on accept via `remove_transient`.
     PendingClientMigration(u32),
     // Protocol / governance
+    /// *(Unused)* — governance uses `DataKey::Admin`.
     GovernanceAdmin,
+    /// *(Unused)* — governance uses `DataKey::PendingAdmin`.
     PendingGovernanceAdmin,
+    /// *(Unused)* — declared but never stored.
     ProtocolParameters,
+    /// Persistent · `u32` · Written by `set_protocol_fee_bps` · **No TTL bump on access**.
+    /// Base-point fee deducted from each milestone release.
     ProtocolFeeBps,
     // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    /// Persistent · `Address` · Written by `propose_governance_admin` · **No TTL bump on access**.
+    /// Cleared on accept. Enables two-step admin transfer.
     PendingAdmin,
+    /// Persistent · `i128` · Written by `release_milestone` (increment) · **No TTL bump on access**.
+    /// Running total of protocol fees collected.
     AccumulatedProtocolFees,
+    /// *(Unused)* — `GovernedParameters` struct is used as a value type but never stored under this key.
     GovernedParameters,
+    /// Persistent · `ReadinessChecklist` · Written by `initialize`, `activate_emergency_pause` · **No TTL bump on access**.
+    /// Bitfield tracking initialization, params, and emergency state for mainnet readiness.
     ReadinessChecklist,
     // Finalization
+    /// Persistent · `FinalizationRecord` · Written by `finalize_contract` · **No TTL bump on access**.
+    /// Immutable close metadata, written once per contract.
     Finalization(u32),
     // Settlement token (SAC)
     SettlementToken,
@@ -114,12 +168,12 @@ pub enum Error {
     ContractIdOverflow = 28,
     EmptyComment = 29,
     CommentTooLong = 30,
-    /// Returned when a checked arithmetic operation would overflow or underflow.
-    ///
-    /// Guards all accounting mutations (`funded_amount`, `released_amount`,
-    /// `refunded_amount`) to ensure deterministic failure instead of silent
-    /// wraparound. Any occurrence indicates a bug or invariant violation.
-    PotentialOverflow = 31,
+    EvidenceTooLong = 31,
+    PotentialOverflow = 32,
+    NotInitialized = 33,
+    ArbiterRequired = 34,
+    InvalidDisputeSplit = 35,
+    AccountingInvariantViolated = 36,
 }
 
 /// Contract lifecycle states
@@ -173,6 +227,14 @@ pub enum DepositMode {
     Incremental = 1,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct Reputation {
+    pub completed_contracts: i128,
+    pub total_rating: i128,
+    pub last_rating: i128,
+}
+
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -204,14 +266,6 @@ pub struct GovernedParameters {
 pub struct PendingAdminProposal {
     pub proposed: Address,
     pub proposed_at_ledger: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq, Default)]
-pub struct Reputation {
-    pub completed_contracts: i128,
-    pub total_rating: i128,
-    pub last_rating: i128,
 }
 
 #[contracttype]
