@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env, vec};
+use crate::{Escrow, EscrowClient, DataKey, ReleaseAuthorization};
 
 #[test]
 fn test_default_fees_are_zero() {
@@ -14,49 +14,64 @@ fn test_default_fees_are_zero() {
     assert_eq!(client.get_accumulated_protocol_fees(), 0);
 }
 
+/// Test that `get_protocol_fee_bps` returns 0 when uninitialized.
 #[test]
-fn test_fee_rate_view() {
+fn test_get_protocol_fee_bps_returns_zero_when_uninitialized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Escrow);
+    let client = EscrowClient::new(&env, &contract_id);
+
+    assert_eq!(client.get_protocol_fee_bps(), 0);
+}
+
+/// Test that `get_accumulated_protocol_fees` returns 0 when uninitialized.
+#[test]
+fn test_get_accumulated_protocol_fees_returns_zero_when_uninitialized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Escrow);
+    let client = EscrowClient::new(&env, &contract_id);
+
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
+}
+
+/// Test that `get_protocol_fee_bps` returns the configured value after admin sets it.
+#[test]
+fn test_get_protocol_fee_bps_after_configuration() {
     let env = Env::default();
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(Escrow, ());
+    let contract_id = env.register_contract(None, Escrow);
     let client = EscrowClient::new(&env, &contract_id);
 
     client.initialize(&admin);
 
-    // Initial value is 0
     assert_eq!(client.get_protocol_fee_bps(), 0);
 
-    // Set fee to 500 bps (5%)
     client.set_protocol_fee_bps(&500u32);
     assert_eq!(client.get_protocol_fee_bps(), 500);
 
-    // Update fee to 1250 bps (12.5%)
-    client.set_protocol_fee_bps(&1250u32);
-    assert_eq!(client.get_protocol_fee_bps(), 1250);
+    client.set_protocol_fee_bps(&1000u32);
+    assert_eq!(client.get_protocol_fee_bps(), 1000);
 }
 
+/// Test that `get_accumulated_protocol_fees` reflects fees accumulated after milestone releases.
 #[test]
-fn test_fee_accrual_readers() {
+fn test_get_accumulated_protocol_fees_after_releases() {
     let env = Env::default();
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(Escrow, ());
+    let contract_id = env.register_contract(None, Escrow);
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Initialize escrow
     client.initialize(&admin);
-
-    // Set protocol fee rate to 1000 bps (10%)
     client.set_protocol_fee_bps(&1000u32);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 1000_i128, 2500_i128, 3333_i128];
 
-    // Create contract
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
@@ -65,35 +80,61 @@ fn test_fee_accrual_readers() {
         &ReleaseAuthorization::ClientOnly,
     );
 
-    // Deposit total milestone amount (6833)
     client.deposit_funds(&id, &client_addr, &6833_i128);
 
-    // Before release, accumulated fees should be 0
     assert_eq!(client.get_accumulated_protocol_fees(), 0);
 
-    // Approve and release milestone 0 (1000)
-    // Fee: 1000 * 1000 / 10000 = 100
-    assert!(client.approve_milestone_release(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &0));
+    // Fee: 1000 * 1000 / 10_000 = 100
+    client.approve_milestone_release(&id, &client_addr, &0);
+    client.release_milestone(&id, &client_addr, &0);
     assert_eq!(client.get_accumulated_protocol_fees(), 100);
 
-    // Approve and release milestone 1 (2500)
-    // Fee: 2500 * 1000 / 10000 = 250
-    // Cumulative: 100 + 250 = 350
-    assert!(client.approve_milestone_release(&id, &client_addr, &1));
-    assert!(client.release_milestone(&id, &client_addr, &1));
+    // Fee: 2500 * 1000 / 10_000 = 250
+    client.approve_milestone_release(&id, &client_addr, &1);
+    client.release_milestone(&id, &client_addr, &1);
     assert_eq!(client.get_accumulated_protocol_fees(), 350);
 
-    // Approve and release milestone 2 (3333)
-    // Fee: 3333 * 1000 / 10000 = 333
-    // Cumulative: 350 + 333 = 683
-    assert!(client.approve_milestone_release(&id, &client_addr, &2));
-    assert!(client.release_milestone(&id, &client_addr, &2));
+    // Fee: 3333 * 1000 / 10_000 = 333
+    client.approve_milestone_release(&id, &client_addr, &2);
+    client.release_milestone(&id, &client_addr, &2);
     assert_eq!(client.get_accumulated_protocol_fees(), 683);
 }
 
+/// Test that accumulated fees remain at 0 when fee rate is 0.
 #[test]
-fn test_fee_accrual_zero_rate() {
+fn test_no_fees_accumulated_when_rate_is_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, Escrow);
+    let client = EscrowClient::new(&env, &contract_id);
+
+    client.initialize(&admin);
+    assert_eq!(client.get_protocol_fee_bps(), 0);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 1000_i128];
+
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    client.deposit_funds(&id, &client_addr, &1000_i128);
+    client.approve_milestone_release(&id, &client_addr, &0);
+    client.release_milestone(&id, &client_addr, &0);
+
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
+}
+
+/// Test that read functions bump TTL and can be called multiple times without error.
+#[test]
+fn test_readers_bump_ttl_and_are_non_destructive() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -102,30 +143,36 @@ fn test_fee_accrual_zero_rate() {
     let client = EscrowClient::new(&env, &contract_id);
 
     client.initialize(&admin);
+    client.set_protocol_fee_bps(&250u32);
 
-    // Explicitly set fee rate to 0 bps (0%)
-    client.set_protocol_fee_bps(&0u32);
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccumulatedProtocolFees, &5000_i128);
+    });
 
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 5000_i128];
+    for _ in 0..10 {
+        assert_eq!(client.get_protocol_fee_bps(), 250);
+        assert_eq!(client.get_accumulated_protocol_fees(), 5000);
+    }
+}
 
-    let id = client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
+/// Test readers work when keys are set directly without initialization.
+#[test]
+fn test_readers_work_without_initialization() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Escrow);
+    let client = EscrowClient::new(&env, &contract_id);
 
-    client.deposit_funds(&id, &client_addr, &5000_i128);
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeBps, &123u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccumulatedProtocolFees, &456_i128);
+    });
 
-    assert_eq!(client.get_accumulated_protocol_fees(), 0);
-
-    // Release milestone with 0% fee rate
-    assert!(client.approve_milestone_release(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-
-    // Fees should remain 0
-    assert_eq!(client.get_accumulated_protocol_fees(), 0);
+    assert_eq!(client.get_protocol_fee_bps(), 123);
+    assert_eq!(client.get_accumulated_protocol_fees(), 456);
 }

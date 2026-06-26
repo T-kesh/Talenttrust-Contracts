@@ -446,6 +446,59 @@ impl Escrow {
     }
 
     // -----------------------------------------------------------------------
+    // Protocol fee readers
+    // -----------------------------------------------------------------------
+
+    /// Returns the current protocol fee rate in basis points (0–10 000).
+    ///
+    /// The value is written by [`set_protocol_fee_bps`] and read at milestone
+    /// release time to calculate the fee deducted from each payment.
+    ///
+    /// No authentication required — this is a read-only view function.
+    /// Bumps the persistent TTL on access so dashboards polling at low
+    /// frequency cannot inadvertently let the entry expire.
+    ///
+    /// Returns `0` when no fee rate has been configured (i.e. the entry has
+    /// never been written or the contract has not been initialized).
+    pub fn get_protocol_fee_bps(env: Env) -> u32 {
+        let key = DataKey::ProtocolFeeBps;
+        let bps: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                ttl::PERSISTENT_BUMP_THRESHOLD,
+                ttl::PERSISTENT_TTL_LEDGERS,
+            );
+        }
+        bps
+    }
+
+    /// Returns the total protocol fees accumulated across all released
+    /// milestones since the contract was last initialized, in the contract's
+    /// native token stroops.
+    ///
+    /// The value is incremented in [`release_milestone`] and decremented by
+    /// [`withdraw_protocol_fees`].  It is denominated in the same unit as
+    /// milestone amounts (i128 stroops).
+    ///
+    /// No authentication required — this is a read-only view function.
+    /// Bumps the persistent TTL on access.
+    ///
+    /// Returns `0` when no fees have been accumulated yet.
+    pub fn get_accumulated_protocol_fees(env: Env) -> i128 {
+        let key = DataKey::AccumulatedProtocolFees;
+        let fees: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                ttl::PERSISTENT_BUMP_THRESHOLD,
+                ttl::PERSISTENT_TTL_LEDGERS,
+            );
+        }
+        fees
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 

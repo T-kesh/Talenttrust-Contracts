@@ -12,6 +12,7 @@ mod emergency_controls;
 mod pause_controls;
 mod persistence;
 mod protocol_fees;
+mod reputation;
 mod release_authorization;
 mod reputation;
 
