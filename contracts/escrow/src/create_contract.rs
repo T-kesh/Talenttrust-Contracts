@@ -27,15 +27,7 @@ impl Escrow {
     /// * `InvalidArbiter` - If arbiter is same as client or freelancer
     /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
     /// * `ContractIdCollision` - If the allocated id slot is already occupied
-    pub fn create_contract(
-        env: Env,
-        client: Address,
-        freelancer: Address,
-        arbiter: Option<Address>,
-        milestones: Vec<i128>,
-        release_authorization: ReleaseAuthorization,
-    ) -> u32 {
-        Self::require_not_paused(&env);
+
         client.require_auth();
 
         if client == freelancer {
