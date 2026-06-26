@@ -11,10 +11,15 @@ mod client_migration;
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
-mod protocol_fees;
+mod participant_index_pagination;
 mod reputation;
+
+mod pagination_participant_index;
+
 mod release_authorization;
-mod reputation;
+
+mod client_migration;
+
 
 // --- Shared constants ---
 

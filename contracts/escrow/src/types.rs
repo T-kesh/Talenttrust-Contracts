@@ -92,6 +92,9 @@ pub enum DataKey {
     NextContractId,
     MilestoneReleased(u32, u32),
     MilestoneApprovals(u32, u32),
+    // Participant indexer (append-only contract id lists)
+    ClientContracts(Address),
+    FreelancerContracts(Address),
     // Reputation
     ReputationIssued(u32),
     PendingReputationCredits(Address),
@@ -110,6 +113,37 @@ pub enum DataKey {
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
+}
+
+
+/// Canonical contract error type for all entrypoint-facing errors.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
 }
 
 #[contracttype]

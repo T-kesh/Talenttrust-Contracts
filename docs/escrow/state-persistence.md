@@ -7,6 +7,11 @@ declared-but-unused keys, is tracked in
 
 ## Live Storage Keys
 
+These participant indexes are **append-only**: every `create_contract` appends the new id to the appropriate index vectors.
+The contract list readers (`list_contracts_by_participant`) are therefore consistent with contract creation order.
+
+
+
 | Key | Value | Written by |
 | --- | --- | --- |
 | `Initialized` | `bool` | `initialize` |
@@ -21,6 +26,8 @@ declared-but-unused keys, is tracked in
 | `Reputation(address)` | `ReputationRecord` | `issue_reputation` |
 | `Finalization(id)` | `FinalizationRecord` | `finalize_contract` |
 | `ReadinessChecklist` | `ReadinessChecklist` | initialize and emergency controls |
+| `ClientContracts(address)` | `Vec<u32>` | create_contract |
+| `FreelancerContracts(address)` | `Vec<u32>` | create_contract |
 
 ## Declared But Not Live
 

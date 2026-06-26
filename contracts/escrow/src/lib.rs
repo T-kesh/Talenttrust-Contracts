@@ -456,6 +456,9 @@ impl Escrow {
 
         let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
         let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+        if pending <= 0 {
+            env.panic_with_error(EscrowError::InvalidState);
+        }
         env.storage().persistent().set(&pending_key, &(pending - 1));
 
         let rep_key = DataKey::Reputation(contract.freelancer.clone());
@@ -480,6 +483,64 @@ impl Escrow {
             .persistent()
             .get(&DataKey::PendingReputationCredits(address))
             .unwrap_or(0)
+    }
+
+    /// Returns a bounded page of contract ids that the given `participant` is involved in.
+    ///
+    /// This is an efficient alternative to client-side scanning of all contract ids.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `participant` - Address to list contracts for
+    /// * `role` - 0 => `participant` is the client, 1 => `participant` is the freelancer
+    /// * `start` - 0-based start index into the participant's id list
+    /// * `limit` - maximum number of ids to return (capped by an internal maximum)
+    ///
+    /// # Returns
+    /// A vector of contract ids in creation order.
+    ///
+    /// # Security
+    /// - Read-only: does not mutate storage.
+    /// - Limit-bounded to prevent unbounded reads.
+    pub fn list_contracts_by_participant(
+        env: Env,
+        participant: Address,
+        role: u8,
+        start: u32,
+        limit: u32,
+    ) -> Vec<u32> {
+        // Hard cap to avoid unbounded reads.
+        const MAX_LIMIT: u32 = 50;
+
+        if limit == 0 {
+            return Vec::new(&env);
+        }
+
+        let effective_limit = if limit > MAX_LIMIT { MAX_LIMIT } else { limit };
+
+        let key = match role {
+            0 => DataKey::ClientContracts(participant),
+            1 => DataKey::FreelancerContracts(participant),
+            _ => env.panic_with_error(Error::InvalidParticipants),
+        };
+
+        let ids: Vec<u32> = env.storage().persistent().get(&key).unwrap_or(Vec::new(&env));
+        let total: u32 = ids.len();
+
+        if start >= total {
+            return Vec::new(&env);
+        }
+
+        let end_exclusive = core::cmp::min(start.saturating_add(effective_limit), total);
+        let mut page: Vec<u32> = Vec::new(&env);
+        let mut i: u32 = start;
+
+        while i < end_exclusive {
+            page.push_back(ids.get(i).unwrap());
+            i += 1;
+        }
+
+        page
     }
 
     // -----------------------------------------------------------------------
@@ -550,6 +611,7 @@ impl Escrow {
         }
     }
 }
+
 
 #[cfg(test)]
 mod test;
