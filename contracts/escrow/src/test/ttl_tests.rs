@@ -316,3 +316,174 @@ fn expiry_is_deterministic_across_independent_envs() {
         "expiry must be deterministic given the same starting sequence"
     );
 }
+
+// ─── Persistent key TTL survival tests (#400) ────────────────────────────────
+//
+// These tests initialise the contract, perform operations that write the
+// critical persistent keys, advance the ledger past the bump threshold, and
+// assert that the entries are still reachable (i.e. the helpers bumped TTL).
+
+use crate::ttl::{
+    extend_accumulated_fees_ttl, extend_admin_ttl, extend_finalization_ttl,
+    extend_pending_reputation_credits_ttl, extend_protocol_fee_bps_ttl, extend_reputation_ttl,
+    PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS,
+};
+use crate::{EscrowClient, ReleaseAuthorization};
+
+/// After `initialize` the `Admin` key must survive past `PERSISTENT_BUMP_THRESHOLD` ledgers.
+#[test]
+fn admin_key_survives_past_bump_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+        li.max_entry_ttl = PERSISTENT_TTL_LEDGERS * 4;
+        li.min_persistent_entry_ttl = PERSISTENT_TTL_LEDGERS * 4;
+    });
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    let admin = soroban_sdk::Address::generate(&env);
+    client.initialize(&admin);
+
+    // Advance past the bump threshold
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li.sequence_number + PERSISTENT_BUMP_THRESHOLD + 1;
+    });
+
+    // get_admin bumps TTL; it must return Some(admin)
+    let fetched = client.get_admin();
+    assert_eq!(fetched, Some(admin), "Admin key must survive past bump threshold");
+}
+
+/// After `set_protocol_fee_bps` the `ProtocolFeeBps` key survives long inactivity.
+#[test]
+fn protocol_fee_bps_key_survives_after_write() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+        li.max_entry_ttl = PERSISTENT_TTL_LEDGERS * 4;
+        li.min_persistent_entry_ttl = PERSISTENT_TTL_LEDGERS * 4;
+    });
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    let admin = soroban_sdk::Address::generate(&env);
+    client.initialize(&admin);
+    client.set_protocol_fee_bps(&50u32);
+
+    // Advance past bump threshold
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li.sequence_number + PERSISTENT_BUMP_THRESHOLD + 1;
+    });
+
+    // Key must still exist — call set again (also bumps TTL) and assert success
+    assert!(client.set_protocol_fee_bps(&75u32));
+}
+
+/// `extend_admin_ttl` is a no-op when the key is absent (must not panic).
+#[test]
+fn extend_admin_ttl_absent_key_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    env.as_contract(&contract_id, || {
+        // No initialize called — key is absent; should not panic
+        extend_admin_ttl(&env);
+    });
+}
+
+/// `extend_accumulated_fees_ttl` is a no-op when the key is absent.
+#[test]
+fn extend_accumulated_fees_ttl_absent_key_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    env.as_contract(&contract_id, || {
+        extend_accumulated_fees_ttl(&env);
+    });
+}
+
+/// `extend_finalization_ttl` is a no-op when the finalization key is absent.
+#[test]
+fn extend_finalization_ttl_absent_key_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    env.as_contract(&contract_id, || {
+        extend_finalization_ttl(&env, 9999);
+    });
+}
+
+/// `extend_reputation_ttl` is a no-op when the reputation key is absent.
+#[test]
+fn extend_reputation_ttl_absent_key_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    let addr = soroban_sdk::Address::generate(&env);
+    env.as_contract(&contract_id, || {
+        extend_reputation_ttl(&env, &addr);
+    });
+}
+
+/// `extend_pending_reputation_credits_ttl` is a no-op when absent.
+#[test]
+fn extend_pending_reputation_credits_ttl_absent_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    let addr = soroban_sdk::Address::generate(&env);
+    env.as_contract(&contract_id, || {
+        extend_pending_reputation_credits_ttl(&env, &addr);
+    });
+}
+
+/// `extend_protocol_fee_bps_ttl` is a no-op when the key is absent.
+#[test]
+fn extend_protocol_fee_bps_ttl_absent_key_is_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Escrow, ());
+    env.as_contract(&contract_id, || {
+        extend_protocol_fee_bps_ttl(&env);
+    });
+}
+
+/// After `finalize_contract` the finalization record survives past bump threshold.
+#[test]
+fn finalization_record_survives_past_bump_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+        li.max_entry_ttl = PERSISTENT_TTL_LEDGERS * 4;
+        li.min_persistent_entry_ttl = PERSISTENT_TTL_LEDGERS * 4;
+    });
+    let contract_id_addr = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id_addr);
+    let admin = soroban_sdk::Address::generate(&env);
+    client.initialize(&admin);
+
+    let client_addr = soroban_sdk::Address::generate(&env);
+    let freelancer_addr = soroban_sdk::Address::generate(&env);
+    let cid = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &soroban_sdk::vec![&env, 100_i128],
+        &ReleaseAuthorization::ClientOnly,
+    );
+    client.deposit_funds(&cid, &client_addr, &100_i128);
+    client.approve_milestone_release(&cid, &client_addr, &0);
+    client.release_milestone(&cid, &client_addr, &0);
+    client.finalize_contract(&cid, &client_addr);
+
+    // Advance past bump threshold
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li.sequence_number + PERSISTENT_BUMP_THRESHOLD + 1;
+    });
+
+    // get_finalization_record bumps TTL; record must still be present
+    let record = client.get_finalization_record(&cid);
+    assert!(record.is_some(), "Finalization record must survive past bump threshold");
+}

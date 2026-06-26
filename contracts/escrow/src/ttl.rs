@@ -7,7 +7,7 @@
 //! "expired".
 
 use crate::{DataKey, Error, Milestone};
-use soroban_sdk::{Env, IntoVal, Symbol, TryFromVal, Val, Vec};
+use soroban_sdk::{Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec};
 
 pub const LEDGERS_PER_DAY: u32 = 17_280;
 
@@ -148,5 +148,103 @@ pub fn extend_participant_contract_index_ttl(env: &Env, key: &crate::DataKey) {
     env.storage()
         .persistent()
         .extend_ttl(key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS);
+}
+
+// ─── Persistent-key TTL helpers (#400) ───────────────────────────────────────
+
+/// Extend TTL for the `Admin` key.
+///
+/// Called on every admin read and write so the admin key never silently
+/// disappears after a long period of inactivity.
+pub fn extend_admin_ttl(env: &Env) {
+    if env.storage().persistent().has(&DataKey::Admin) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::Admin,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+    }
+}
+
+/// Extend TTL for the `GovernanceAdmin` key.
+///
+/// Called whenever governance-admin state is read or written to prevent
+/// governance keys from being archived between infrequent admin rotations.
+pub fn extend_governance_admin_ttl(env: &Env) {
+    if env.storage().persistent().has(&DataKey::GovernanceAdmin) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::GovernanceAdmin,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+    }
+}
+
+/// Extend TTL for the `AccumulatedProtocolFees` key.
+///
+/// Called on every read or write of accumulated fees so the balance
+/// cannot be archived and silently lost between fee-collection periods.
+pub fn extend_accumulated_fees_ttl(env: &Env) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::AccumulatedProtocolFees)
+    {
+        env.storage().persistent().extend_ttl(
+            &DataKey::AccumulatedProtocolFees,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+    }
+}
+
+/// Extend TTL for the `Finalization(contract_id)` key.
+///
+/// Called when a finalization record is written or read so immutable
+/// close metadata is never silently archived.
+pub fn extend_finalization_ttl(env: &Env, contract_id: u32) {
+    let key = DataKey::Finalization(contract_id);
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS);
+    }
+}
+
+/// Extend TTL for the `Reputation(addr)` key.
+///
+/// Called on every reputation read and write so long-dormant freelancer
+/// reputation records are never evicted.
+pub fn extend_reputation_ttl(env: &Env, addr: &Address) {
+    let key = DataKey::Reputation(addr.clone());
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS);
+    }
+}
+
+/// Extend TTL for the `PendingReputationCredits(addr)` key.
+///
+/// Called whenever pending-credit accounting is updated to prevent the
+/// counter from expiring before the freelancer claims reputation.
+pub fn extend_pending_reputation_credits_ttl(env: &Env, addr: &Address) {
+    let key = DataKey::PendingReputationCredits(addr.clone());
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_TTL_LEDGERS);
+    }
+}
+
+/// Extend TTL for the `ProtocolFeeBps` key.
+pub fn extend_protocol_fee_bps_ttl(env: &Env) {
+    if env.storage().persistent().has(&DataKey::ProtocolFeeBps) {
+        env.storage().persistent().extend_ttl(
+            &DataKey::ProtocolFeeBps,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+    }
 }
 

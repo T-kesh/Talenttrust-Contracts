@@ -160,6 +160,8 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
         .persistent()
         .set(&Escrow::finalization_key(contract_id), &record);
 
+    crate::ttl::extend_finalization_ttl(&env, contract_id);
+
     env.events().publish(
         (symbol_short!("finalized"), contract_id),
         (finalizer, record.timestamp),
@@ -170,6 +172,7 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
 
 /// Return immutable close metadata for `contract_id`, if it has been finalized.
 pub fn get_finalization_record_impl(env: &Env, contract_id: u32) -> Option<FinalizationRecord> {
+    crate::ttl::extend_finalization_ttl(env, contract_id);
     env.storage()
         .persistent()
         .get(&Escrow::finalization_key(contract_id))
