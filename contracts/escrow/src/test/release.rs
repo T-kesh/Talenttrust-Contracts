@@ -175,7 +175,7 @@ fn work_evidence_rejects_non_freelancer_caller() {
     let ev = evidence(&env, "ipfs://QmTest");
     // client is not the freelancer
     let result = escrow.try_submit_work_evidence(&contract_id, &client_addr, &0, &ev);
-    assert_contract_error(result, Error::UnauthorizedRole);
+    assert_contract_error(result, Error::FreelancerMismatch);
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn work_evidence_rejects_stranger() {
     let stranger = Address::generate(&env);
     let ev = evidence(&env, "ipfs://QmTest");
     let result = escrow.try_submit_work_evidence(&contract_id, &stranger, &0, &ev);
-    assert_contract_error(result, Error::UnauthorizedRole);
+    assert_contract_error(result, Error::FreelancerMismatch);
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn work_evidence_rejects_out_of_bounds_index() {
 
     let ev = evidence(&env, "ipfs://QmTest");
     let result = escrow.try_submit_work_evidence(&contract_id, &freelancer_addr, &99, &ev);
-    assert_contract_error(result, Error::IndexOutOfBounds);
+    assert_contract_error(result, Error::MilestoneNotFound);
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn work_evidence_rejects_oversized_string() {
     // 257 chars > 256-byte limit
     let ev = String::from_str(&env, &"a".repeat(257));
     let result = escrow.try_submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev);
-    assert_contract_error(result, EscrowError::EvidenceTooLong);
+    assert_contract_error(result, Error::EvidenceTooLong);
 }
 
 #[test]

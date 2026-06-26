@@ -92,6 +92,8 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
+    MilestoneNotFound = 31,
+    EvidenceTooLong = 32,
 }
 
 
@@ -1009,7 +1011,7 @@ impl Escrow {
     ///
     /// # Arguments
     /// * `contract_id` - The escrow contract to update
-    /// * `caller`      - Must equal the stored `freelancer`; requires auth
+    /// * `freelancer`  - Must equal the stored freelancer; requires auth
     /// * `milestone_index` - Zero-based index of the milestone
     /// * `evidence`    - Deliverable reference; max 256 bytes
     ///
@@ -1017,21 +1019,21 @@ impl Escrow {
     /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
     /// * `ContractNotFound`   — unknown `contract_id`
     /// * `AlreadyFinalized`   — contract has been finalized
-    /// * `UnauthorizedRole`   — `caller` is not the freelancer
+    /// * `FreelancerMismatch` — `freelancer` does not match the stored freelancer
     /// * `InvalidState`       — contract is not `Funded`
-    /// * `IndexOutOfBounds`   — `milestone_index` exceeds milestone count
+    /// * `MilestoneNotFound`  — `milestone_index` exceeds milestone count
     /// * `MilestoneAlreadyReleased` — milestone is already released
     /// * `AlreadyRefunded`    — milestone has been refunded
     /// * `EvidenceTooLong`    — evidence string exceeds 256 bytes
     pub fn submit_work_evidence(
         env: Env,
         contract_id: u32,
-        caller: Address,
+        freelancer: Address,
         milestone_index: u32,
         evidence: String,
     ) -> bool {
         Self::require_not_paused(&env);
-        caller.require_auth();
+        freelancer.require_auth();
 
         let contract: Contract = env
             .storage()
@@ -1042,8 +1044,8 @@ impl Escrow {
         ttl::extend_contract_ttl(&env, contract_id);
         Self::require_not_finalized(&env, contract_id);
 
-        if caller != contract.freelancer {
-            env.panic_with_error(Error::UnauthorizedRole);
+        if freelancer != contract.freelancer {
+            env.panic_with_error(Error::FreelancerMismatch);
         }
 
         if contract.status != ContractStatus::Funded {
@@ -1052,7 +1054,7 @@ impl Escrow {
 
         // Bound evidence to 256 bytes to prevent storage bloat.
         if evidence.len() > 256 {
-            env.panic_with_error(EscrowError::EvidenceTooLong);
+            env.panic_with_error(Error::EvidenceTooLong);
         }
 
         let milestone_key = Symbol::new(&env, "milestones");
@@ -1065,7 +1067,7 @@ impl Escrow {
         ttl::extend_milestone_ttl(&env, contract_id);
 
         if milestone_index >= milestones.len() {
-            env.panic_with_error(Error::IndexOutOfBounds);
+            env.panic_with_error(Error::MilestoneNotFound);
         }
 
         let mut milestone = milestones.get(milestone_index).unwrap();

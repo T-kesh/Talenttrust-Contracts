@@ -180,9 +180,9 @@ Guards applied:
 - `ContractPaused` / `EmergencyActive` — pause/emergency gate.
 - `ContractNotFound` — unknown `contract_id`.
 - `AlreadyFinalized` — contract has been finalized.
-- `UnauthorizedRole` — caller is not the stored freelancer.
+- `FreelancerMismatch` — caller is not the stored freelancer.
 - `InvalidState` — contract is not in `Funded` status.
-- `IndexOutOfBounds` — `milestone_index` exceeds the milestone count.
+- `MilestoneNotFound` — `milestone_index` exceeds the milestone count.
 - `MilestoneAlreadyReleased` — milestone has already been released.
 - `AlreadyRefunded` — milestone has already been refunded.
 - `EvidenceTooLong` — evidence string exceeds 256 bytes.
