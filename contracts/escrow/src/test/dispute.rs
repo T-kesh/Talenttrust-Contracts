@@ -288,3 +288,53 @@ fn pause_blocks_raise_and_resolve_dispute() {
         EscrowError::ContractPaused,
     );
 }
+
+// ── pause / accountability ────────────────────────────────────────────────────
+
+#[test]
+#[should_panic]
+fn pause_blocks_raise_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register(&env);
+    let (client_addr, _, _, id) = funded_with_arbiter(&env, &escrow);
+
+    // Initialise then pause so require_not_paused fires. Note that
+    // raise_dispute and resolve_dispute themselves do not require
+    // initialize — they only require `not_paused`.
+    escrow.initialize(&Address::generate(&env));
+    escrow.pause();
+    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+}
+
+#[test]
+#[should_panic]
+fn pause_blocks_resolve_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register(&env);
+    let (client_addr, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
+    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+
+    escrow.initialize(&Address::generate(&env));
+    escrow.pause();
+    escrow.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::Release);
+}
+
+#[test]
+#[should_panic]
+fn pause_blocks_resolve_dispute_split() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register(&env);
+    let (client_addr, _, arbiter_addr, id) = funded_with_arbiter(&env, &escrow);
+    escrow.raise_dispute(&id, &client_addr, &reason_hash(&env));
+
+    escrow.initialize(&Address::generate(&env));
+    escrow.pause();
+    let split = DisputeSplit {
+        client_amount: 100,
+        freelancer_amount: 200,
+    };
+    escrow.resolve_dispute_split(&id, &arbiter_addr, &split);
+}

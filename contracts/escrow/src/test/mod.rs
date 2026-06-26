@@ -7,7 +7,7 @@ use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
 // --- Submodules ---
 
-mod client_migration;
+mod dispute;
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
