@@ -34,6 +34,8 @@ Read-only queries:
 - `is_paused() -> bool`
 - `is_emergency() -> bool`
 - `get_mainnet_readiness_info() -> MainnetReadinessInfo`
+- `get_protocol_fee_bps() -> u32`
+- `get_accumulated_protocol_fees() -> i128`
 
 Operational controls:
 

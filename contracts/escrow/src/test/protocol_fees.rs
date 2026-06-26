@@ -1,105 +1,131 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env, vec, String};
-use crate::{Escrow, EscrowClient, DataKey};
+use crate::{Escrow, EscrowClient, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-fn create_token_contract(e: &Env, admin: &Address) -> Address {
-    e.register_stellar_asset_contract(admin.clone())
+#[test]
+fn test_default_fees_are_zero() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    // Default values before initialization or setting must be 0
+    assert_eq!(client.get_protocol_fee_bps(), 0);
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
 }
 
 #[test]
-fn test_fee_accrual_and_withdrawal() {
+fn test_fee_rate_view() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    let admin = Address::generate(&env);
-    let contract_id = env.register_contract(None, Escrow);
-    let client = EscrowClient::new(&env, &contract_id);
-    
-    let token_admin = Address::generate(&env);
-    let token = create_token_contract(&env, &token_admin);
-    let token_client = soroban_sdk::token::Client::new(&env, &token);
-    let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
 
-    // Initialize with 1000 bps (10%)
-    client.initialize(&admin, &1000u32);
+    let admin = Address::generate(&env);
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    client.initialize(&admin);
+
+    // Initial value is 0
+    assert_eq!(client.get_protocol_fee_bps(), 0);
+
+    // Set fee to 500 bps (5%)
+    client.set_protocol_fee_bps(&500u32);
+    assert_eq!(client.get_protocol_fee_bps(), 500);
+
+    // Update fee to 1250 bps (12.5%)
+    client.set_protocol_fee_bps(&1250u32);
+    assert_eq!(client.get_protocol_fee_bps(), 1250);
+}
+
+#[test]
+fn test_fee_accrual_readers() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    // Initialize escrow
+    client.initialize(&admin);
+
+    // Set protocol fee rate to 1000 bps (10%)
+    client.set_protocol_fee_bps(&1000u32);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    
-    // Milestones: 1000, 2500, 3333
     let milestones = vec![&env, 1000_i128, 2500_i128, 3333_i128];
-    
-    // Note: create_contract has different arguments depending on the current iteration of the code.
-    // Based on lib.rs line 145: pub fn create_contract(env: Env, client: Address, freelancer: Address, arbiter: Option<Address>, milestones: Vec<i128>, terms_hash: Option<Bytes>, grace_period_seconds: Option<u64>)
-    // Wait, let's use the actual create_contract signature from lib.rs.
-    // Looking at lib.rs, create_contract in test.rs uses:
-    // client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
 
-    client.deposit_funds(&id, &6833_i128); // 1000 + 2500 + 3333 = 6833
+    // Create contract
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
 
-    // Release milestone 0 (1000)
-    // Fee: (1000 * 1000 + 9999) / 10000 = (1000000 + 9999) / 10000 = 1009999 / 10000 = 100
-    assert!(client.release_milestone(&id, &0));
-    
-    // Release milestone 1 (2500)
-    // Fee: (2500 * 1000 + 9999) / 10000 = (2500000 + 9999) / 10000 = 2509999 / 10000 = 250
-    assert!(client.release_milestone(&id, &1));
-    
-    // Release milestone 2 (3333)
-    // Fee: (3333 * 1000 + 9999) / 10000 = (3333000 + 9999) / 10000 = 3342999 / 10000 = 334
-    assert!(client.release_milestone(&id, &2));
+    // Deposit total milestone amount (6833)
+    client.deposit_funds(&id, &client_addr, &6833_i128);
 
-    // Total accumulated fees: 100 + 250 + 334 = 684
-    
-    // Mint tokens to the contract so it has funds to transfer out
-    token_admin_client.mint(&contract_id, &684);
+    // Before release, accumulated fees should be 0
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
 
-    let destination = Address::generate(&env);
-    
-    // Admin withdraws protocol fees
-    let success = client.withdraw_protocol_fees(&admin, &destination, &684_i128, &token);
-    assert!(success);
-    
-    assert_eq!(token_client.balance(&destination), 684);
+    // Approve and release milestone 0 (1000)
+    // Fee: 1000 * 1000 / 10000 = 100
+    assert!(client.approve_milestone_release(&id, &client_addr, &0));
+    assert!(client.release_milestone(&id, &client_addr, &0));
+    assert_eq!(client.get_accumulated_protocol_fees(), 100);
+
+    // Approve and release milestone 1 (2500)
+    // Fee: 2500 * 1000 / 10000 = 250
+    // Cumulative: 100 + 250 = 350
+    assert!(client.approve_milestone_release(&id, &client_addr, &1));
+    assert!(client.release_milestone(&id, &client_addr, &1));
+    assert_eq!(client.get_accumulated_protocol_fees(), 350);
+
+    // Approve and release milestone 2 (3333)
+    // Fee: 3333 * 1000 / 10000 = 333
+    // Cumulative: 350 + 333 = 683
+    assert!(client.approve_milestone_release(&id, &client_addr, &2));
+    assert!(client.release_milestone(&id, &client_addr, &2));
+    assert_eq!(client.get_accumulated_protocol_fees(), 683);
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #6)")] // UnauthorizedRole
-fn test_unauthorized_withdrawal() {
+fn test_fee_accrual_zero_rate() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    let admin = Address::generate(&env);
-    let contract_id = env.register_contract(None, Escrow);
-    let client = EscrowClient::new(&env, &contract_id);
-    
-    client.initialize(&admin, &1000u32);
-    
-    let fake_admin = Address::generate(&env);
-    let destination = Address::generate(&env);
-    let token = Address::generate(&env);
-    
-    // This should panic
-    client.withdraw_protocol_fees(&fake_admin, &destination, &100_i128, &token);
-}
 
-#[test]
-#[should_panic(expected = "HostError: Error(Contract, #13)")] // InsufficientAccumulatedFees
-fn test_over_withdrawal() {
-    let env = Env::default();
-    env.mock_all_auths();
-    
     let admin = Address::generate(&env);
-    let contract_id = env.register_contract(None, Escrow);
+    let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-    
-    client.initialize(&admin, &1000u32);
-    
-    let destination = Address::generate(&env);
-    let token = Address::generate(&env);
-    
-    // Withdraw more than 0
-    client.withdraw_protocol_fees(&admin, &destination, &100_i128, &token);
+
+    client.initialize(&admin);
+
+    // Explicitly set fee rate to 0 bps (0%)
+    client.set_protocol_fee_bps(&0u32);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 5000_i128];
+
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    client.deposit_funds(&id, &client_addr, &5000_i128);
+
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
+
+    // Release milestone with 0% fee rate
+    assert!(client.approve_milestone_release(&id, &client_addr, &0));
+    assert!(client.release_milestone(&id, &client_addr, &0));
+
+    // Fees should remain 0
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
 }

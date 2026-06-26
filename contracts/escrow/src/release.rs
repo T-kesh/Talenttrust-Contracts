@@ -166,7 +166,7 @@ fn is_initialized(env: &Env) -> bool {
 }
 
 /// Returns the protocol fee in basis points.
-fn get_protocol_fee_bps(env: &Env) -> u32 {
+pub(crate) fn get_protocol_fee_bps(env: &Env) -> u32 {
     env.storage()
         .persistent()
         .get::<_, u32>(&DataKey::ProtocolFeeBps)
