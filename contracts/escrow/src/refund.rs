@@ -1,7 +1,7 @@
 use crate::{
     ttl, Contract, ContractStatus, DataKey, Error, Escrow,
 };
-use soroban_sdk::{contractimpl, Env, Vec};
+use soroban_sdk::{contractimpl, symbol_short, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
@@ -105,6 +105,15 @@ impl Escrow {
             .set(&DataKey::Contract(contract_id), &contract);
 
         ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("refund"), contract_id),
+            (
+                total_refund_amount,
+                contract.refunded_amount,
+                env.ledger().timestamp(),
+            ),
+        );
 
         total_refund_amount
     }

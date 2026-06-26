@@ -40,10 +40,31 @@ fn register(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
     EscrowClient::new(env, &id)
 }
-
 fn assert_contract_error<T, E>(
     result: Result<
         Result<T, soroban_sdk::ConversionError>,
+        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
+    >,
+    expected: E,
+) where
+    E: Into<soroban_sdk::Error> + core::fmt::Debug,
+{
+    match result {
+        Err(Ok(e)) => {
+            let expected_err: soroban_sdk::Error = expected.into();
+            assert_eq!(e, expected_err, "contract error code mismatch");
+        }
+        _other => panic!(
+            "expected contract error {:?}, got unexpected result variant",
+            expected
+        ),
+    }
+}
+
+// Helper that accepts i128-returning try_* calls (like refund_unreleased_milestones)
+fn assert_contract_error_i128<E>(
+    result: Result<
+        Result<i128, soroban_sdk::Error>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
     >,
     expected: E,
@@ -80,7 +101,7 @@ fn create_contract_with_mode(
     )
 }
 
-fn fund_contract(env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
+fn fund_contract(_env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
     let milestones = client.get_milestones(contract_id);
     let total: i128 = milestones.iter().map(|m| m.amount).sum();
     let contract = client.get_contract(contract_id);
@@ -688,18 +709,21 @@ fn release_emits_events() {
     client.release_milestone(&contract_id, &client_addr, &0);
 
     // Check release event was emitted
-    let events = env.events().all();
-    assert!(events.len() > 0);
+    let events = soroban_sdk::testutils::Events::all(&env.events());
+    assert!(!events.is_empty());
 
-    // Find the release event
-    let release_topic = soroban_sdk::Symbol::new(&env, "milestone_released");
-    let release_event = events.iter().find(|event| {
-        event.1.len() > 0
-            && soroban_sdk::Symbol::try_from_val(&env, &event.1.get(0).unwrap())
-                .ok()
-                .as_ref()
-                == Some(&release_topic)
-    });
+    // Find the release event (first topic is Symbol at topics[0])
+    let release_event = events
+        .iter()
+        .find(|event| {
+            let topics = &event.1;
+            if topics.is_empty() {
+                return false;
+            }
+            let val = topics.get(0).unwrap();
+            <soroban_sdk::Symbol as soroban_sdk::TryFromVal<soroban_sdk::Env, soroban_sdk::Val>>::try_from_val(&env, &val)
+                .is_ok_and(|s| s == soroban_sdk::Symbol::new(&env, "milestone_released"))
+        });
     assert!(release_event.is_some());
 }
 
@@ -728,7 +752,6 @@ fn rejects_double_release_and_completes_contract() {
     assert_contract_error(result, Error::MilestoneAlreadyReleased);
 
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
-    assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let contract = client.get_contract(&contract_id);
     assert_eq!(contract.status, ContractStatus::Completed);
@@ -757,16 +780,11 @@ fn rejects_refund_after_release_and_release_after_refund() {
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     let refund_ids = vec![&env, 0_u32];
     let refund_result = client.try_refund_unreleased_milestones(&contract_id, &refund_ids);
-    match refund_result {
-        Err(Ok(e)) => {
-            let expected: soroban_sdk::Error = Error::AlreadyReleased.into();
-            assert_eq!(e, expected);
-        }
-        _ => panic!("expected AlreadyReleased error"),
-    }
+    assert_contract_error_i128(refund_result, Error::AlreadyReleased);
 
     let refund_ids = vec![&env, 1_u32];
-    let _refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);
+    let refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);
+    assert!(refunded > 0);
 
     let result = client.try_release_milestone(&contract_id, &client_addr, &1);
     assert_contract_error(result, Error::AlreadyRefunded);

@@ -1,5 +1,7 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Escrow};
-use soroban_sdk::{contractimpl, Address, Env};
+use crate::{
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
+};
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
@@ -24,6 +26,12 @@ impl Escrow {
         if amount <= 0 {
             env.panic_with_error(Error::AmountMustBePositive);
         }
+
+        // Reject if paused or emergency is active (must run before loading
+        // contract data so that unauthorised callers also get the same error).
+        Self::require_not_paused(&env);
+
+        Self::require_not_finalized(&env, contract_id);
 
         let mut contract: Contract = env
             .storage()
@@ -52,13 +60,9 @@ impl Escrow {
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-        if contract.funded_amount > total_amount {
-            env.panic_with_error(Error::InvalidDepositAmount);
-        }
-
         if contract.funded_amount >= total_amount {
             contract.status = ContractStatus::Funded;
-        } else {
+        } else if contract.funded_amount > 0 {
             contract.status = ContractStatus::PartiallyFunded;
         }
 
@@ -67,6 +71,16 @@ impl Escrow {
             .set(&DataKey::Contract(contract_id), &contract);
 
         ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("deposit"), contract_id),
+            (
+                caller,
+                amount,
+                contract.funded_amount,
+                env.ledger().timestamp(),
+            ),
+        );
 
         true
     }

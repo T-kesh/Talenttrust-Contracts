@@ -3,7 +3,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
 
 // --- Submodules ---
 
@@ -116,4 +116,37 @@ pub fn assert_contract_error<T, ConvErr, E: Into<soroban_sdk::Error> + core::fmt
             expected
         ),
     }
+}
+
+/// Assert that an i128-returning try_* call (e.g. try_refund_unreleased_milestones)
+/// returned the expected error.
+pub fn assert_contract_error_i128<E: Into<soroban_sdk::Error> + core::fmt::Debug>(
+    result: Result<
+        Result<i128, soroban_sdk::Error>,
+        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
+    >,
+    expected: E,
+) {
+    match result {
+        Err(Ok(e)) => {
+            let expected_err: soroban_sdk::Error = expected.into();
+            assert_eq!(e, expected_err, "contract error code mismatch");
+        }
+        _other => panic!(
+            "expected contract error {:?}, got unexpected result variant",
+            expected
+        ),
+    }
+}
+
+/// Helper: forcibly inject a contract status via env.as_contract.
+pub fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: ContractStatus) {
+    use crate::{Contract as EscrowContract, DataKey};
+    env.as_contract(escrow_addr, || {
+        let key = DataKey::Contract(id);
+        let _contract: EscrowContract = env.storage().persistent().get(&key).unwrap();
+        let mut contract: crate::Contract = env.storage().persistent().get(&key).unwrap();
+        contract.status = status;
+        env.storage().persistent().set(&key, &contract);
+    });
 }

@@ -82,19 +82,9 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    AmountMustBePositive = 37,
-    CannotProposeSelf = 25,
-    NoPendingAdminProposal = 26,
+    PotentialOverflow = 25,
+    AccountingInvariantViolated = 26,
     AlreadyFinalized = 27,
-    PotentialOverflow = 28,
-    AccountingInvariantViolated = 29,
-    InvalidDisputeSplit = 30,
-    ArbiterRequired = 31,
-    ExactDepositRequired = 32,
-    TooManyMilestones = 33,
-    TotalCapExceeded = 34,
-    InvalidProtocolParameters = 35,
-    GovernanceNotInitialized = 36,
 }
 
 #[contracttype]
@@ -195,7 +185,8 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
-        Self::require_not_paused(&env);
+        Self::require_not_finalized(&env, contract_id);
+
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
@@ -518,6 +509,7 @@ impl Escrow {
 
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
         Self::require_not_paused(&env);
+
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -555,6 +547,7 @@ impl Escrow {
         rating: i128,
     ) -> bool {
         Self::require_not_paused(&env);
+
         let contract: Contract = env
             .storage()
             .persistent()
@@ -775,6 +768,14 @@ impl Escrow {
     }
 }
 
+// -----------------------------------------------------------------------
+// Shared helpers
+// -----------------------------------------------------------------------
+
+/// Safe subtraction that returns `None` on underflow.
+pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_sub(b)
+}
 
 #[cfg(test)]
 mod test;

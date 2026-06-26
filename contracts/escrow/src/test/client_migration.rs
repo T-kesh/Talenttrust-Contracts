@@ -4,11 +4,11 @@ use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
 use crate::{
     types::{ContractStatus, DataKey},
-    Contract, Escrow, EscrowClient, EscrowError,
+    Contract, EscrowError,
 };
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo,
-    Address, Env, Symbol, TryFromVal,
+    testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, Symbol,
+    TryFromVal, Val,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -36,15 +36,19 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 //   tuple.2 = the data Val
 // ---------------------------------------------------------------------------
 
-fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
-    let topic_clone = topic.clone();
-    env.events().all().iter().any(|event| {
-        let topics = event.1;
-        topics.len() > 0
-            && Symbol::try_from_val(env, &topics.get(0).unwrap())
-                .ok()
-                .as_ref()
-                == Some(&topic_clone)
+fn has_event_with_topic(
+    env: &Env,
+    events: &soroban_sdk::Vec<(soroban_sdk::Address, soroban_sdk::Vec<Val>, Val)>,
+    topic: &Symbol,
+) -> bool {
+    events.iter().any(|event| {
+        let topics = &event.1;
+        if topics.is_empty() {
+            return false;
+        }
+        let val = topics.get(0).unwrap();
+        // Convert the Val back to Symbol for comparison
+        <Symbol as TryFromVal<Env, Val>>::try_from_val(env, &val).is_ok_and(|s| s == *topic)
     })
 }
 
@@ -62,6 +66,21 @@ fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
 fn propose_and_accept_updates_client_and_emits_events() {
     let env = Env::default();
     env.mock_all_auths();
+
+    // Set max_entry_ttl high enough so the migration proposal's
+    // temporary storage entry doesn't get rejected by the host.
+    let initial = env.ledger().get();
+    env.ledger().set(LedgerInfo {
+        sequence_number: initial.sequence_number,
+        timestamp: initial.timestamp,
+        protocol_version: initial.protocol_version,
+        network_id: initial.network_id.clone(),
+        base_reserve: initial.base_reserve,
+        min_temp_entry_ttl: 1,
+        min_persistent_entry_ttl: PENDING_MIGRATION_TTL_LEDGERS * 4,
+        max_entry_ttl: PENDING_MIGRATION_TTL_LEDGERS * 4,
+    });
+
     let client = register_client(&env);
 
     let (client_addr, _freelancer_addr, id) = create_contract(&env, &client);
@@ -69,6 +88,12 @@ fn propose_and_accept_updates_client_and_emits_events() {
 
     // --- Proposal ---
     assert!(client.propose_client_migration(&id, &client_addr, &new_client));
+
+    // Capture events immediately after the mutation to avoid the
+    // framework's event tracker being cleared by subsequent read-only
+    // view calls (e.g. has_pending_client_migration).
+    let events_snapshot = soroban_sdk::testutils::Events::all(&env.events());
+
     assert!(client.has_pending_client_migration(&id));
 
     // Pending record fields are correct
@@ -82,16 +107,23 @@ fn propose_and_accept_updates_client_and_emits_events() {
 
     // `client_migration_proposed` event is emitted (topic is topics[0], not event.0)
     assert!(
-        !env.events().all().is_empty(),
+        !events_snapshot.is_empty(),
         "at least one event must be emitted after proposal"
     );
     assert!(
-        has_event_with_topic(&env, &Symbol::new(&env, "client_migration_proposed")),
+        has_event_with_topic(
+            &env,
+            &events_snapshot,
+            &Symbol::new(&env, "client_migration_proposed")
+        ),
         "client_migration_proposed event not found"
     );
 
     // --- Acceptance ---
     assert!(client.accept_client_migration(&id, &new_client));
+
+    // Capture events immediately after acceptance too.
+    let events_snapshot = soroban_sdk::testutils::Events::all(&env.events());
 
     // contract.client is now the new address
     let contract = client.get_contract(&id);
@@ -102,7 +134,11 @@ fn propose_and_accept_updates_client_and_emits_events() {
 
     // `client_migration_accepted` event is emitted
     assert!(
-        has_event_with_topic(&env, &Symbol::new(&env, "client_migration_accepted")),
+        has_event_with_topic(
+            &env,
+            &events_snapshot,
+            &Symbol::new(&env, "client_migration_accepted")
+        ),
         "client_migration_accepted event not found"
     );
 }
@@ -210,8 +246,8 @@ fn expired_proposal_cannot_be_accepted() {
 // Test 4 – migration blocked on all four terminal statuses
 // ---------------------------------------------------------------------------
 
-/// `require_migration_allowed` in migration.rs blocks proposals when the
-/// escrow is in a terminal state.  All four terminal states are tested.
+// `require_migration_allowed` in migration.rs blocks proposals when the
+// escrow is in a terminal state.  All four terminal states are tested.
 
 /// Completed contract blocks proposal.
 #[test]
