@@ -27,16 +27,16 @@ pub const MIN_POSITIVE_AMOUNT: i128 = 1;
 /// # Returns
 /// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
 #[allow(dead_code)] // available for callers; not used by the contract directly
-pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
+pub fn validate_single_amount(amount: i128) -> Result<(), crate::Error> {
     // Check positivity
     if amount <= MIN_POSITIVE_AMOUNT - 1 {
-        return Err(crate::EscrowError::AmountMustBePositive);
+        return Err(crate::Error::AmountMustBePositive);
     }
 
     // Check maximum bounds
     if amount > MAX_SINGLE_AMOUNT_STROOPS {
         // No direct canonical error; map to InvalidMilestoneAmount for generic excess amount
-        return Err(crate::EscrowError::InvalidMilestoneAmount);
+        return Err(crate::Error::InvalidMilestoneAmount);
     }
 
     // Check stroop precision (must be integer, which i128 already guarantees)
@@ -65,7 +65,7 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowErro
         if let Some(new_total) = total.checked_add(amount) {
             total = new_total;
         } else {
-            return Err(crate::EscrowError::PotentialOverflow);
+            return Err(crate::Error::PotentialOverflow);
         }
     }
 

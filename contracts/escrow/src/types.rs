@@ -3,81 +3,106 @@ use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
+/// Unified error enum for the escrow contract.
 pub enum Error {
+    // ── Participant / identity ─────────────────────────────────────────────
+    /// `client` and `freelancer` must be distinct addresses.
     InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    ContractNotFound = 6,
-    EmptyRefundRequest = 7,
-    DuplicateMilestoneInRefund = 8,
-    AlreadyReleased = 9,
-    AlreadyRefunded = 10,
-    InsufficientFunds = 11,
-    AlreadyInitialized = 12,
-    InsufficientAccumulatedFees = 13,
-    NotInitialized = 14,
-    UnauthorizedRole = 15,
-    ContractPaused = 16,
-    EmergencyActive = 17,
-    InvalidState = 18,
-    InvalidRating = 19,
-    SelfRating = 20,
-    ReputationAlreadyIssued = 21,
-    NotCompleted = 22,
-    FreelancerMismatch = 23,
-    InvalidStatusTransition = 24,
-    IndexOutOfBounds = 25,
-    AlreadyApproved = 26,
-    InsufficientApprovals = 27,
-    ArbiterRequired = 28,
-    AccountingInvariantViolated = 29,
-    PotentialOverflow = 30,
-    InvalidDisputeSplit = 31,
-    AlreadyFinalized = 32,
-    MissingArbiter = 33,
-    InvalidArbiter = 34,
-    AmountMustBePositive = 35,
-    MilestoneAlreadyReleased = 36,
-    ContractIdCollision = 37,
-    ContractIdOverflow = 38,
+    /// `arbiter` address overlaps with `client` or `freelancer`.
+    InvalidArbiter = 2,
+    /// An arbiter-requiring `ReleaseAuthorization` mode was selected but no arbiter was provided.
+    MissingArbiter = 3,
+    /// A contract participant address failed a role check.
+    UnauthorizedRole = 4,
+
+    // ── Milestone amount validation ────────────────────────────────────────
+    /// Milestone list is empty.
+    EmptyMilestones = 5,
+    /// Too many milestones (exceeds [`MAX_MILESTONES`]).
+    TooManyMilestones = 6,
+    /// A milestone amount is zero or negative.
+    InvalidMilestoneAmount = 7,
+    /// The sum of all milestone amounts exceeds [`MAX_TOTAL_ESCROW_STROOPS`].
+    TotalCapExceeded = 8,
+    /// Checked arithmetic detected a potential i128 overflow.
+    PotentialOverflow = 9,
+
+    // ── Deposit validation ────────────────────────────────────────────────
+    /// The deposit amount is zero or negative.
+    InvalidDepositAmount = 10,
+    /// Depositing this amount would push `total_deposited` above the contract total.
+    DepositWouldExceedTotal = 11,
+
+    // ── State machine ─────────────────────────────────────────────────────
+    /// The referenced contract ID does not exist.
+    ContractNotFound = 12,
+    /// The contract is not in the required state for this operation.
+    InvalidState = 13,
+
+    // ── Milestone lifecycle ───────────────────────────────────────────────
+    /// The milestone index is out of bounds.
+    InvalidMilestone = 14,
+    /// The milestone was already released.
+    AlreadyReleased = 15,
+    /// The milestone was already refunded.
+    AlreadyRefunded = 16,
+    /// The contract does not have enough funded balance.
+    InsufficientFunds = 17,
+
+    // ── Refund ───────────────────────────────────────────────────────────
+    /// Refund request contains no milestone indices.
+    EmptyRefundRequest = 18,
+    /// The same milestone index appears more than once in a single refund request.
+    DuplicateMilestoneInRefund = 19,
+
+    // ── Approvals ─────────────────────────────────────────────────────────
+    /// The required approval(s) are missing or were never submitted.
+    InsufficientApprovals = 20,
+    /// The approval record in temporary storage has expired (TTL elapsed).
+    ApprovalExpired = 21,
+    /// The caller already submitted an approval for this milestone.
+    AlreadyApproved = 22,
+    /// The milestone was already released (approval-time check).
+    MilestoneAlreadyReleased = 23,
+
+    // ── Misc ──────────────────────────────────────────────────────────────
+    /// The amount supplied must be a positive value (> 0 stroops).
+    AmountMustBePositive = 24,
+    /// Accounting invariant violated (internal consistency check).
+    AccountingInvariantViolated = 25,
+
+    // ── Reputation ───────────────────────────────────────────────────────
+    /// Rating value is outside the allowed range.
+    InvalidRating = 26,
+    /// Reputation token was already issued for this contract.
+    ReputationAlreadyIssued = 27,
+    /// The supplied freelancer address does not match the stored one.
+    FreelancerMismatch = 28,
+
+    // ── Additional error codes ───────────────────────────────────────────
+    ContractIdCollision = 29,
+    ContractIdOverflow = 30,
+    IndexOutOfBounds = 31,
+    AlreadyInitialized = 32,
+    InsufficientAccumulatedFees = 33,
+    AlreadyFinalized = 34,
+    InvalidDisputeSplit = 35,
+    NotCompleted = 36,
+    SelfRating = 37,
+    ContractPaused = 38,
+    EmergencyActive = 39,
+    InvalidStatusTransition = 40,
+    NotInitialized = 41,
+    TotalExceedsMaxEscrow = 42,
+    FundingExceedsRequired = 43,
+    InvalidParticipants = 44,
+    InsufficientEscrowBalance = 45,
+    MilestoneNotFound = 46,
+    ExactDepositRequired = 47,
+    InvalidProtocolParameters = 48,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Contract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
-}
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    /// Only client can approve.
-    ClientOnly = 0,
-    /// Either client or arbiter can approve.
-    ClientAndArbiter = 1,
-    /// Only arbiter can approve.
-    ArbiterOnly = 2,
-    /// Both client and freelancer must approve; only either of them may release
-    /// after both approvals are present.
-    MultiSig = 3,
-}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,34 +142,7 @@ pub enum DataKey {
 
 
 /// Canonical contract error type for all entrypoint-facing errors.
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum Error {
-    IndexOutOfBounds = 3,
-    AlreadyReleased = 4,
-    EmptyRefundRequest = 6,
-    DuplicateMilestoneInRefund = 7,
-    AlreadyRefunded = 8,
-    InsufficientFunds = 9,
-    ContractNotFound = 10,
-    UnauthorizedRole = 11,
-    MissingArbiter = 12,
-    InvalidArbiter = 13,
-    InvalidParticipants = 14,
-    AmountMustBePositive = 15,
-    InvalidState = 16,
-    MilestoneAlreadyReleased = 17,
-    AlreadyApproved = 18,
-    InsufficientApprovals = 20,
-    FreelancerMismatch = 21,
-    InvalidRating = 22,
-    ReputationAlreadyIssued = 23,
-    EmptyMilestones = 25,
-    InvalidMilestoneAmount = 26,
-    ContractIdCollision = 27,
-    ContractIdOverflow = 28,
-}
+    // Removed duplicate canonical error enum; using unified definition from errors.rs
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
