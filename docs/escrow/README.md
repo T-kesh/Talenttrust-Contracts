@@ -36,6 +36,7 @@ Read-only queries:
 - `get_milestones(contract_id) -> Vec<Milestone>`
 - `get_refundable_balance(contract_id) -> i128`
 - `get_milestone_approvals(contract_id, milestone_index) -> Option<MilestoneApprovals>`
+- `get_work_evidence(contract_id, milestone_index) -> Option<String>`
 - `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_average_rating(freelancer) -> Option<i128>` — scaled average (see [Average Rating](#average-rating))
@@ -91,6 +92,11 @@ Per-getter details:
   when the contract id is unknown. Does not extend persistent TTL because
   approvals live in temporary storage bounded by
   `PENDING_APPROVAL_TTL_LEDGERS`.
+- `get_work_evidence(contract_id, milestone_index)` returns `Some(String)`
+  if the milestone exists and work evidence was submitted via
+  `submit_work_evidence`. Returns `None` when the index is out of bounds or
+  no evidence was recorded. Panics `ContractNotFound` for an unknown id.
+  Reads persist the milestones entry's TTL, consistent with `get_milestones`.
 
 These properties are locked in by tests under
 `contracts/escrow/src/test/persistence.rs` (issue #475).

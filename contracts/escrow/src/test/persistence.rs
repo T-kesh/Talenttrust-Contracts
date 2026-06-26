@@ -1,6 +1,6 @@
 use super::{create_contract, register_client};
 use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, Symbol};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
@@ -841,6 +841,55 @@ fn get_milestones_read_extends_persistent_ttl() {
 
     let milestones_after = client.get_milestones(&contract_id);
     assert_eq!(milestones_after.len(), default_milestones(&env).len());
+}
+
+/// `get_work_evidence` extends the persistent TTL of the milestones vector entry.
+#[test]
+fn get_work_evidence_read_extends_persistent_ttl() {
+    let env = setup_ttl_env();
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) =
+        create_contract(&env, &client);
+    client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount());
+
+    let ev = soroban_sdk::String::from_str(&env, "ipfs://QmTtlEvidence");
+    assert!(client.submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev));
+
+    let bump_threshold = ttl::PERSISTENT_BUMP_THRESHOLD as u32;
+    let extension = ttl::PERSISTENT_TTL_LEDGERS as u32;
+    let milestone_key = Symbol::new(&env, "milestones");
+
+    let initial_ttl: u32 = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&(crate::DataKey::Contract(contract_id), milestone_key.clone()))
+    });
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number =
+            li.sequence_number.saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
+    });
+
+    let result = client.get_work_evidence(&contract_id, &0);
+    assert_eq!(result, Some(ev));
+
+    let ttl_after_read: u32 = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&(crate::DataKey::Contract(contract_id), milestone_key.clone()))
+    });
+    assert!(
+        ttl_after_read >= bump_threshold,
+        "get_work_evidence must extend milestones TTL to at least the bump threshold (got {})",
+        ttl_after_read
+    );
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li.sequence_number.saturating_add(extension - 1);
+    });
+
+    let result_after = client.get_work_evidence(&contract_id, &0);
+    assert_eq!(result_after, Some(ev));
 }
 
 /// `get_refundable_balance` extends the persistent TTL of the contract entry.
