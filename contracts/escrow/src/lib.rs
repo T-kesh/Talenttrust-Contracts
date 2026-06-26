@@ -94,10 +94,7 @@ pub enum EscrowError {
     AccountingInvariantViolated = 27,
 }
 
-/// Returns `Some(a - b)` when `a >= b`, otherwise `None`.
-pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_sub(b).filter(|&diff| diff >= 0)
-}
+
 
 /// Returns `Some(a + b)`, or `None` on overflow.
 pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
@@ -813,11 +810,7 @@ impl Escrow {
         freelancer: Address,
         rating: i128,
     ) -> bool {
-        // Pause/emergency gate: refuses any reputation issuance while the
-        // contract is paused or in an active emergency.
-        Self::require_not_paused(&env);
-
-        let contract: Contract = env
+        let mut contract: Contract = env
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
@@ -839,24 +832,7 @@ impl Escrow {
             env.panic_with_error(EscrowError::NotCompleted);
         }
 
-        if caller != contract.client {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
-        }
-        if freelancer != contract.freelancer {
-            env.panic_with_error(EscrowError::FreelancerMismatch);
-        }
-        if rating < 1 || rating > 5 {
-            env.panic_with_error(EscrowError::InvalidRating);
-        }
-        if contract.status != ContractStatus::Completed {
-            env.panic_with_error(EscrowError::NotCompleted);
-        }
-        if env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::ReputationIssued(contract_id))
-            .unwrap_or(false)
-        {
+        if contract.reputation_issued {
             env.panic_with_error(EscrowError::ReputationAlreadyIssued);
         }
         if contract.client == contract.freelancer {
@@ -864,9 +840,10 @@ impl Escrow {
         }
 
         caller.require_auth();
+        contract.reputation_issued = true;
         env.storage()
             .persistent()
-            .set(&DataKey::ReputationIssued(contract_id), &true);
+            .set(&DataKey::Contract(contract_id), &contract);
 
         let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
         let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);

@@ -1,5 +1,6 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone, ReleaseAuthorization,
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    ReleaseAuthorization,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -84,6 +85,7 @@ impl Escrow {
             released_amount: 0,
             refunded_amount: 0,
             release_authorization,
+            reputation_issued: false,
         };
         env.storage()
             .persistent()
