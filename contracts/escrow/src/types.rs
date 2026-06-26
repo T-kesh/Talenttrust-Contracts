@@ -111,6 +111,12 @@ pub enum Error {
     ContractIdOverflow = 28,
     EmptyComment = 29,
     CommentTooLong = 30,
+    /// Returned when a checked arithmetic operation would overflow or underflow.
+    ///
+    /// Guards all accounting mutations (`funded_amount`, `released_amount`,
+    /// `refunded_amount`) to ensure deterministic failure instead of silent
+    /// wraparound. Any occurrence indicates a bug or invariant violation.
+    PotentialOverflow = 31,
 }
 
 /// Contract lifecycle states

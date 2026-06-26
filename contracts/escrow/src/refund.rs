@@ -1,5 +1,6 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    safe_add_amounts, safe_subtract_amounts, ttl, Contract, ContractStatus, DataKey, Error, Escrow,
+    Milestone,
 };
 use soroban_sdk::{contractimpl, Env, Symbol, Vec};
 
@@ -78,11 +79,16 @@ impl Escrow {
                 env.panic_with_error(Error::AlreadyRefunded);
             }
 
-            total_refund_amount += milestone.amount;
+            total_refund_amount = safe_add_amounts(total_refund_amount, milestone.amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
         }
 
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        let available_balance = safe_subtract_amounts(
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
+            contract.refunded_amount,
+        )
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
         if available_balance < total_refund_amount {
             env.panic_with_error(Error::InsufficientFunds);
         }
@@ -93,7 +99,8 @@ impl Escrow {
             milestones.set(idx, milestone);
         }
 
-        contract.refunded_amount += total_refund_amount;
+        contract.refunded_amount = safe_add_amounts(contract.refunded_amount, total_refund_amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
 
         let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
         if all_refunded_or_released {

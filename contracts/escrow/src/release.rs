@@ -1,6 +1,6 @@
 use crate::{
-    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
-    ReleaseAuthorization,
+    approvals, safe_add_amounts, safe_subtract_amounts, ttl, Contract, ContractStatus, DataKey,
+    Error, Escrow, Milestone, ReleaseAuthorization,
 };
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
@@ -90,8 +90,12 @@ impl Escrow {
         approvals::check_approvals(&env, &contract, contract_id, milestone_index)
             .unwrap_or_else(|e| env.panic_with_error(e));
 
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        let available_balance = safe_subtract_amounts(
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
+            contract.refunded_amount,
+        )
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
         if available_balance < milestone.amount {
             env.panic_with_error(Error::InsufficientFunds);
         }
@@ -99,7 +103,8 @@ impl Escrow {
         let _release_amount = milestone.amount;
         milestone.released = true;
         milestones.set(milestone_index, milestone.clone());
-        contract.released_amount += milestone.amount;
+        contract.released_amount = safe_add_amounts(contract.released_amount, milestone.amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
 
         if is_initialized(&env) {
             let fee_bps = get_protocol_fee_bps(&env);

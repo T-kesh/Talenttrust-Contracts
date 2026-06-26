@@ -1,4 +1,4 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone};
+use crate::{safe_add_amounts, ttl, Contract, ContractStatus, DataKey, Error, Milestone};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -39,8 +39,10 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
         env.panic_with_error(Error::InvalidState);
     }
 
-    contract.funded_amount += amount;
-    contract.total_deposited += amount;
+    contract.funded_amount = safe_add_amounts(contract.funded_amount, amount)
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
+    contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
 
     let milestone_key = Symbol::new(&env, "milestones");
     let milestones: Vec<Milestone> = env

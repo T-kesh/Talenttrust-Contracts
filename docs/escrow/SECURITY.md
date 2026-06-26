@@ -40,6 +40,30 @@ This document reflects the escrow API currently implemented in `contracts/escrow
 - Secure two-step admin state transfer and standalone public protocol fee extraction/withdrawal are not implemented as public entrypoints.
 - `ReadinessChecklist.governed_params_set` exists, but no live governance parameter setter entrypoint updates it to `true`.
 
+## Overflow Policy
+
+All accounting mutations — `funded_amount`, `released_amount`, `refunded_amount`, and
+`total_deposited` — use `safe_add_amounts` (a thin wrapper over `checked_add`) and
+`safe_subtract_amounts` (a thin wrapper over `checked_sub`) from
+`contracts/escrow/src/amount_validation.rs`.
+
+On overflow or underflow, the contract panics deterministically with the typed error
+`Error::PotentialOverflow` (code 31 in the `Error` enum in `types.rs`) or
+`EscrowError::PotentialOverflow` (code 28 in `EscrowError`), depending on the
+calling context. This guarantees:
+
+- **No silent wraparound.** Every mutation that could exceed `i128::MAX` or drop
+  below `i128::MIN` is caught at the point of the operation.
+- **Deterministic failure.** Overflow always produces the same typed panic —
+  no divergent behaviour between debug and release builds.
+- **Auditable trace.** A `PotentialOverflow` panic in production pinpoints the
+  exact accounting field and operation that triggered it.
+
+The available-balance computation (`funded_amount - released_amount - refunded_amount`)
+also uses `safe_subtract_amounts` chained so that any invariant violation (e.g.
+`released_amount > funded_amount`) is caught immediately rather than producing a
+negative value.
+
 ## Planned Security Work
 
 - Two-step admin transfer: [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318)

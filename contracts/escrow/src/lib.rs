@@ -33,10 +33,9 @@ mod governance;
 mod migration;
 mod ttl;
 mod types;
-mod amount_validation;
 mod utils;
 
-pub use amount_validation::safe_add_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -45,10 +44,6 @@ pub use types::{
     MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
-
-// Re-export for internal use
-pub(crate) use amount_validation::safe_subtract_amounts;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
@@ -101,14 +96,7 @@ pub enum EscrowError {
 
 
 
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
 
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
 
 #[contractimpl]
 impl Escrow {
@@ -426,9 +414,13 @@ impl Escrow {
             env.panic_with_error(Error::AlreadyRefunded);
         }
 
-        // Check if there's enough balance
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        // Check if there's enough balance using checked arithmetic
+        let available_balance = safe_subtract_amounts(
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
+            contract.refunded_amount,
+        )
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
         if available_balance < milestone.amount {
             env.panic_with_error(Error::InsufficientFunds);
         }
@@ -436,7 +428,8 @@ impl Escrow {
         let _release_amount = milestone.amount;
         milestone.released = true;
         milestones.set(milestone_index, milestone.clone());
-        contract.released_amount += milestone.amount;
+        contract.released_amount = safe_add_amounts(contract.released_amount, milestone.amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
 
         // Accumulate protocol fees if initialized with a fee rate
         if Self::is_initialized(&env) {
@@ -568,12 +561,17 @@ impl Escrow {
                 env.panic_with_error(Error::AlreadyRefunded);
             }
 
-            total_refund_amount += milestone.amount;
+            total_refund_amount = safe_add_amounts(total_refund_amount, milestone.amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
         }
 
-        // Check if there's enough balance
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        // Check if there's enough balance using checked arithmetic
+        let available_balance = safe_subtract_amounts(
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
+            contract.refunded_amount,
+        )
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
         if available_balance < total_refund_amount {
             env.panic_with_error(Error::InsufficientFunds);
         }
@@ -585,7 +583,8 @@ impl Escrow {
             milestones.set(idx, milestone);
         }
 
-        contract.refunded_amount += total_refund_amount;
+        contract.refunded_amount = safe_add_amounts(contract.refunded_amount, total_refund_amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
 
         // Check if all unreleased milestones are refunded
         let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
@@ -646,7 +645,12 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
-        contract.funded_amount - contract.released_amount - contract.refunded_amount
+        safe_subtract_amounts(
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
+            contract.refunded_amount,
+        )
+        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow))
     }
 
     /// Retrieves approval status for a milestone.
@@ -1368,9 +1372,11 @@ impl Escrow {
             dispute::resolution_payouts(&contract, &resolution)
                 .unwrap_or_else(|e| env.panic_with_error(e));
 
-        // Update contract accounting
-        contract.refunded_amount += client_payout;
-        contract.released_amount += freelancer_payout;
+        // Update contract accounting with checked arithmetic
+        contract.refunded_amount = safe_add_amounts(contract.refunded_amount, client_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.released_amount = safe_add_amounts(contract.released_amount, freelancer_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
         // Set final status
         contract.status = dispute::final_status_after_resolution(&contract);
