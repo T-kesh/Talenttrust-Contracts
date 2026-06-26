@@ -23,8 +23,8 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-mod approvals;
 pub mod amount_validation;
+mod approvals;
 mod create_contract;
 mod deposit;
 mod finalize;
@@ -36,9 +36,8 @@ mod ttl;
 mod types;
 
 pub use amount_validation::{
-    safe_add_amounts, safe_subtract_amounts, validate_deposit_amount,
-    validate_milestone_amounts, validate_single_amount, MAX_SINGLE_AMOUNT_STROOPS,
-    MIN_POSITIVE_AMOUNT, STROOP_PRECISION,
+    safe_add_amounts, safe_subtract_amounts, validate_deposit_amount, validate_milestone_amounts,
+    validate_single_amount, MAX_SINGLE_AMOUNT_STROOPS, MIN_POSITIVE_AMOUNT, STROOP_PRECISION,
 };
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
