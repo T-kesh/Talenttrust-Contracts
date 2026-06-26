@@ -82,8 +82,20 @@ where
     env.storage().temporary().has(key)
 }
 
-/// Load the milestone vector for a contract, extending its TTL.
-/// Panics with `Error::ContractNotFound` if absent.
+/// Loads the milestone vector for a contract and extends its TTL.
+///
+/// # Arguments
+///
+/// * `env` - The contract environment
+/// * `contract_id` - The ID of the contract to load milestones for
+///
+/// # Returns
+///
+/// The vector of `Milestone`s for the contract
+///
+/// # Panics
+///
+/// Panics with `Error::ContractNotFound` if the contract or its milestones are not found
 pub fn load_milestones(env: &Env, contract_id: u32) -> Vec<Milestone> {
     let key = milestone_storage_key(env, contract_id);
     let milestones: Vec<Milestone> = env
@@ -95,7 +107,13 @@ pub fn load_milestones(env: &Env, contract_id: u32) -> Vec<Milestone> {
     milestones
 }
 
-/// Store the milestone vector for a contract, extending its TTL.
+/// Stores the milestone vector for a contract and extends its TTL.
+///
+/// # Arguments
+///
+/// * `env` - The contract environment
+/// * `contract_id` - The ID of the contract to store milestones for
+/// * `milestones` - The vector of `Milestone`s to store
 pub fn store_milestones(env: &Env, contract_id: u32, milestones: &Vec<Milestone>) {
     let key = milestone_storage_key(env, contract_id);
     env.storage().persistent().set(&key, milestones);

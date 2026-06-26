@@ -795,6 +795,52 @@ fn get_milestones_read_extends_persistent_ttl() {
     assert_eq!(milestones_after.len(), default_milestones(&env).len());
 }
 
+/// `release_milestone` extends the persistent TTL of the milestones vector entry when writing.
+#[test]
+fn release_milestone_write_extends_persistent_ttl() {
+    let env = setup_ttl_env();
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) =
+        create_contract(&env, &client);
+    
+    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
+
+    let bump_threshold = ttl::PERSISTENT_BUMP_THRESHOLD as u32;
+    let extension = ttl::PERSISTENT_TTL_LEDGERS as u32;
+    let milestone_key = Symbol::new(&env, "milestones");
+
+    let initial_ttl: u32 = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&(crate::DataKey::Contract(contract_id), milestone_key.clone()))
+    });
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number =
+            li.sequence_number.saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
+    });
+
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
+
+    let ttl_after_release: u32 = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&(crate::DataKey::Contract(contract_id), milestone_key.clone()))
+    });
+    assert!(
+        ttl_after_release >= bump_threshold,
+        "release_milestone must extend milestones TTL to at least the bump threshold (got {})",
+        ttl_after_release
+    );
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li.sequence_number.saturating_add(extension - 1);
+    });
+
+    let milestones_after = client.get_milestones(&contract_id);
+    assert_eq!(milestones_after.len(), default_milestones(&env).len());
+}
+
 /// `get_refundable_balance` extends the persistent TTL of the contract entry.
 #[test]
 #[ignore]
