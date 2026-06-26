@@ -1,6 +1,6 @@
 use soroban_sdk::{contractimpl, contracttype, symbol_short, Address, Env};
 
-use crate::{safe_add_amounts, Contract, ContractStatus, Error};
+use crate::{safe_add_amounts, Contract, ContractStatus, Error as EscrowError};
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]

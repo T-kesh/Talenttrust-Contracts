@@ -12,7 +12,8 @@ mod emergency_controls;
 mod pause_controls;
 mod persistence;
 mod release_authorization;
-mod reputation;
+mod client_migration;
+mod create_contract_bounds;
 
 // --- Shared constants ---
 

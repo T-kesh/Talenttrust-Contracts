@@ -180,15 +180,15 @@ mod tests {
 
         assert_eq!(
             validate_single_amount(0),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(-1),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
@@ -201,13 +201,13 @@ mod tests {
         let amounts2 = [100_0000000, 0, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts2),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
 
         let amounts3 = [100_0000000, -50_0000000, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts3),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
     }
 
@@ -220,7 +220,7 @@ mod tests {
 
         assert_eq!(
             validate_contract_total(max_total + 1, max_total),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
@@ -234,7 +234,7 @@ mod tests {
         let milestones2 = [500_000_0000000, 600_000_0000000];
         assert_eq!(
             validate_milestone_amounts(&milestones2, max_contract_total),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
@@ -247,7 +247,7 @@ mod tests {
 
         assert_eq!(
             validate_deposit_amount(600_000_0000000, 500_000_0000000, max_contract_total),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
