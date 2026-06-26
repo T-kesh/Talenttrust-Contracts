@@ -110,6 +110,24 @@ data   : (
 - Events contain no secret data: all fields are already public contract state or caller-supplied arguments that are on-chain by definition.
 - `fee` is always `≥ 0`; it is `0` when `protocol_fee_bps` is unset or zero.
 
+## Deposit Promotion Property
+
+`deposit_funds` accumulates deposits and promotes the contract from `Created`
+to `Funded` as soon as `funded_amount >= sum(milestones)`. The property suite
+in `contracts/escrow/src/proptest.rs` verifies this invariant exhaustively:
+
+| Property | What it asserts |
+|---|---|
+| `prop_deposit_promotion_boundary_across_splits` | After each split-deposit: `status == Created` iff `funded < total`, `status == Funded` iff `funded >= total`. Once `Funded`, all further deposits are rejected. |
+| `prop_exact_total_single_deposit_promotes_to_funded` | A single deposit of exactly `total` always promotes the contract. |
+| `prop_underfunded_deposits_never_promote` | Any sequence of deposits whose sum stays strictly below `total` never triggers promotion. |
+| `prop_overshoot_deposit_promotes_to_funded` | A deposit that exceeds the remaining gap promotes the contract; the overshoot amount is stored as-is in `funded_amount`. |
+| `prop_funded_amount_equals_cumulative_deposits` | `funded_amount` equals the exact running sum of all accepted deposits — no stroop created or lost. |
+| `prop_promotion_is_order_independent` | The same set of chunks arrives at `Funded` with the same `funded_amount` regardless of deposit order (forward vs reversed). |
+
+**Security guarantee**: no deposit ordering or split can cause premature promotion
+(funded < total → Funded) or missed promotion (funded >= total → still Created).
+
 ## Planned Features
 
 - Two-step admin transfer:
