@@ -40,7 +40,7 @@ pub use types::{
     ReleaseAuthorization, Reputation,
 };
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
@@ -72,6 +72,10 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
+    AlreadyFinalized = 25,
+    EvidenceTooLong = 26,
+    PotentialOverflow = 27,
+    AccountingInvariantViolated = 28,
 }
 
 #[contracttype]
@@ -736,6 +740,109 @@ impl Escrow {
             .persistent()
             .get(&DataKey::PendingReputationCredits(address))
             .unwrap_or(0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Work evidence
+    // -----------------------------------------------------------------------
+
+    /// Records a deliverable reference (e.g. IPFS CID or URL hash) for an
+    /// unreleased milestone.
+    ///
+    /// Only the contract's freelancer may call this. The contract must be in
+    /// `Funded` status and the target milestone must not yet be released or
+    /// refunded. Evidence may be overwritten before release.
+    ///
+    /// # Arguments
+    /// * `contract_id` - The escrow contract to update
+    /// * `caller`      - Must equal the stored `freelancer`; requires auth
+    /// * `milestone_index` - Zero-based index of the milestone
+    /// * `evidence`    - Deliverable reference; max 256 bytes
+    ///
+    /// # Errors
+    /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
+    /// * `ContractNotFound`   — unknown `contract_id`
+    /// * `AlreadyFinalized`   — contract has been finalized
+    /// * `UnauthorizedRole`   — `caller` is not the freelancer
+    /// * `InvalidState`       — contract is not `Funded`
+    /// * `IndexOutOfBounds`   — `milestone_index` exceeds milestone count
+    /// * `MilestoneAlreadyReleased` — milestone is already released
+    /// * `AlreadyRefunded`    — milestone has been refunded
+    /// * `EvidenceTooLong`    — evidence string exceeds 256 bytes
+    pub fn submit_work_evidence(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_index: u32,
+        evidence: String,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_contract_ttl(&env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
+
+        if caller != contract.freelancer {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+
+        if contract.status != ContractStatus::Funded {
+            env.panic_with_error(Error::InvalidState);
+        }
+
+        // Bound evidence to 256 bytes to prevent storage bloat.
+        if evidence.len() > 256 {
+            env.panic_with_error(EscrowError::EvidenceTooLong);
+        }
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let mut milestone = milestones.get(milestone_index).unwrap();
+
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        milestone.work_evidence = Some(evidence.clone());
+        milestones.set(milestone_index, milestone);
+
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
+
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("evidence"), contract_id),
+            (
+                milestone_index,
+                contract.freelancer,
+                env.ledger().timestamp(),
+            ),
+        );
+
+        true
     }
 
     // -----------------------------------------------------------------------

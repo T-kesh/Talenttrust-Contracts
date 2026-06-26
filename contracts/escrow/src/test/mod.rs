@@ -10,6 +10,7 @@ use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
+mod release;
 mod reputation;
 mod release_authorization;
 mod client_migration;

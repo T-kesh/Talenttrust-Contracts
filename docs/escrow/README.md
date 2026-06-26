@@ -18,6 +18,7 @@ Lifecycle and reputation:
 
 - `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
 - `deposit_funds(contract_id, amount) -> bool`
+- `submit_work_evidence(contract_id, caller, milestone_index, evidence) -> bool`
 - `release_milestone(contract_id, milestone_index) -> bool`
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 - `cancel_contract(contract_id, caller) -> bool`
@@ -79,7 +80,36 @@ escrow.deposit_funds(&contract_id, &1000_0000000_i128);
 `Incremental` contracts allow partial deposits until the milestone total is
 reached. Deposits that exceed the required total fail closed.
 
-### 4. Release Milestones
+### 4. Submit Work Evidence (optional, before release)
+
+```rust
+escrow.submit_work_evidence(
+    &contract_id,
+    &freelancer_addr,
+    &0,                                   // milestone_index
+    &String::from_str(&env, "ipfs://QmExampleCid"),
+);
+```
+
+The freelancer may attach a deliverable reference (IPFS CID, URL hash, or any
+string up to 256 bytes) to an unreleased milestone before the client approves
+it. Evidence can be overwritten any number of times prior to release; once the
+milestone is released or refunded the field is immutable.
+
+Guards applied:
+- `ContractPaused` / `EmergencyActive` — pause/emergency gate.
+- `ContractNotFound` — unknown `contract_id`.
+- `AlreadyFinalized` — contract has been finalized.
+- `UnauthorizedRole` — caller is not the stored freelancer.
+- `InvalidState` — contract is not in `Funded` status.
+- `IndexOutOfBounds` — `milestone_index` exceeds the milestone count.
+- `MilestoneAlreadyReleased` — milestone has already been released.
+- `AlreadyRefunded` — milestone has already been refunded.
+- `EvidenceTooLong` — evidence string exceeds 256 bytes.
+
+Emits `("evidence", contract_id)` with `(milestone_index, freelancer, timestamp)`.
+
+### 5. Release Milestones
 
 ```rust
 escrow.release_milestone(&contract_id, &0);
@@ -140,6 +170,7 @@ lifecycle calls fail with `ContractPaused`; read-only queries remain available.
 
 Implemented events:
 
+- `("evidence", contract_id)` on `submit_work_evidence` (payload: milestone_index, freelancer, timestamp)
 - `("init", "admin_set")` on `initialize`
 - `("paused", timestamp)` on `pause`
 - `("unpaused", timestamp)` on `unpause`
