@@ -430,10 +430,8 @@ impl Escrow {
 
         Self::require_not_finalized(&env, contract_id);
 
-        // Verify contract is in Funded or PartiallyFunded state
-        if contract.status != ContractStatus::Funded
-            && contract.status != ContractStatus::PartiallyFunded
-        {
+        // Verify contract is in Accepted state before release
+        if contract.status != ContractStatus::Accepted {
             env.panic_with_error(Error::InvalidState);
         }
 
