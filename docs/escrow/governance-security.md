@@ -12,11 +12,23 @@ resolve emergency mode.
 - `unpause() -> bool`
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
+- `set_governed_params(admin, fee_bps, max_cap) -> bool`
 - `is_paused() -> bool`
 - `is_emergency() -> bool`
 
 All mutating admin controls require the stored admin's Soroban authorization.
 There is no live admin transfer entrypoint.
+
+## Governance Parameters
+
+The contract supports a governed maximum escrow cap (`max_escrow_total_stroops`).
+- When set and greater than zero, this cap limits the total value that can be
+  escrowed across all contracts.
+- If `create_contract` is called with milestones totaling more than the cap,
+  it fails with `EscrowCapExceeded`.
+- If `deposit_funds` would push the contract's funded amount above the cap,
+  it fails with `EscrowCapExceeded`.
+- A cap of zero is treated as "no limit".
 
 ## Planned Governance Work
 

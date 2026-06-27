@@ -97,6 +97,12 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
+    /// Milestone count exceeds `MAX_MILESTONES`.
+    TooManyMilestones = 31,
+    /// Aggregate milestone total exceeds the governed `max_escrow_total_stroops` cap
+    /// or the static `MAX_TOTAL_ESCROW_STROOPS` ceiling.
+    /// A zero or unset governed cap is treated as "no limit".
+    EscrowCapExceeded = 32,
 }
 
 

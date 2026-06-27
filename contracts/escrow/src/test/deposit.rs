@@ -1,7 +1,7 @@
 use super::{
     assert_contract_error, assert_contract_state, create_client, create_default_contract, setup,
 };
-use crate::{types::Error, ContractStatus};
+use crate::{types::Error, ContractStatus, EscrowError, GovernedParameters};
 use soroban_sdk::{testutils::Address as _, Address};
 
 /// Tests that deposits accumulate correctly and transition to Funded status when exactly fully funded.
@@ -194,4 +194,50 @@ fn test_deposit_insufficient_funds() {
     // in the current implementation. Balance validation occurs at token contract level.
     // This test is documented for completeness but cannot be triggered in unit tests.
 }
+
+// governed cap tests ───────────────────────────────────────────────────────────
+
+#[test]
+fn accepts_deposit_below_governed_cap() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    let admin = Address::generate(&env);
+    
+    // We need to initialize the contract to set an admin
+    // Wait, create_default_contract might not initialize. Let's check.
+    // Actually, let's just call initialize if needed.
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 1000_0000000_i128);
+    
+    assert!(client.deposit_funds(&contract_id, &client_addr, &500_0000000_i128));
+}
+
+#[test]
+fn rejects_deposit_above_governed_cap() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    let admin = Address::generate(&env);
+    
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 1000_0000000_i128);
+    
+    let result = client.try_deposit_funds(&contract_id, &client_addr, &1500_0000000_i128);
+    assert_contract_error(result, EscrowError::EscrowCapExceeded);
+}
+
+#[test]
+fn accepts_deposit_when_governed_cap_is_zero() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    let admin = Address::generate(&env);
+    
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 0_i128);
+    
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1500_0000000_i128));
+}
+
 
