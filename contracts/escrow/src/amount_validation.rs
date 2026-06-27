@@ -1,0 +1,252 @@
+//! Amount validation and sanitization module
+//!
+//! Provides centralized validation for all money-like values in the escrow contract.
+//! Ensures positivity, max bounds, and proper stroop precision handling.
+
+/// Maximum number of decimal places for stroop precision (7 decimal places for Stellar)
+#[allow(dead_code)] // available for callers; not used internally
+pub const STROOP_PRECISION: u8 = 7;
+
+/// Maximum individual amount allowed per operation to prevent overflow
+pub const MAX_SINGLE_AMOUNT_STROOPS: i128 = 1_000_000_0000000; // 1M tokens
+
+/// Minimum positive amount (1 stroop)
+pub const MIN_POSITIVE_AMOUNT: i128 = 1;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AmountValidationError {
+    NonPositiveAmount,
+    AmountExceedsMaximum,
+    ExceedsContractMaximum,
+}
+
+/// Validates a single amount for positivity and bounds
+///
+/// # Arguments
+/// * `amount` - The amount to validate (in stroops)
+///
+/// # Returns
+/// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
+pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
+    // Check positivity
+    if amount <= MIN_POSITIVE_AMOUNT - 1 {
+        return Err(crate::EscrowError::AmountMustBePositive);
+    }
+
+    // Check maximum bounds
+    if amount > MAX_SINGLE_AMOUNT_STROOPS {
+        return Err(crate::EscrowError::InvalidMilestoneAmount);
+    }
+
+    Ok(())
+}
+
+/// Validates an amount array/vector for positivity and bounds
+///
+/// # Arguments
+/// * `amounts` - Slice of amounts to validate (in stroops)
+///
+/// # Returns
+/// `Ok(total)` with sum of all amounts if valid, `Err(AmountValidationError)` if invalid
+#[allow(dead_code)] // available for callers; not used by the contract directly
+pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowError> {
+    let mut total: i128 = 0;
+
+    for &amount in amounts.iter() {
+        // Validate individual amount
+        validate_single_amount(amount)?;
+
+        // Check for potential overflow in addition
+        if let Some(new_total) = total.checked_add(amount) {
+            total = new_total;
+        } else {
+            return Err(crate::EscrowError::PotentialOverflow);
+        }
+    }
+
+    Ok(total)
+}
+
+/// Validates total amount against contract maximum
+///
+/// # Arguments
+/// * `total_amount` - The total amount to validate
+/// * `max_contract_total` - Maximum allowed per contract (in stroops)
+///
+/// # Returns
+/// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
+#[allow(dead_code)] // available for callers; not used by the contract directly
+pub fn validate_contract_total(
+    total_amount: i128,
+    max_contract_total: i128,
+) -> Result<(), crate::EscrowError> {
+    if total_amount > max_contract_total {
+        // Map to InvalidMilestoneAmount for contract total overflow
+        return Err(crate::EscrowError::InvalidMilestoneAmount);
+    }
+    Ok(())
+}
+
+/// Comprehensive validation for milestone amounts
+///
+/// # Arguments
+/// * `milestone_amounts` - Array of milestone amounts (in stroops)
+/// * `max_contract_total` - Maximum allowed per contract (in stroops)
+///
+/// # Returns
+/// `Ok(total)` with sum of all milestones if valid, `Err(AmountValidationError)` if invalid
+#[allow(dead_code)] // available for callers; not used by the contract directly
+pub fn validate_milestone_amounts(
+    milestone_amounts: &[i128],
+    max_contract_total: i128,
+) -> Result<i128, crate::EscrowError> {
+    // Validate each milestone amount and calculate total
+    let total = validate_amount_array(milestone_amounts)?;
+
+    // Validate total against contract maximum
+    validate_contract_total(total, max_contract_total)?;
+
+    Ok(total)
+}
+
+/// Validates deposit amount against remaining contract capacity
+///
+/// # Arguments
+/// * `deposit_amount` - Amount to deposit (in stroops)
+/// * `current_deposited` - Current total deposited amount (in stroops)
+/// * `max_contract_total` - Maximum allowed per contract (in stroops)
+///
+/// # Returns
+/// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
+#[allow(dead_code)] // available for callers; not used by the contract directly
+pub fn validate_deposit_amount(
+    deposit_amount: i128,
+    current_deposited: i128,
+    max_contract_total: i128,
+) -> Result<(), crate::EscrowError> {
+    // Validate deposit amount itself
+    validate_single_amount(deposit_amount)?;
+
+    // Check if deposit would exceed contract maximum
+    if let Some(new_total) = current_deposited.checked_add(deposit_amount) {
+        if new_total > max_contract_total {
+            return Err(crate::EscrowError::InvalidMilestoneAmount);
+        }
+    } else {
+        return Err(crate::EscrowError::PotentialOverflow);
+    }
+
+    Ok(())
+}
+
+/// Utility function to safely add amounts with overflow protection
+///
+/// # Arguments
+/// * `a` - First amount
+/// * `b` - Second amount
+///
+/// # Returns
+/// `Some(sum)` if addition succeeds, `None` if overflow would occur
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
+}
+
+/// Utility function to safely subtract amounts with underflow protection
+///
+/// # Arguments
+/// * `a` - Minuend
+/// * `b` - Subtrahend
+///
+/// # Returns
+/// `Some(difference)` if subtraction succeeds, `None` if underflow would occur
+pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_sub(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::EscrowError;
+
+    #[test]
+    fn test_validate_single_amount() {
+        assert!(validate_single_amount(1).is_ok());
+        assert!(validate_single_amount(100_0000000).is_ok());
+        assert!(validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS).is_ok());
+
+        assert_eq!(
+            validate_single_amount(0),
+            Err(crate::EscrowError::AmountMustBePositive)
+        );
+        assert_eq!(
+            validate_single_amount(-1),
+            Err(crate::EscrowError::AmountMustBePositive)
+        );
+        assert_eq!(
+            validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
+            Err(crate::EscrowError::InvalidMilestoneAmount)
+        );
+    }
+
+    #[test]
+    fn test_validate_amount_array() {
+        let amounts1 = [100_0000000, 200_0000000, 300_0000000];
+        assert!(validate_amount_array(&amounts1).is_ok());
+        assert_eq!(validate_amount_array(&amounts1).unwrap(), 600_0000000);
+
+        let amounts2 = [100_0000000, 0, 300_0000000];
+        assert_eq!(
+            validate_amount_array(&amounts2),
+            Err(crate::EscrowError::AmountMustBePositive)
+        );
+
+        let amounts3 = [100_0000000, -50_0000000, 300_0000000];
+        assert_eq!(
+            validate_amount_array(&amounts3),
+            Err(crate::EscrowError::AmountMustBePositive)
+        );
+    }
+
+    #[test]
+    fn test_validate_contract_total() {
+        let max_total = 1_000_000_0000000;
+        assert!(validate_contract_total(100_0000000, max_total).is_ok());
+        assert!(validate_contract_total(max_total, max_total).is_ok());
+        assert_eq!(
+            validate_contract_total(max_total + 1, max_total),
+            Err(crate::EscrowError::InvalidMilestoneAmount)
+        );
+    }
+
+    #[test]
+    fn test_validate_milestone_amounts() {
+        let max_contract_total = 1_000_000_0000000;
+        let milestones1 = [100_0000000, 200_0000000, 300_0000000];
+        assert!(validate_milestone_amounts(&milestones1, max_contract_total).is_ok());
+        let milestones2 = [500_000_0000000, 600_000_0000000];
+        assert_eq!(
+            validate_milestone_amounts(&milestones2, max_contract_total),
+            Err(crate::EscrowError::InvalidMilestoneAmount)
+        );
+    }
+
+    #[test]
+    fn test_validate_deposit_amount() {
+        let max_contract_total = 1_000_000_0000000;
+        assert!(validate_deposit_amount(100_0000000, 0, max_contract_total).is_ok());
+        assert!(validate_deposit_amount(100_0000000, 500_0000000, max_contract_total).is_ok());
+        assert_eq!(
+            validate_deposit_amount(600_000_0000000, 500_000_0000000, max_contract_total),
+            Err(crate::EscrowError::InvalidMilestoneAmount)
+        );
+    }
+
+    #[test]
+    fn test_safe_arithmetic() {
+        assert_eq!(safe_add_amounts(100, 200), Some(300));
+        assert_eq!(safe_add_amounts(i128::MAX, 1), None);
+        assert_eq!(safe_subtract_amounts(300, 100), Some(200));
+        assert_eq!(safe_subtract_amounts(0, 1), Some(-1));
+        assert_eq!(safe_subtract_amounts(i128::MIN, 1), None);
+    }
+}
