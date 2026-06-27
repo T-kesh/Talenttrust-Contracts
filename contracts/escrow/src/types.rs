@@ -246,6 +246,16 @@ pub struct GovernedParameters {
     pub max_escrow_total_stroops: i128,
 }
 
+/// Stores a pending governance admin proposal with the proposed address
+/// and the ledger sequence when it was proposed.
+/// Used for the admin rotation timelock mechanism.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAdminProposal {
+    pub proposed: Address,
+    pub proposed_at_ledger: u32,
+}
+
 /// Defines who can approve milestone releases.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

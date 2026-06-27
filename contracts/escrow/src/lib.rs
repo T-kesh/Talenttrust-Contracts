@@ -24,6 +24,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod amount_validation;
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -33,19 +34,18 @@ mod governance;
 mod migration;
 mod ttl;
 mod types;
-mod amount_validation;
 mod utils;
 
 pub use amount_validation::safe_add_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
     Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, Milestone,
-    MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
-    CONTRACT_SUMMARY_SCHEMA_VERSION,
+    MilestoneApprovals, MilestoneSummary, PendingAdminProposal, ReadinessChecklist,
+    ReleaseAuthorization, Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
 // Re-export for internal use
 pub(crate) use amount_validation::safe_subtract_amounts;
@@ -97,9 +97,13 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
+    /// Returned when the total escrow amount would exceed the governed max_escrow_total_stroops cap.
+    EscrowCapExceeded = 31,
+    /// Returned when the admin rotation timelock has not yet elapsed.
+    TimelockNotElapsed = 32,
+    /// Returned when protocol parameters are invalid (e.g., fee_bps > 10000).
+    InvalidProtocolParameters = 33,
 }
-
-
 
 /// Returns `Some(a + b)`, or `None` on overflow.
 pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
@@ -225,7 +229,14 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
-        create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
+        create_contract::create_contract_impl(
+            &env,
+            client,
+            freelancer,
+            arbiter,
+            milestones,
+            release_authorization,
+        )
     }
 
     /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -266,7 +277,10 @@ impl Escrow {
     }
 
     /// Return immutable close metadata for `contract_id`, if it has been finalized.
-    pub fn get_finalization_record(env: Env, contract_id: u32) -> Option<finalize::FinalizationRecord> {
+    pub fn get_finalization_record(
+        env: Env,
+        contract_id: u32,
+    ) -> Option<finalize::FinalizationRecord> {
         finalize::get_finalization_record_impl(&env, contract_id)
     }
 
@@ -1159,9 +1173,26 @@ impl Escrow {
         Self::accept_governance_admin_impl(&env)
     }
 
-    /// Returns the pending governance admin, if any.
+    /// Returns the pending governance admin address, if any.
+    ///
+    /// Reads the `PendingAdminProposal` stored under `DataKey::PendingAdmin`
+    /// and returns the `proposed` address. This correctly decodes the struct
+    /// written by `propose_governance_admin_impl` rather than attempting to
+    /// decode the key as a bare `Address` (which would panic or return `None`
+    /// due to a wire-format mismatch).
     pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::PendingAdmin)
+        Self::get_pending_governance_admin_impl(&env)
+    }
+
+    /// Returns the ledger sequence at which the pending admin proposal was made.
+    ///
+    /// Returns `None` if there is no pending proposal. This allows off-chain
+    /// indexers and governance dashboards to compute the remaining timelock
+    /// before the proposal can be accepted via `accept_governance_admin`.
+    pub fn get_pending_governance_admin_proposed_at(env: Env) -> Option<u32> {
+        let proposal: Option<PendingAdminProposal> =
+            env.storage().persistent().get(&DataKey::PendingAdmin);
+        proposal.map(|p| p.proposed_at_ledger)
     }
 
     /// Returns the current governance admin.

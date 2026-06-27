@@ -115,6 +115,44 @@ fn resolve_emergency_succeeds_with_admin_auth() {
 // already prove that `load_and_auth_admin` routes through `require_auth()` —
 // the Soroban auth engine guarantees the panic when no auth is provided.
 
+// ─── Admin rotation tests ─────────────────────────────────────────────────────
+
+/// Proposing an admin stores a `PendingAdminProposal` struct.
+/// We verify that both the proposed address and the anchor ledger
+/// can be retrieved correctly.
+#[test]
+fn pending_admin_proposal_round_trip() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+
+    let proposed_admin = Address::generate(&env);
+    let anchor_ledger = env.ledger().sequence();
+
+    // Propose new admin
+    assert!(client.propose_governance_admin(&proposed_admin));
+
+    // Verify proposed address
+    assert_eq!(
+        client.get_pending_governance_admin(),
+        Some(proposed_admin)
+    );
+
+    // Verify anchor ledger
+    assert_eq!(
+        client.get_pending_governance_admin_proposed_at(),
+        Some(anchor_ledger)
+    );
+}
+
+#[test]
+fn pending_admin_returns_none_when_absent() {
+    let env = Env::default();
+    let (client, _admin) = setup(&env);
+
+    assert_eq!(client.get_pending_governance_admin(), None);
+    assert_eq!(client.get_pending_governance_admin_proposed_at(), None);
+}
+
 // ─── Idempotent / State invariant round-trips ─────────────────────────────────
 
 /// Emergency and pause flags are set and cleared atomically through the helper.

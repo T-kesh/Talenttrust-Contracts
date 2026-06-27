@@ -1,5 +1,6 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization,
+    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
+    ReleaseAuthorization,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -63,6 +64,19 @@ pub fn create_contract_impl(
         }
     }
 
+    // Check governed max_escrow_total_stroops cap if set
+    let total_milestones: i128 = milestones.iter().map(|m| m).sum();
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0 && total_milestones > params.max_escrow_total_stroops
+        {
+            env.panic_with_error(EscrowError::EscrowCapExceeded);
+        }
+    }
+
     let id = next_contract_id(&env);
 
     ttl::extend_next_contract_id_ttl(&env);
@@ -119,16 +133,13 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
 
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Contract>(&DataKey::Contract(id))
-            .is_some()
-        {
-            env.panic_with_error(Error::ContractIdCollision);
-        }
-
-        id
+    if env
+        .storage()
+        .persistent()
+        .get::<_, Contract>(&DataKey::Contract(id))
+        .is_some()
+    {
+        env.panic_with_error(Error::ContractIdCollision);
     }
 
     id
