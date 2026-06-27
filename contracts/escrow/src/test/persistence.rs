@@ -1,6 +1,13 @@
-use super::{create_contract, register_client};
-use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, Symbol};
+use super::{
+    assert_contract_error, complete_contract, create_contract, default_milestones,
+    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE,
+    MILESTONE_THREE, MILESTONE_TWO,
+};
+use crate::{ttl, ContractStatus, EscrowError, ReleaseAuthorization};
+use soroban_sdk::{
+    testutils::{storage::Persistent, Address as _, Ledger},
+    vec, Address, Env, Symbol,
+};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
@@ -801,8 +808,7 @@ fn get_milestones_read_extends_persistent_ttl() {
 fn get_work_evidence_read_extends_persistent_ttl() {
     let env = setup_ttl_env();
     let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) =
-        create_contract(&env, &client);
+    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
     client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount());
 
     let ev = soroban_sdk::String::from_str(&env, "ipfs://QmTtlEvidence");
@@ -819,12 +825,13 @@ fn get_work_evidence_read_extends_persistent_ttl() {
     });
 
     env.ledger().with_mut(|li| {
-        li.sequence_number =
-            li.sequence_number.saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
+        li.sequence_number = li
+            .sequence_number
+            .saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
     });
 
     let result = client.get_work_evidence(&contract_id, &0);
-    assert_eq!(result, Some(ev));
+    assert_eq!(result, Some(ev.clone()));
 
     let ttl_after_read: u32 = env.as_contract(&client.address, || {
         env.storage()

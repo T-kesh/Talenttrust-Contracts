@@ -23,8 +23,6 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-
-mod amount_validation;
 mod amount_validation;
 mod approvals;
 mod create_contract;
@@ -37,7 +35,7 @@ mod ttl;
 mod types;
 mod utils;
 
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, MAX_SINGLE_AMOUNT_STROOPS};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -47,8 +45,21 @@ pub use types::{
     Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
-// Re-export for internal use
-pub(crate) use amount_validation::safe_subtract_amounts;
+pub(crate) fn emit_status_changed(
+    env: &Env,
+    contract_id: u32,
+    old_status: ContractStatus,
+    new_status: ContractStatus,
+) {
+    env.events().publish(
+        (Symbol::new(env, "status_changed"), contract_id),
+        (
+            old_status as u32,
+            new_status as u32,
+            env.ledger().timestamp(),
+        ),
+    );
+}
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
@@ -57,6 +68,9 @@ use soroban_sdk::{
 
 #[contract]
 pub struct Escrow;
+
+pub const MAX_MILESTONES: u32 = 10;
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
 
 /// Governance-level errors for admin-gated operations.
 #[contracterror]
@@ -100,11 +114,14 @@ pub enum EscrowError {
     AmountMustBePositive = 30,
     /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
     EvidenceTooLong = 31,
-}
-
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
+    MissingArbiter = 32,
+    InvalidArbiter = 33,
+    InvalidParticipants = 34,
+    TooManyMilestones = 35,
+    EmptyComment = 36,
+    CommentTooLong = 37,
+    InvalidProtocolParameters = 38,
+    TimelockNotElapsed = 39,
 }
 
 #[contractimpl]
@@ -880,7 +897,7 @@ impl Escrow {
         Self::require_not_finalized(&env, contract_id);
         let old_status = contract.status.clone();
         contract.status = ContractStatus::Cancelled;
-        emit_status_changed(env, contract_id, old_status, ContractStatus::Cancelled);
+        emit_status_changed(&env, contract_id, old_status, ContractStatus::Cancelled);
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
@@ -889,21 +906,6 @@ impl Escrow {
     }
 
     // ── Dispute management ────────────────────────────────────────────────────
-
-    /// Opens a dispute on a funded or partially funded escrow.
-    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
-        Self::raise_dispute_impl(env, contract_id, caller)
-    }
-
-    /// Resolves an open dispute with the arbiter-selected resolution.
-    pub fn resolve_dispute(
-        env: Env,
-        contract_id: u32,
-        arbiter: Address,
-        resolution: DisputeResolution,
-    ) -> bool {
-        Self::resolve_dispute_impl(env, contract_id, arbiter, resolution)
-    }
 
     // ── Reputation ───────────────────────────────────────────────────────────
 
@@ -1164,11 +1166,7 @@ impl Escrow {
     /// # TTL
     /// Extends the milestones vector's persistent TTL on read,
     /// consistent with `get_milestones`.
-    pub fn get_work_evidence(
-        env: Env,
-        contract_id: u32,
-        milestone_index: u32,
-    ) -> Option<String> {
+    pub fn get_work_evidence(env: Env, contract_id: u32, milestone_index: u32) -> Option<String> {
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones: Vec<Milestone> = env
             .storage()
@@ -1189,48 +1187,7 @@ impl Escrow {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    /// Proposes a client migration for an existing contract.
-    pub fn propose_client_migration(
-        env: Env,
-        contract_id: u32,
-        current_client: Address,
-        new_client: Address,
-    ) -> bool {
-        Self::propose_client_migration_impl(env, contract_id, current_client, new_client)
-    }
-
-    /// Accepts a pending client migration.
-    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
-        Self::accept_client_migration_impl(env, contract_id, new_client)
-    }
-
-    /// Returns true if a live pending client migration exists.
-    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
-        Self::has_pending_client_migration_impl(env, contract_id)
-    }
-
-    /// Returns the live pending client migration record.
-    pub fn get_pending_client_migration(
-        env: Env,
-        contract_id: u32,
-    ) -> migration::PendingClientMigration {
-        Self::get_pending_client_migration_impl(env, contract_id)
-    }
-
     // ── Finalization ─────────────────────────────────────────────────────────
-
-    /// Finalizes an escrow contract by writing immutable close metadata.
-    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
-        Self::finalize_contract_impl(env, contract_id, finalizer)
-    }
-
-    /// Returns immutable close metadata for a contract.
-    pub fn get_finalization_record(
-        env: Env,
-        contract_id: u32,
-    ) -> Option<finalize::FinalizationRecord> {
-        Self::get_finalization_record_impl(env, contract_id)
-    }
 
     // ── Governance ───────────────────────────────────────────────────────────
 
@@ -1326,20 +1283,6 @@ impl Escrow {
     }
 
     // ── Protocol fee helpers ─────────────────────────────────────────────────
-
-    pub(crate) fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        if fee_bps == 0 {
-            return 0;
-        }
-        amount * fee_bps as i128 / 10_000
-    }
 
     // ── Internal guards ──────────────────────────────────────────────────────
 

@@ -1,4 +1,7 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization};
+use crate::{
+    safe_add_amounts, ttl, Contract, ContractStatus, DataKey, Error, EscrowError, Milestone,
+    ReleaseAuthorization, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS,
+};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
@@ -33,32 +36,43 @@ pub fn create_contract_impl(
     client.require_auth();
 
     if client == freelancer {
-        env.panic_with_error(Error::InvalidParticipants);
+        env.panic_with_error(EscrowError::InvalidParticipant);
+    }
+
+    if milestones.is_empty() {
+        env.panic_with_error(EscrowError::EmptyMilestones);
+    }
+
+    if milestones.len() > MAX_MILESTONES {
+        env.panic_with_error(EscrowError::TooManyMilestones);
     }
 
     match release_authorization {
         ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
             if arbiter.is_none() =>
         {
-            env.panic_with_error(Error::MissingArbiter);
+            env.panic_with_error(EscrowError::MissingArbiter);
         }
         _ => {}
     }
 
     if let Some(ref arb) = arbiter {
         if arb == &client || arb == &freelancer {
-            env.panic_with_error(Error::InvalidArbiter);
+            env.panic_with_error(EscrowError::InvalidArbiter);
         }
     }
 
-    if milestones.is_empty() {
-        env.panic_with_error(Error::EmptyMilestones);
-    }
-
+    let mut total_amount = 0_i128;
     for amount in milestones.iter() {
         if amount <= 0 {
-            env.panic_with_error(Error::InvalidMilestoneAmount);
+            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
         }
+        total_amount = safe_add_amounts(total_amount, amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+    }
+
+    if total_amount > MAX_TOTAL_ESCROW_STROOPS {
+        env.panic_with_error(EscrowError::InvalidMilestoneAmount);
     }
 
     let id = next_contract_id(&env);

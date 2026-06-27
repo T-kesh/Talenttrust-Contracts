@@ -102,7 +102,8 @@ fn set_emergency_only(env: &Env, client: &EscrowClient<'_>) {
 
 #[test]
 fn initialize_only_once_fails() {
-    let (_env, client, admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     super::assert_contract_error(
         client.try_initialize(&admin),
         EscrowError::AlreadyInitialized,

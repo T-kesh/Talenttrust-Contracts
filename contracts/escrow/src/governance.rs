@@ -1,7 +1,8 @@
 use crate::{
-    DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters, ReadinessChecklist,
+    DataKey, Error, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters,
+    ReadinessChecklist, ADMIN_ROTATION_MIN_DELAY_LEDGERS,
 };
-use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
 
 /// Pending admin proposal stored under `DataKey::PendingAdmin`.
 #[contracttype]
@@ -143,7 +144,7 @@ impl Escrow {
     }
 
     /// Set both governance parameters at once and update the readiness checklist.
-    pub fn set_governed_params(
+    pub(crate) fn set_governed_params_impl(
         env: Env,
         admin: Address,
         protocol_fee_bps: u32,
@@ -195,7 +196,7 @@ impl Escrow {
     }
 
     /// Retrieve the current governed parameters.
-    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
+    pub(crate) fn get_governed_parameters_impl(env: Env) -> Option<GovernedParameters> {
         env.storage().persistent().get(&DataKey::GovernedParameters)
     }
 }

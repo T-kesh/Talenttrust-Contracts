@@ -27,7 +27,7 @@ Lifecycle and reputation:
 
 SAC settlement-token binding:
 
-- `bind_settlement_token(token) -> bool` *(admin-only, single-use; binds the Stellar Asset Contract used for custody)*
+- `bind_settlement_token(token) -> bool` _(admin-only, single-use; binds the Stellar Asset Contract used for custody)_
 - `get_settlement_token() -> Option<Address>`
 
 Read-only queries:
@@ -183,6 +183,7 @@ it. Evidence can be overwritten any number of times prior to release; once the
 milestone is released or refunded the field is immutable.
 
 Guards applied:
+
 - `ContractPaused` / `EmergencyActive` — pause/emergency gate.
 - `ContractNotFound` — unknown `contract_id`.
 - `AlreadyFinalized` — contract has been finalized.
@@ -198,6 +199,7 @@ Emits `("evidence", contract_id)` with `(milestone_index, freelancer, timestamp)
 ### 5. Release Milestones
 
 #### Single Milestone Release
+
 ```rust
 escrow.release_milestone(&contract_id, &client_addr, &0);
 ```
@@ -215,9 +217,9 @@ escrow.release_milestone(&contract_id, &client_addr, &0);
    the milestone is marked released and the contract status is updated — so
    a token-transfer failure leaves the contract untouched.
 
-Whenever a contract successfully transitions to the `Completed` status—either 
-through the final milestone release, a refund operation that leaves some 
-milestones released, or a dispute resolution—exactly one pending reputation 
+Whenever a contract successfully transitions to the `Completed` status—either
+through the final milestone release, a refund operation that leaves some
+milestones released, or a dispute resolution—exactly one pending reputation
 credit is granted to the freelancer.
 
 `PendingReputationCredits` is a non-negative counter that tracks completed
@@ -242,25 +244,25 @@ of each contract. The flow is fully on-chain and atomic — every state change
 to the contract's accounting counters is paired with the matching SAC
 `transfer` call. There is no off-chain reconciliation step.
 
-| Step | Entrypoint | SAC operation | State change |
-|---|---|---|---|
-| Token binding (admin, single-use) | `bind_settlement_token(sac)` | `—` | `DataKey::SettlementToken = sac` |
-| Funding | `deposit_funds(id, client, amount)` | `transfer(client, escrow, amount)` | `contract.funded_amount += amount` |
-| Release | `release_milestone(id, caller, idx)` | `transfer(escrow, freelancer, milestone.amount - fee)` | `milestone.released = true`, `contract.released_amount += milestone.amount`, `DataKey::AccumulatedProtocolFees += fee` |
-| Refund (planned) | `refund_unreleased_milestones(id, indices)` | `transfer(escrow, client, sum)` | `milestone.refunded = true`, `contract.refunded_amount += sum` |
+| Step                              | Entrypoint                                  | SAC operation                                          | State change                                                                                                           |
+| --------------------------------- | ------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Token binding (admin, single-use) | `bind_settlement_token(sac)`                | `—`                                                    | `DataKey::SettlementToken = sac`                                                                                       |
+| Funding                           | `deposit_funds(id, client, amount)`         | `transfer(client, escrow, amount)`                     | `contract.funded_amount += amount`                                                                                     |
+| Release                           | `release_milestone(id, caller, idx)`        | `transfer(escrow, freelancer, milestone.amount - fee)` | `milestone.released = true`, `contract.released_amount += milestone.amount`, `DataKey::AccumulatedProtocolFees += fee` |
+| Refund (planned)                  | `refund_unreleased_milestones(id, indices)` | `transfer(escrow, client, sum)`                        | `milestone.refunded = true`, `contract.refunded_amount += sum`                                                         |
 
 The pause/emergency gate, fail-closed validation, and TTL bumps from the
 existing lifecycle are preserved unchanged on each path.
 
 ### Failure semantics
 
-| Failure | Behaviour |
-|---|---|
-| `bind_settlement_token` called twice | `SettlementTokenAlreadyBound` panic; existing token retained |
-| `deposit_funds` with no token bound | `SettlementTokenNotConfigured` panic; funded_amount unchanged |
-| `deposit_funds` with insufficient SAC balance | SAC transfer fails; `TokenTransferFailed` panic via Soroban's contract-error return; funded_amount unchanged |
-| `release_milestone` with no token bound | `SettlementTokenNotConfigured` panic; milestone state unchanged |
-| `release_milestone` with insufficient SAC balance | SAC transfer fails; milestone state unchanged |
+| Failure                                           | Behaviour                                                                                                    |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `bind_settlement_token` called twice              | `SettlementTokenAlreadyBound` panic; existing token retained                                                 |
+| `deposit_funds` with no token bound               | `SettlementTokenNotConfigured` panic; funded_amount unchanged                                                |
+| `deposit_funds` with insufficient SAC balance     | SAC transfer fails; `TokenTransferFailed` panic via Soroban's contract-error return; funded_amount unchanged |
+| `release_milestone` with no token bound           | `SettlementTokenNotConfigured` panic; milestone state unchanged                                              |
+| `release_milestone` with insufficient SAC balance | SAC transfer fails; milestone state unchanged                                                                |
 
 ## Cancellation
 
@@ -320,6 +322,7 @@ days** at ~5s/ledger. The record's `expires_at_ledger` is set to
 Security assumption: an expired proposal cannot transfer client rights. Once the
 TTL lapses the stale proposal is unrecoverable; the current client must submit a
 fresh `propose_client_migration` call to start a new window.
+
 ## Two-Step Governance Admin Transfer
 
 The admin transfer uses a propose-accept (two-step) pattern:
@@ -333,6 +336,7 @@ escrow.accept_governance_admin();
 ```
 
 ### Rules
+
 - **Self-proposal is rejected**: proposing the current admin as the new admin
   panics with `CannotProposeSelf`.
 - **Re-proposing overwrites**: calling `propose_governance_admin` while a
@@ -346,10 +350,11 @@ escrow.accept_governance_admin();
 - All operations require the contract to be initialized.
 
 ### Events
-| Topic | Data | Trigger |
-|---|---|---|
-| `("admin", "proposed")` | `(admin, proposed, timestamp)` | `propose_governance_admin` |
-| `("admin", "accepted")` | `(old_admin, new_admin, timestamp)` | `accept_governance_admin` |
+
+| Topic                    | Data                                     | Trigger                            |
+| ------------------------ | ---------------------------------------- | ---------------------------------- |
+| `("admin", "proposed")`  | `(admin, proposed, timestamp)`           | `propose_governance_admin`         |
+| `("admin", "accepted")`  | `(old_admin, new_admin, timestamp)`      | `accept_governance_admin`          |
 | `("admin", "cancelled")` | `(admin, cancelled_proposal, timestamp)` | `cancel_governance_admin_proposal` |
 
 ## Pause and Emergency Controls
@@ -388,6 +393,23 @@ indexers can reconcile the escrow's accounting against the SAC's
 `transfer` events without re-deriving fee math.
 
 ## Implemented Security Assumptions
+
+### `create_contract` arbiter requirements by release mode
+
+`create_contract` performs creation-time validation of participants and arbiter assignment.
+
+| ReleaseAuthorization mode | `arbiter: None`             | Arbiter validation                                                              | Primary failure mode |
+| ------------------------- | --------------------------- | ------------------------------------------------------------------------------- | -------------------- |
+| `ClientOnly`              | Accepted                    | If `arbiter` is provided and equals `client` or `freelancer` → `InvalidArbiter` | none                 |
+| `ArbiterOnly`             | Rejected → `MissingArbiter` | If `arbiter` equals `client` or `freelancer` → `InvalidArbiter`                 | `MissingArbiter`     |
+| `ClientAndArbiter`        | Rejected → `MissingArbiter` | If `arbiter` equals `client` or `freelancer` → `InvalidArbiter`                 | `MissingArbiter`     |
+| `MultiSig`                | Accepted                    | If `arbiter` is provided and equals `client` or `freelancer` → `InvalidArbiter` | none                 |
+
+Participant identity rules are fail-closed and evaluated before milestone-vector checks:
+
+- `client == freelancer` → `InvalidParticipant`
+- arbiter required by mode with `arbiter: None` → `MissingArbiter`
+- arbiter overlapping either participant → `InvalidArbiter`
 
 - Creation and reputation issue require explicit address authentication.
 - Pause and emergency controls are admin-authenticated.
@@ -435,12 +457,12 @@ was funded) or leave funds permanently locked.
 
 ### Properties the invariant guarantees
 
-| Property | Explanation |
-|---|---|
-| Non-negative | `refundable_balance >= 0` at all times — the contract never becomes insolvent. |
-| Zero iff all milestones terminal | Balance reaches `0` only when every milestone is in `released` or `refunded` state. |
-| Additive decomposition | `funded_amount == released_amount + refunded_amount + refundable_balance` always. |
-| Status consistency | When balance is `0` and any milestone was released, status is `Completed`; when all were refunded, status is `Refunded`. |
+| Property                         | Explanation                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Non-negative                     | `refundable_balance >= 0` at all times — the contract never becomes insolvent.                                           |
+| Zero iff all milestones terminal | Balance reaches `0` only when every milestone is in `released` or `refunded` state.                                      |
+| Additive decomposition           | `funded_amount == released_amount + refunded_amount + refundable_balance` always.                                        |
+| Status consistency               | When balance is `0` and any milestone was released, status is `Completed`; when all were refunded, status is `Refunded`. |
 
 ### When balance changes
 
@@ -488,12 +510,12 @@ These features are not implemented entrypoints today:
 Any documentation that describes one of these items as available should be
 treated as roadmap text, not live integration guidance.
 
-
 ### Milestone Approval and Revocation
 
 Participants can approve milestone items prior to fund distribution payouts. If an authorization mistake is discovered prior to complete disbursement release configurations, the approving party can rescind authority.
 
 #### `revoke_approval(contract_id: Address, caller: Address, milestone_index: u32)`
+
 - **Authorization Required:** `caller.require_auth()`
 - **Behavior:** Explicitly removes individual state flags (`client_approved` | `freelancer_approved` | `arbiter_approved`). When all structural components drop to `false`, temporary records are scrubbed entirely to maximize gas savings.
 - **Errors raised:** `Error::MilestoneAlreadyReleased`, `Error::ApprovalRecordNotFound`.

@@ -8,6 +8,7 @@ use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Release
 // --- Submodules ---
 
 mod client_migration;
+mod create_contract_bounds;
 mod dispute;
 mod emergency_controls;
 mod mainnet_readiness;
@@ -107,12 +108,10 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
 pub fn assert_contract_error<
     T: core::fmt::Debug,
+    InnerE: core::fmt::Debug,
     E: Into<soroban_sdk::Error> + core::fmt::Debug,
 >(
-    result: Result<
-        Result<T, soroban_sdk::ConversionError>,
-        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
-    >,
+    result: Result<Result<T, InnerE>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
     expected: E,
 ) {
     match result {
