@@ -1,6 +1,4 @@
-use crate::{
-    DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters, ReadinessChecklist,
-};
+use crate::{DataKey, Escrow, EscrowArgs, EscrowClient, Error, GovernedParameters, ReadinessChecklist};
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
 /// Pending admin proposal stored under `DataKey::PendingAdmin`.
@@ -106,7 +104,7 @@ impl Escrow {
             .sequence()
             .saturating_sub(pending.proposed_at_ledger);
         if elapsed < ADMIN_ROTATION_MIN_DELAY_LEDGERS {
-            env.panic_with_error(EscrowError::TimelockNotElapsed);
+            env.panic_with_error(Error::TimelockNotElapsed);
         }
 
         let pending_admin = pending.proposed;
@@ -155,22 +153,22 @@ impl Escrow {
             .get::<_, bool>(&crate::DataKey::Initialized)
             .unwrap_or(false)
         {
-            env.panic_with_error(EscrowError::NotInitialized);
+            env.panic_with_error(Error::NotInitialized);
         }
 
         let stored_admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
 
         if admin != stored_admin {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
+            env.panic_with_error(Error::UnauthorizedRole);
         }
         admin.require_auth();
 
         if protocol_fee_bps > 10_000 {
-            env.panic_with_error(EscrowError::InvalidProtocolParameters);
+            env.panic_with_error(Error::InvalidProtocolParameters);
         }
 
         let params = GovernedParameters {

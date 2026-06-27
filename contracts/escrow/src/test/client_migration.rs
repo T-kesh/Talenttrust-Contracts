@@ -4,12 +4,9 @@ use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
 use crate::{
     types::{ContractStatus, DataKey},
-    Contract, Escrow, EscrowClient, EscrowError,
+    Contract, Escrow, EscrowClient, Error,
 };
-use soroban_sdk::{
-    testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo,
-    Address, Env, IntoVal, Symbol, TryFromVal, Val,
-};
+use soroban_sdk::{testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, IntoVal, Symbol, TryFromVal, Val};
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
 
@@ -148,19 +145,19 @@ fn non_proposed_address_cannot_accept_migration() {
     // Random attacker is rejected
     assert_contract_error(
         client.try_accept_client_migration(&id, &attacker),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 
     // The original client is also rejected (only proposed address may accept)
     assert_contract_error(
         client.try_accept_client_migration(&id, &client_addr),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 
     // Freelancer is rejected
     assert_contract_error(
         client.try_accept_client_migration(&id, &freelancer_addr),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 }
 
@@ -221,7 +218,7 @@ fn expired_proposal_cannot_be_accepted() {
     // accept panics with InvalidState because no live record exists
     assert_contract_error(
         client.try_accept_client_migration(&id, &new_client),
-        EscrowError::InvalidState,
+        Error::InvalidState,
     );
 }
 
@@ -313,7 +310,7 @@ fn migration_blocked_on_completed_contract() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &new_client),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
 }
 
@@ -332,7 +329,7 @@ fn migration_blocked_on_cancelled_contract() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &new_client),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
 }
 
@@ -353,7 +350,7 @@ fn migration_blocked_on_refunded_contract() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &new_client),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
 }
 
@@ -373,7 +370,7 @@ fn migration_blocked_on_disputed_contract() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &new_client),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
 }
 
@@ -393,7 +390,7 @@ fn cannot_propose_freelancer_as_new_client() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &freelancer_addr),
-        EscrowError::InvalidParticipant,
+        Error::InvalidParticipant,
     );
 }
 
@@ -409,7 +406,7 @@ fn cannot_propose_current_client_as_new_client() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &client_addr),
-        EscrowError::InvalidParticipant,
+        Error::InvalidParticipant,
     );
 }
 
@@ -432,13 +429,13 @@ fn only_current_client_may_propose_migration() {
     // Freelancer as proposer is rejected
     assert_contract_error(
         client.try_propose_client_migration(&id, &freelancer_addr, &new_client),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 
     // Random attacker as proposer is rejected
     assert_contract_error(
         client.try_propose_client_migration(&id, &attacker, &new_client),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 }
 
@@ -462,7 +459,7 @@ fn duplicate_proposal_while_pending_is_rejected() {
 
     assert_contract_error(
         client.try_propose_client_migration(&id, &client_addr, &new_client2),
-        EscrowError::InvalidState,
+        Error::InvalidState,
     );
 }
 
@@ -487,7 +484,7 @@ fn double_accept_after_migration_accepted_fails() {
     // Pending record is gone — second accept must fail
     assert_contract_error(
         client.try_accept_client_migration(&id, &new_client),
-        EscrowError::InvalidState,
+        Error::InvalidState,
     );
 }
 

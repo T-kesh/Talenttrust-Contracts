@@ -33,9 +33,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::vec::Vec as StdVec;
 
 use proptest::prelude::*;
-use soroban_sdk::{
-    testutils::Address as _, Address, Env, Vec as SorobanVec,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec as SorobanVec};
 
 use crate::{Contract, ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
 

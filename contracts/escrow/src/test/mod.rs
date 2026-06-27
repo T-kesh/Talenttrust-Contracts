@@ -3,7 +3,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Contract, ContractStatus, Escrow, EscrowClient, Error, ReleaseAuthorization};
 
 // --- Submodules ---
 
@@ -104,7 +104,7 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 ///   `Result<Result<T, ConversionError>, Result<soroban_sdk::Error, InvokeError>>`
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
-/// including both `EscrowError` and the canonical `Error` from `types.rs`.
+/// including both `Error` and the canonical `Error` from `types.rs`.
 pub fn assert_contract_error<
     T: core::fmt::Debug,
     E: Into<soroban_sdk::Error> + core::fmt::Debug,

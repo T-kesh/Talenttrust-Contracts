@@ -1,7 +1,7 @@
 use soroban_sdk::vec;
 
 use super::{assert_contract_error, complete_contract, create_contract, register_client};
-use crate::{ContractStatus, Error, EscrowError};
+use crate::{ContractStatus, Error};
 #[test]
 fn refund_succeeds_on_funded_contract() {
     let env = soroban_sdk::Env::default();
@@ -61,5 +61,5 @@ fn rejects_refund_on_finalized_contract() {
     let refund_ids = vec![&env, 0_u32];
     assert_contract_error(
         client.try_refund_unreleased_milestones(&contract_id, &refund_ids),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );

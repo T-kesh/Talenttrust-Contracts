@@ -14,7 +14,7 @@
 //!
 //! Run locally with `cargo test -p escrow --lib pause_controls`.
 
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ fn initialize_only_once_fails() {
     let (_env, client, admin) = setup_initialized();
     super::assert_contract_error(
         client.try_initialize(&admin),
-        EscrowError::AlreadyInitialized,
+        Error::AlreadyInitialized,
     );
 }
 
@@ -128,7 +128,7 @@ fn pause_requires_initialization() {
     env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-    super::assert_contract_error(client.try_pause(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_pause(), Error::NotInitialized);
 }
 
 // ─── create_contract blocked ─────────────────────────────────────────────────
@@ -149,7 +149,7 @@ fn pause_blocks_create_contract() {
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -169,7 +169,7 @@ fn emergency_blocks_create_contract() {
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 }
 
@@ -224,7 +224,7 @@ fn pause_blocks_deposit_funds() {
 
     super::assert_contract_error(
         client.try_deposit_funds(&contract_id, &client_addr, &50_i128),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -237,7 +237,7 @@ fn emergency_blocks_deposit_funds() {
 
     super::assert_contract_error(
         client.try_deposit_funds(&contract_id, &client_addr, &50_i128),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 }
 
@@ -272,7 +272,7 @@ fn pause_blocks_release_milestone() {
 
     super::assert_contract_error(
         client.try_release_milestone(&contract_id, &client_addr, &0),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -285,7 +285,7 @@ fn emergency_blocks_release_milestone() {
 
     super::assert_contract_error(
         client.try_release_milestone(&contract_id, &client_addr, &0),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 }
 
@@ -321,7 +321,7 @@ fn pause_blocks_refund_unreleased_milestones() {
     client.pause();
 
     match client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractPaused)),
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractPaused)),
         other => panic!("expected ContractPaused error, got {:?}", other),
     }
 }
@@ -334,7 +334,7 @@ fn emergency_blocks_refund_unreleased_milestones() {
     set_emergency_only(&env, &client);
 
     match client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::EmergencyActive)),
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::EmergencyActive)),
         other => panic!("expected EmergencyActive error, got {:?}", other),
     }
 }
@@ -377,7 +377,7 @@ fn pause_blocks_issue_reputation() {
             &5_u32,
             &soroban_sdk::String::from_str(&env, "Great"),
         ),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -395,7 +395,7 @@ fn emergency_blocks_issue_reputation() {
             &5_u32,
             &soroban_sdk::String::from_str(&env, "Great"),
         ),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 }
 
@@ -440,7 +440,7 @@ fn pause_blocks_cancel_contract() {
 
     super::assert_contract_error(
         client.try_cancel_contract(&contract_id, &client_addr),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -453,7 +453,7 @@ fn emergency_blocks_cancel_contract() {
 
     super::assert_contract_error(
         client.try_cancel_contract(&contract_id, &client_addr),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 }
 
@@ -529,7 +529,7 @@ fn pause_gate_runs_before_auth_on_create_contract() {
             &milestones,
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -543,6 +543,6 @@ fn pause_gate_runs_before_auth_on_deposit_funds() {
     let outsider = Address::generate(&env);
     super::assert_contract_error(
         client.try_deposit_funds(&contract_id, &outsider, &50_i128),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }

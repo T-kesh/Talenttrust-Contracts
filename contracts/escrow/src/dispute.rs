@@ -1,9 +1,6 @@
 // Merged imports
 
-use crate::{
-    safe_add_amounts, Contract, ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient,
-    EscrowError,
-};
+use crate::{safe_add_amounts, Contract, ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient, Error};
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
 // Removed obsolete duplicated `impl Escrow`

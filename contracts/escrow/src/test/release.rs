@@ -1,12 +1,7 @@
-use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Events, vec, Address, Env, String, Symbol,
-    TryFromVal, Val,
-};
+use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Events, vec, Address, Env, String, Symbol, TryFromVal, Val};
 
-use super::{
-    assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE,
-};
-use crate::{ContractStatus, Error, EscrowError, ReleaseAuthorization};
+use super::{assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE};
+use crate::{ContractStatus, Error, ReleaseAuthorization};
 
 fn evidence(env: &Env, s: &str) -> String {
     String::from_str(env, s)
@@ -53,7 +48,7 @@ fn rejects_release_without_sufficient_balance() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &100_i128));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::InsufficientFunds);
+    assert_contract_error(result, Error::InsufficientFunds);
 }
 
 #[test]
@@ -65,7 +60,7 @@ fn rejects_release_of_invalid_milestone_index() {
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
     let result = client.try_release_milestone(&contract_id, &client_addr, &99);
-    assert_contract_error(result, EscrowError::InvalidMilestone);
+    assert_contract_error(result, Error::InvalidMilestone);
 }
 
 #[test]
@@ -80,7 +75,7 @@ fn rejects_releasing_refunded_milestone() {
 
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
     let result = client.try_release_milestone(&contract_id, &client_addr, &1);
-    assert_contract_error(result, EscrowError::AlreadyRefunded);
+    assert_contract_error(result, Error::AlreadyRefunded);
 }
 
 #[test]
@@ -96,7 +91,7 @@ fn rejects_releasing_same_milestone_twice() {
 
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::AlreadyReleased);
+    assert_contract_error(result, Error::AlreadyReleased);
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +261,7 @@ fn work_evidence_rejects_oversized_string() {
     // 257 chars > 256-byte limit
     let ev = String::from_str(&env, &"a".repeat(257));
     let result = escrow.try_submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev);
-    assert_contract_error(result, EscrowError::EvidenceTooLong);
+    assert_contract_error(result, Error::EvidenceTooLong);
 }
 
 #[test]
@@ -296,7 +291,7 @@ fn work_evidence_rejects_paused_contract() {
 
     let ev = evidence(&env, "ipfs://QmTest");
     let result = escrow.try_submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev);
-    assert_contract_error(result, EscrowError::ContractPaused);
+    assert_contract_error(result, Error::ContractPaused);
 }
 
 #[test]
@@ -318,7 +313,7 @@ fn work_evidence_rejects_finalized_contract() {
 
     let ev = evidence(&env, "ipfs://QmAfterFinalize");
     let result = escrow.try_submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev);
-    assert_contract_error(result, EscrowError::AlreadyFinalized);
+    assert_contract_error(result, Error::AlreadyFinalized);
 }
 
 #[test]

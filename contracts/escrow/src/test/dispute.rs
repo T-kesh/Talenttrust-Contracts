@@ -1,8 +1,6 @@
 #![cfg(test)]
 
-use crate::{
-    ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
-};
+use crate::{ContractStatus, DisputeResolution, Escrow, EscrowClient, Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, EscrowClient<'static>) {
@@ -254,7 +252,7 @@ fn raise_dispute_requires_contract_party() {
     let outsider = Address::generate(&env);
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &outsider),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 }
 
@@ -279,7 +277,7 @@ fn raise_dispute_requires_assigned_arbiter() {
 
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &client_addr),
-        EscrowError::ArbiterRequired,
+        Error::ArbiterRequired,
     );
 }
 
@@ -295,7 +293,7 @@ fn raise_dispute_rejects_completed_contract() {
 
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &client_addr),
-        EscrowError::InvalidState,
+        Error::InvalidState,
     );
 }
 
@@ -414,7 +412,7 @@ fn resolve_split_rejects_invalid_totals() {
     // Split doesn't match available balance
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::Split(30, 50)),
-        EscrowError::InvalidDisputeSplit,
+        Error::InvalidDisputeSplit,
     );
 }
 
@@ -432,7 +430,7 @@ fn resolve_split_rejects_negative_amounts() {
             &arbiter_addr,
             &DisputeResolution::Split(-10, 110),
         ),
-        EscrowError::InvalidDisputeSplit,
+        Error::InvalidDisputeSplit,
     );
 }
 
@@ -447,7 +445,7 @@ fn resolve_dispute_requires_assigned_arbiter() {
     let outsider = Address::generate(&env);
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &outsider, &DisputeResolution::FullPayout),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 }
 
@@ -460,7 +458,7 @@ fn resolve_dispute_rejects_non_disputed_contract() {
     // Try to resolve without raising dispute first
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
 }
 
@@ -476,7 +474,7 @@ fn resolve_dispute_cannot_be_called_twice() {
     // Try to resolve again
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullPayout),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
 }
 
@@ -490,7 +488,7 @@ fn pause_blocks_raise_dispute() {
 
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &client_addr),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -505,7 +503,7 @@ fn pause_blocks_resolve_dispute() {
 
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -519,7 +517,7 @@ fn emergency_blocks_raise_and_resolve_dispute() {
 
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &client_addr),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 
     // Resolve emergency, raise dispute, then emergency again
@@ -529,7 +527,7 @@ fn emergency_blocks_raise_and_resolve_dispute() {
 
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
-        EscrowError::EmergencyActive,
+        Error::EmergencyActive,
     );
 }
 
