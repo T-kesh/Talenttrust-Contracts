@@ -1,9 +1,18 @@
 use crate::ttl::ADMIN_ROTATION_MIN_DELAY_LEDGERS;
-use crate::{DataKey, Error, Escrow, EscrowArgs, EscrowClient, GovernedParameters, PendingAdminProposal, ReadinessChecklist};
+use crate::{DataKey, Error, Escrow, GovernedParameters, PendingAdminProposal, ReadinessChecklist};
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 #[soroban_sdk::contractimpl]
 impl Escrow {
+    // NOTE: The two-step admin transfer entrypoints (`propose_governance_admin`,
+    // `accept_governance_admin`, `get_pending_governance_admin`) and the
+    // `get_governance_admin` view live in `lib.rs` because they are co-located
+    // with the timelock enforcement logic and the readiness checklist. Putting
+    // a second `pub fn` with the same name in this `impl Escrow` block caused a
+    // duplicate symbol error during macro expansion. The internal `_impl`
+    // helpers stay here so that `lib.rs` can call into them without forcing a
+    // single huge file.
+
     pub fn set_protocol_fee_bps(env: Env, admin: Address, new_bps: u32) -> bool {
         if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
             env.panic_with_error(Error::NotInitialized);
@@ -24,52 +33,6 @@ impl Escrow {
         true
     }
 
-    pub fn propose_governance_admin(env: Env, admin: Address, proposed: Address) -> bool {
-        if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
-            env.panic_with_error(Error::NotInitialized);
-        }
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        if admin != stored_admin {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        admin.require_auth();
-        env.storage().persistent().set(&DataKey::PendingAdmin, &proposed);
-        env.events().publish(
-            (symbol_short!("admin"), Symbol::new(&env, "proposed")),
-            (admin, proposed.clone(), env.ledger().timestamp()),
-        );
-        true
-    }
-
-    pub fn accept_governance_admin(env: Env, proposed_admin: Address) -> bool {
-        if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
-            env.panic_with_error(Error::NotInitialized);
-        }
-        let pending: Address = env.storage().persistent().get(&DataKey::PendingAdmin).unwrap_or_else(|| env.panic_with_error(Error::InvalidState));
-        if proposed_admin != pending {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        proposed_admin.require_auth();
-
-        let old_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        env.storage().persistent().set(&DataKey::Admin, &pending);
-        env.storage().persistent().remove(&DataKey::PendingAdmin);
-
-        env.events().publish(
-            (symbol_short!("admin"), Symbol::new(&env, "accepted")),
-            (old_admin, pending.clone(), env.ledger().timestamp()),
-        );
-        true
-    }
-
-    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::PendingAdmin)
-    }
-
-    pub fn get_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::Admin)
-    }
-
     /// Returns the current protocol fee in basis points.
     pub fn get_protocol_fee_bps(env: Env) -> u32 {
         env.storage()
@@ -78,7 +41,69 @@ impl Escrow {
             .unwrap_or(0)
     }
 
-    // ── Two-step admin transfer ───────────────────────────────────────────────
+    /// Retrieve the current governed parameters.
+    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
+        env.storage().persistent().get(&DataKey::GovernedParameters)
+    }
+
+    /// Set both governance parameters at once and update the readiness checklist.
+    pub fn set_governed_params(
+        env: Env,
+        admin: Address,
+        protocol_fee_bps: u32,
+        max_escrow_total_stroops: i128,
+    ) -> bool {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&crate::DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(Error::NotInitialized);
+        }
+
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+
+        if admin != stored_admin {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+        admin.require_auth();
+
+        if protocol_fee_bps > 10_000 {
+            env.panic_with_error(Error::InvalidProtocolParameters);
+        }
+
+        let params = GovernedParameters {
+            protocol_fee_bps,
+            max_escrow_total_stroops,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernedParameters, &params);
+
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.governed_params_set = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+
+        true
+    }
+
+    // ── Two-step admin transfer helpers ───────────────────────────────────────
+    //
+    // These `pub(crate)` helpers are called by the canonical entrypoints in
+    // `lib.rs` so that the timelock logic and audit events live next to the
+    // admin read/write guards. They are intentionally NOT marked
+    // `#[contractimpl]` entrypoints to avoid generating duplicate symbols.
 
     /// Propose a new governance admin. Stores the proposal with a timelock.
     ///
@@ -161,62 +186,5 @@ impl Escrow {
     /// Internal: return the current admin address.
     pub(crate) fn get_governance_admin_impl(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
-    }
-
-    /// Set both governance parameters at once and update the readiness checklist.
-    pub fn set_governed_params(
-        env: Env,
-        admin: Address,
-        protocol_fee_bps: u32,
-        max_escrow_total_stroops: i128,
-    ) -> bool {
-        if !env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&crate::DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(Error::NotInitialized);
-        }
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-
-        if admin != stored_admin {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        admin.require_auth();
-
-        if protocol_fee_bps > 10_000 {
-            env.panic_with_error(Error::InvalidProtocolParameters);
-        }
-
-        let params = GovernedParameters {
-            protocol_fee_bps,
-            max_escrow_total_stroops,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::GovernedParameters, &params);
-
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        checklist.governed_params_set = true;
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
-
-        true
-    }
-
-    /// Retrieve the current governed parameters.
-    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
-        env.storage().persistent().get(&DataKey::GovernedParameters)
     }
 }

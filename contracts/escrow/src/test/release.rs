@@ -413,7 +413,7 @@ fn release_moves_funds_on_chain() {
     
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
-    client.set_settlement_token(&token_address);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.set_settlement_token(&__admin, &token_address);
     
     let milestones = soroban_sdk::vec![&env, 100_i128, 200_i128];
     let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::types::ReleaseAuthorization::ClientOnly);
@@ -443,7 +443,7 @@ fn refund_moves_funds_on_chain() {
     
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
-    client.set_settlement_token(&token_address);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.set_settlement_token(&__admin, &token_address);
     
     let milestones = soroban_sdk::vec![&env, 100_i128, 200_i128];
     let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::types::ReleaseAuthorization::ClientOnly);
@@ -472,7 +472,7 @@ fn dispute_resolution_moves_funds_on_chain() {
     
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
-    client.set_settlement_token(&token_address);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.set_settlement_token(&__admin, &token_address);
     
     let arbiter_addr = Address::generate(&env);
     let milestones = soroban_sdk::vec![&env, 300_i128];
@@ -507,7 +507,7 @@ fn release_fails_underfunded() {
     
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
-    client.set_settlement_token(&token_address);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.set_settlement_token(&__admin, &token_address);
     
     let milestones = soroban_sdk::vec![&env, 100_i128, 200_i128];
     let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::types::ReleaseAuthorization::ClientOnly);
@@ -518,7 +518,7 @@ fn release_fails_underfunded() {
     
     // Set settlement token to unregistered_token (which holds 0 balance)
     let unregistered_token = env.register_stellar_asset_contract(Address::generate(&env));
-    client.set_settlement_token(&unregistered_token);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.set_settlement_token(&__admin, &unregistered_token);
     
     // Now trying to release should panic because the contract balance on unregistered_token is 0!
     client.release_milestone(&contract_id, &0, &client_addr);

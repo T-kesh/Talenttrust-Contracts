@@ -53,7 +53,7 @@ fn setup_with_sac(env: &Env, mint_amount: i128) -> (
     client.initialize(&admin);
 
     // Bind the SAC token.
-    client.bind_settlement_token(&sac);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.bind_settlement_token(&__admin, &sac);
 
     // Mint to whoever the next caller will be. Returned to caller via setup.
     let _ = mint_amount; // actual mint happens in per-test helpers
@@ -120,7 +120,8 @@ fn bind_settlement_token_admin_can_bind_and_query_returns_some() {
     client.initialize(&admin);
 
     let sac = env.register_stellar_asset_contract(admin.clone());
-    assert!(client.bind_settlement_token(&sac));
+    let __escrow_admin = client.get_admin().unwrap();
+    assert!(client.bind_settlement_token(&__escrow_admin, &sac));
     assert_eq!(client.get_settlement_token(), Some(sac));
 }
 
@@ -134,10 +135,10 @@ fn bind_settlement_token_rejects_double_bind() {
 
     let sac = env.register_stellar_asset_contract(admin.clone());
     let sac2 = env.register_stellar_asset_contract(admin.clone());
-    client.bind_settlement_token(&sac);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.bind_settlement_token(&__admin, &sac);
 
     assert_contract_error(
-        client.try_bind_settlement_token(&sac2),
+        let __escrow_admin = client.get_admin().unwrap(); client.try_bind_settlement_token(&__escrow_admin, &sac2),
         Error::SettlementTokenAlreadyBound,
     );
 }
@@ -149,7 +150,7 @@ fn bind_settlement_token_rejects_uninit() {
     let client = register_client(&env);
     let sac = env.register_stellar_asset_contract(Address::generate(&env));
     assert_contract_error(
-        client.try_bind_settlement_token(&sac),
+        let __escrow_admin = client.get_admin().unwrap(); client.try_bind_settlement_token(&__escrow_admin, &sac),
         Error::NotInitialized,
     );
 }
@@ -165,7 +166,7 @@ fn deposit_funds_with_sac_pulls_amount_into_contract() {
     let admin = Address::generate(&env);
     let sac = env.register_stellar_asset_contract(admin.clone());
     client.initialize(&admin);
-    client.bind_settlement_token(&sac);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.bind_settlement_token(&__admin, &sac);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
@@ -438,7 +439,7 @@ fn setup_and_funded_partial(
     let sac = env.register_stellar_asset_contract(admin.clone());
     env.mock_all_auths();
     client.initialize(&admin);
-    client.bind_settlement_token(&sac);
+    let __admin = client.get_admin().unwrap_or_else(|| { let __a = Address::generate(&env); client.initialize(&__a); __a }); client.bind_settlement_token(&__admin, &sac);
 
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
