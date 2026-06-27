@@ -1430,6 +1430,37 @@ impl Escrow {
         if finalize::has_finalization_record(env, contract_id) {
             env.panic_with_error(EscrowError::AlreadyFinalized);
         }
+
+        // Verify caller is the assigned arbiter
+        match &contract.arbiter {
+            Some(contract_arbiter) if *contract_arbiter == arbiter => {}
+            _ => env.panic_with_error(EscrowError::UnauthorizedRole),
+        }
+
+        // Compute payouts based on resolution
+        let (client_payout, freelancer_payout) =
+            dispute::resolution_payouts(&contract, &resolution)
+                .unwrap_or_else(|e| env.panic_with_error(e));
+
+        // Update contract accounting
+        contract.refunded_amount += client_payout;
+        contract.released_amount += freelancer_payout;
+
+        // Set final status
+        contract.status = dispute::final_status_after_resolution(&contract);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("dispute"), symbol_short!("resolved")),
+            (contract_id, resolution.code(), client_payout, freelancer_payout),
+        );
+
+        true
     }
 }
 
