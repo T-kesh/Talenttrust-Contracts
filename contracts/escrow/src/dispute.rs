@@ -1,39 +1,11 @@
-use crate::{safe_add_amounts, Contract, ContractStatus, EscrowError};
-use soroban_sdk::contracttype;
-
-// Removed obsolete duplicated `impl Escrow`
-
-/// Resolution selected by the assigned arbiter for a disputed escrow.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DisputeResolution {
-    /// Refund all remaining escrowed funds to the client.
-    FullRefund,
-    /// Refund 70% of the remaining balance to the client and release 30% to the freelancer.
-    PartialRefund,
-    /// Release all remaining escrowed funds to the freelancer.
-    FullPayout,
-    /// Apply a custom split of the remaining balance.
-    Split(i128, i128),
-}
-
-impl DisputeResolution {
-    pub fn code(&self) -> u32 {
-        match self {
-            Self::FullRefund => 0,
-            Self::PartialRefund => 1,
-            Self::FullPayout => 2,
-            Self::Split(_, _) => 3,
-        }
-    }
-}
+use crate::{safe_add_amounts, ContractStatus, Contract as EscrowContractData, EscrowError, DisputeResolution};
 
 pub fn resolution_payouts(
-    contract: &Contract,
+    contract: &EscrowContractData,
     resolution: &DisputeResolution,
 ) -> Result<(i128, i128), EscrowError> {
     let available = contract
-        .funded_amount
+        .total_deposited
         .checked_sub(contract.released_amount)
         .and_then(|value| value.checked_sub(contract.refunded_amount))
         .ok_or(EscrowError::AccountingInvariantViolated)?;
@@ -51,22 +23,24 @@ pub fn resolution_payouts(
             Ok((available - freelancer_payout, freelancer_payout))
         }
         DisputeResolution::FullPayout => Ok((0, available)),
-        DisputeResolution::Split(client_amount, freelancer_amount) => {
-            if *client_amount < 0 || *freelancer_amount < 0 {
+        DisputeResolution::Split(amounts) => {
+            let client_amount = amounts.client_amount;
+            let freelancer_amount = amounts.freelancer_amount;
+            if client_amount < 0 || freelancer_amount < 0 {
                 return Err(EscrowError::InvalidDisputeSplit);
             }
-            let total = safe_add_amounts(*client_amount, *freelancer_amount)
+            let total = safe_add_amounts(client_amount, freelancer_amount)
                 .ok_or(EscrowError::PotentialOverflow)?;
             if total != available {
                 return Err(EscrowError::InvalidDisputeSplit);
             }
-            Ok((*client_amount, *freelancer_amount))
+            Ok((client_amount, freelancer_amount))
         }
     }
 }
 
-pub fn final_status_after_resolution(contract: &Contract) -> ContractStatus {
-    if contract.refunded_amount == contract.funded_amount {
+pub fn final_status_after_resolution(contract: &EscrowContractData) -> ContractStatus {
+    if contract.refunded_amount == contract.total_deposited {
         ContractStatus::Refunded
     } else {
         ContractStatus::Completed

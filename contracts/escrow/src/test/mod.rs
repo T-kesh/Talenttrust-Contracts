@@ -147,6 +147,24 @@ pub fn create_default_contract(
     client_addr: &Address,
     freelancer_addr: &Address,
 ) -> u32 {
+    // 1. Initialize contract if not already initialized
+    if !env.storage().persistent().has(&crate::DataKey::Initialized) {
+        let admin = Address::generate(env);
+        client.initialize(&admin);
+    }
+    
+    // 2. Set settlement token if not already set
+    if !env.storage().persistent().has(&crate::DataKey::SettlementToken) {
+        let token_admin = Address::generate(env);
+        let token_address = env.register_stellar_asset_contract(token_admin);
+        client.set_settlement_token(&token_address);
+    }
+
+    // 3. Mint tokens to client_addr
+    let token_address = client.get_settlement_token();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token_address);
+    token_client.mint(client_addr, &100_000_0000000_i128); // mint a large balance
+
     let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
     client.create_contract(
         client_addr,
@@ -155,6 +173,27 @@ pub fn create_default_contract(
         &milestones,
         &ReleaseAuthorization::ClientOnly,
     )
+}
+
+pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+    assert!(client.deposit_funds(&id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&id, &client_addr, &0));
+    assert!(client.release_milestone(&id, &0, &client_addr));
+    assert!(client.approve_milestone_release(&id, &client_addr, &1));
+    assert!(client.release_milestone(&id, &1, &client_addr));
+    assert!(client.approve_milestone_release(&id, &client_addr, &2));
+    assert!(client.release_milestone(&id, &2, &client_addr));
+    (client_addr, freelancer_addr, id)
 }
 
 pub fn assert_contract_state(
