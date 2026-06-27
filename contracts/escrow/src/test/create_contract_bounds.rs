@@ -11,9 +11,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{
-    Escrow, EscrowClient, EscrowError, ReleaseAuthorization, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS,
-};
+use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS};
 
 // Returns (env, contract_address). Each test creates EscrowClient locally so
 // the borrow of `env` stays in the same scope — same pattern as pause_controls.
@@ -29,7 +27,7 @@ fn assert_err(
         Result<u32, soroban_sdk::ConversionError>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
     >,
-    expected: EscrowError,
+    expected: Error,
 ) {
     match result {
         Err(Ok(e)) => {
@@ -49,7 +47,7 @@ fn rejects_same_client_and_freelancer() {
     let same = Address::generate(&env);
     assert_err(
         client.try_create_contract(&same, &same, &None, &vec![&env, 100_i128], &ReleaseAuthorization::ClientOnly),
-        EscrowError::InvalidParticipant,
+        Error::InvalidParticipant,
     );
 }
 
@@ -63,7 +61,7 @@ fn rejects_empty_milestones() {
     let f = Address::generate(&env);
     assert_err(
         client.try_create_contract(&c, &f, &None, &Vec::new(&env), &ReleaseAuthorization::ClientOnly),
-        EscrowError::EmptyMilestones,
+        Error::EmptyMilestones,
     );
 }
 
@@ -82,7 +80,7 @@ fn rejects_one_over_max_milestones() {
     assert_eq!(amounts.len(), MAX_MILESTONES + 1);
     assert_err(
         client.try_create_contract(&c, &f, &None, &amounts, &ReleaseAuthorization::ClientOnly),
-        EscrowError::TooManyMilestones,
+        Error::TooManyMilestones,
     );
 }
 
@@ -112,7 +110,7 @@ fn rejects_zero_milestone_amount() {
     let f = Address::generate(&env);
     assert_err(
         client.try_create_contract(&c, &f, &None, &vec![&env, 0_i128], &ReleaseAuthorization::ClientOnly),
-        EscrowError::InvalidMilestoneAmount,
+        Error::InvalidMilestoneAmount,
     );
 }
 
@@ -124,7 +122,7 @@ fn rejects_negative_milestone_amount() {
     let f = Address::generate(&env);
     assert_err(
         client.try_create_contract(&c, &f, &None, &vec![&env, -1_i128], &ReleaseAuthorization::ClientOnly),
-        EscrowError::InvalidMilestoneAmount,
+        Error::InvalidMilestoneAmount,
     );
 }
 
@@ -140,7 +138,7 @@ fn rejects_amounts_that_would_overflow_i128() {
     let large = i128::MAX / 2 + 2;
     assert_err(
         client.try_create_contract(&c, &f, &None, &vec![&env, large, large], &ReleaseAuthorization::ClientOnly),
-        EscrowError::PotentialOverflow,
+        Error::PotentialOverflow,
     );
 }
 
@@ -175,7 +173,7 @@ fn rejects_total_one_over_cap() {
             &vec![&env, MAX_TOTAL_ESCROW_STROOPS + 1],
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::InvalidMilestoneAmount,
+        Error::InvalidMilestoneAmount,
     );
 }
 
@@ -188,7 +186,7 @@ fn rejects_multi_milestone_total_over_cap() {
     let half = MAX_TOTAL_ESCROW_STROOPS / 2 + 1;
     assert_err(
         client.try_create_contract(&c, &f, &None, &vec![&env, half, half], &ReleaseAuthorization::ClientOnly),
-        EscrowError::InvalidMilestoneAmount,
+        Error::InvalidMilestoneAmount,
     );
 }
 
@@ -208,6 +206,54 @@ fn count_guard_fires_before_amount_guard() {
     }
     assert_err(
         client.try_create_contract(&c, &f, &None, &amounts, &ReleaseAuthorization::ClientOnly),
-        EscrowError::TooManyMilestones,
+        Error::TooManyMilestones,
     );
 }
+
+// governed cap tests ───────────────────────────────────────────────────────────
+
+#[test]
+fn accepts_total_below_governed_cap() {
+    let (env, cid) = setup();
+    let client = EscrowClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 1000_i128);
+    
+    let c = Address::generate(&env);
+    let f = Address::generate(&env);
+    client.create_contract(&c, &f, &None, &vec![&env, 500_i128], &ReleaseAuthorization::ClientOnly);
+}
+
+#[test]
+fn rejects_total_above_governed_cap() {
+    let (env, cid) = setup();
+    let client = EscrowClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 1000_i128);
+    
+    let c = Address::generate(&env);
+    let f = Address::generate(&env);
+    assert_err(
+        client.try_create_contract(&c, &f, &None, &vec![&env, 1500_i128], &ReleaseAuthorization::ClientOnly),
+        EscrowError::EscrowCapExceeded,
+    );
+}
+
+#[test]
+fn accepts_total_when_governed_cap_is_zero() {
+    let (env, cid) = setup();
+    let client = EscrowClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 0_i128);
+    
+    let c = Address::generate(&env);
+    let f = Address::generate(&env);
+    client.create_contract(&c, &f, &None, &vec![&env, 1500_i128], &ReleaseAuthorization::ClientOnly);
+}
+

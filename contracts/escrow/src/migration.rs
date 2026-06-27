@@ -1,5 +1,5 @@
 use crate::ttl::{read_if_live, remove_transient, store_with_ttl, PENDING_MIGRATION_TTL_LEDGERS};
-use crate::{Contract, ContractStatus, DataKey, Escrow, EscrowError};
+use crate::{Contract, ContractStatus, DataKey, Escrow, Error};
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 #[contracttype]
@@ -20,7 +20,7 @@ impl Escrow {
         env.storage()
             .persistent()
             .get::<_, Contract>(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound))
     }
 
     pub(crate) fn require_migration_allowed(env: &Env, status: ContractStatus) {
@@ -31,7 +31,7 @@ impl Escrow {
                 | ContractStatus::Refunded
                 | ContractStatus::Disputed
         ) {
-            env.panic_with_error(EscrowError::InvalidStatusTransition);
+            env.panic_with_error(Error::InvalidStatusTransition);
         }
     }
 
@@ -58,14 +58,14 @@ pub fn propose_client_migration_impl(
     let contract = Escrow::load_contract(&env, contract_id);
     Escrow::require_not_finalized(&env, contract_id);
     if current_client != contract.client {
-        env.panic_with_error(EscrowError::UnauthorizedRole);
+        env.panic_with_error(Error::UnauthorizedRole);
     }
     if new_client == contract.client || new_client == contract.freelancer {
-        env.panic_with_error(EscrowError::InvalidParticipant);
+        env.panic_with_error(Error::InvalidParticipant);
     }
     Escrow::require_migration_allowed(&env, contract.status);
     if Escrow::pending_migration_exists(&env, contract_id) {
-        env.panic_with_error(EscrowError::InvalidState);
+        env.panic_with_error(Error::InvalidState);
     }
 
     let requested_at = env.ledger().sequence();
@@ -101,13 +101,13 @@ pub fn accept_client_migration_impl(env: &Env, contract_id: u32, new_client: Add
 
     let key = Escrow::pending_migration_key(contract_id);
     let pending: PendingClientMigration =
-        read_if_live(&env, &key).unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidState));
+        read_if_live(&env, &key).unwrap_or_else(|| env.panic_with_error(Error::InvalidState));
 
     if pending.proposed_client != new_client {
-        env.panic_with_error(EscrowError::UnauthorizedRole);
+        env.panic_with_error(Error::UnauthorizedRole);
     }
     if pending.current_client != contract.client {
-        env.panic_with_error(EscrowError::InvalidState);
+        env.panic_with_error(Error::InvalidState);
     }
 
     contract.client = new_client.clone();
@@ -131,5 +131,5 @@ pub fn has_pending_client_migration_impl(env: &Env, contract_id: u32) -> bool {
 /// Return the live pending client migration record.
 pub fn get_pending_client_migration_impl(env: &Env, contract_id: u32) -> PendingClientMigration {
     read_if_live(&env, &Escrow::pending_migration_key(contract_id))
-        .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidState))
+        .unwrap_or_else(|| env.panic_with_error(Error::InvalidState))
 }

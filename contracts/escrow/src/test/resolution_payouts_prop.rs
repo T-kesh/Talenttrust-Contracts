@@ -4,24 +4,25 @@
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use soroban_sdk::Address;
+    use soroban_sdk::{Address, Env};
+
+    use crate::{Contract, ContractStatus, ReleaseAuthorization, DisputeSplit};
+    use crate::dispute::{resolution_payouts, DisputeResolution};
 
     // Helper to create a dummy contract with given funded, released, refunded amounts
     fn dummy_contract(available: i128) -> Contract {
-        // For simplicity, create a contract where funded_amount = available,
-        // and released and refunded are zero. This satisfies the calculation
-        // of `available` inside `resolution_payouts`.
+        let env = Env::default();
         Contract {
-            client: Address::generate(&Env::default()),
-            freelancer: Address::generate(&Env::default()),
-            arbiter: Some(Address::generate(&Env::default())),
+            client: Address::generate(&env),
+            freelancer: Address::generate(&env),
+            arbiter: Some(Address::generate(&env)),
+            total_deposited: available,
             funded_amount: available,
             released_amount: 0,
             refunded_amount: 0,
-
             status: ContractStatus::Funded,
-            // other fields defaulted/zeroed as needed
-            ..Default::default()
+            release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         }
     }
 
@@ -38,7 +39,10 @@ mod tests {
             let freelancer_amount = available - client_amount;
 
             let contract = dummy_contract(available);
-            let resolution = DisputeResolution::Split(client_amount, freelancer_amount);
+            let resolution = DisputeResolution::Split(DisputeSplit {
+                client_amount,
+                freelancer_amount,
+            });
 
             let (client_payout, freelancer_payout) =
                 resolution_payouts(&contract, &resolution).expect("valid split should succeed");
@@ -64,7 +68,10 @@ mod tests {
             prop_assume!(freelancer_amount >= 0);
 
             let contract = dummy_contract(available);
-            let resolution = DisputeResolution::Split(client_amount, freelancer_amount);
+            let resolution = DisputeResolution::Split(DisputeSplit {
+                client_amount,
+                freelancer_amount,
+            });
 
             let result = resolution_payouts(&contract, &resolution);
             prop_assert!(result.is_err());

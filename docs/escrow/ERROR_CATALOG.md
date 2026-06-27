@@ -394,6 +394,71 @@ This document is a single reference mapping each error **code** to:
 
 ---
 
+## Code 31: `TimelockNotElapsed` ✅ Live
+
+**Entrypoint(s)**:
+- `accept_governance_admin`
+
+**Trigger condition**:
+- Attempted to accept a governance admin change before the mandatory timelock has passed.
+
+**Precise condition (conceptual)**:
+- Block time is strictly less than the required elapsed time since the proposal.
+
+---
+
+## Code 32: `InvalidProtocolParameters` ✅ Live
+
+**Entrypoint(s)**:
+- `set_governed_params` (or `set_protocol_fee_bps` / related admin functions)
+
+**Trigger condition**:
+- Protocol parameters supplied are outside valid ranges (e.g., fee > 10,000 bps).
+
+**Precise condition (conceptual)**:
+- `if new_bps > 10000 { panic_with_error(InvalidProtocolParameters) }`
+
+---
+
+## Code 33: `EvidenceTooLong` ✅ Live
+
+**Entrypoint(s)**:
+- `submit_work_evidence`
+
+**Trigger condition**:
+- Provided work evidence string is larger than 256 bytes.
+
+**Precise condition (as implemented)**:
+- `if evidence.len() > 256 { panic_with_error(EvidenceTooLong) }`
+
+---
+
+## Code 34: `EmptyComment` ✅ Live
+
+**Entrypoint(s)**:
+- `issue_reputation`
+
+**Trigger condition**:
+- The reputation comment string is empty.
+
+**Precise condition (as implemented)**:
+- `if comment.len() == 0 { panic_with_error(EmptyComment) }`
+
+---
+
+## Code 35: `CommentTooLong` ✅ Live
+
+**Entrypoint(s)**:
+- `issue_reputation`
+
+**Trigger condition**:
+- The reputation comment string exceeds 200 bytes.
+
+**Precise condition (as implemented)**:
+- `if comment.len() > 200 { panic_with_error(CommentTooLong) }`
+
+---
+
 ## Cross-links
 
 - Public entrypoint security notes and assumptions: [`SECURITY.md`](./SECURITY.md)

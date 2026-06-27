@@ -27,15 +27,15 @@ pub enum AmountValidationError {
 ///
 /// # Returns
 /// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
-pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
+pub fn validate_single_amount(amount: i128) -> Result<(), crate::Error> {
     // Check positivity
     if amount <= MIN_POSITIVE_AMOUNT - 1 {
-        return Err(crate::EscrowError::AmountMustBePositive);
+        return Err(crate::Error::AmountMustBePositive);
     }
 
     // Check maximum bounds
     if amount > MAX_SINGLE_AMOUNT_STROOPS {
-        return Err(crate::EscrowError::InvalidMilestoneAmount);
+        return Err(crate::Error::InvalidMilestoneAmount);
     }
 
     Ok(())
@@ -49,7 +49,7 @@ pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
 /// # Returns
 /// `Ok(total)` with sum of all amounts if valid, `Err(AmountValidationError)` if invalid
 #[allow(dead_code)] // available for callers; not used by the contract directly
-pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowError> {
+pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::Error> {
     let mut total: i128 = 0;
 
     for &amount in amounts.iter() {
@@ -60,7 +60,7 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowErro
         if let Some(new_total) = total.checked_add(amount) {
             total = new_total;
         } else {
-            return Err(crate::EscrowError::PotentialOverflow);
+            return Err(crate::Error::PotentialOverflow);
         }
     }
 
@@ -79,10 +79,10 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowErro
 pub fn validate_contract_total(
     total_amount: i128,
     max_contract_total: i128,
-) -> Result<(), crate::EscrowError> {
+) -> Result<(), crate::Error> {
     if total_amount > max_contract_total {
         // Map to InvalidMilestoneAmount for contract total overflow
-        return Err(crate::EscrowError::InvalidMilestoneAmount);
+        return Err(crate::Error::InvalidMilestoneAmount);
     }
     Ok(())
 }
@@ -99,7 +99,7 @@ pub fn validate_contract_total(
 pub fn validate_milestone_amounts(
     milestone_amounts: &[i128],
     max_contract_total: i128,
-) -> Result<i128, crate::EscrowError> {
+) -> Result<i128, crate::Error> {
     // Validate each milestone amount and calculate total
     let total = validate_amount_array(milestone_amounts)?;
 
@@ -123,17 +123,17 @@ pub fn validate_deposit_amount(
     deposit_amount: i128,
     current_deposited: i128,
     max_contract_total: i128,
-) -> Result<(), crate::EscrowError> {
+) -> Result<(), crate::Error> {
     // Validate deposit amount itself
     validate_single_amount(deposit_amount)?;
 
     // Check if deposit would exceed contract maximum
     if let Some(new_total) = current_deposited.checked_add(deposit_amount) {
         if new_total > max_contract_total {
-            return Err(crate::EscrowError::InvalidMilestoneAmount);
+            return Err(crate::Error::InvalidMilestoneAmount);
         }
     } else {
-        return Err(crate::EscrowError::PotentialOverflow);
+        return Err(crate::Error::PotentialOverflow);
     }
 
     Ok(())
@@ -166,7 +166,7 @@ pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EscrowError;
+    use crate::Error;
 
     #[test]
     fn test_validate_single_amount() {
@@ -176,15 +176,15 @@ mod tests {
 
         assert_eq!(
             validate_single_amount(0),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(-1),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
@@ -197,13 +197,13 @@ mod tests {
         let amounts2 = [100_0000000, 0, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts2),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
 
         let amounts3 = [100_0000000, -50_0000000, 300_0000000];
         assert_eq!(
             validate_amount_array(&amounts3),
-            Err(crate::EscrowError::AmountMustBePositive)
+            Err(crate::Error::AmountMustBePositive)
         );
     }
 
@@ -214,7 +214,7 @@ mod tests {
         assert!(validate_contract_total(max_total, max_total).is_ok());
         assert_eq!(
             validate_contract_total(max_total + 1, max_total),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
@@ -226,7 +226,7 @@ mod tests {
         let milestones2 = [500_000_0000000, 600_000_0000000];
         assert_eq!(
             validate_milestone_amounts(&milestones2, max_contract_total),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 
@@ -237,7 +237,7 @@ mod tests {
         assert!(validate_deposit_amount(100_0000000, 500_0000000, max_contract_total).is_ok());
         assert_eq!(
             validate_deposit_amount(600_000_0000000, 500_000_0000000, max_contract_total),
-            Err(crate::EscrowError::InvalidMilestoneAmount)
+            Err(crate::Error::InvalidMilestoneAmount)
         );
     }
 

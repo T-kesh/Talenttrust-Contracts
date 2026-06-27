@@ -6,7 +6,7 @@
 //! `ADMIN_ROTATION_MIN_DELAY_LEDGERS` have elapsed since the matching
 //! `propose_governance_admin` call.
 
-use crate::{EscrowError, ADMIN_ROTATION_MIN_DELAY_LEDGERS};
+use crate::{Error, ADMIN_ROTATION_MIN_DELAY_LEDGERS};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _, LedgerInfo},
     Address, Env,
@@ -79,7 +79,7 @@ fn accept_rejected_immediately_after_proposal() {
     // No ledger advancement — timelock has not elapsed.
     super::assert_contract_error(
         client.try_accept_governance_admin(),
-        EscrowError::TimelockNotElapsed,
+        Error::TimelockNotElapsed,
     );
 }
 
@@ -102,6 +102,6 @@ fn accept_rejected_one_ledger_before_min_delay() {
 
     super::assert_contract_error(
         client.try_accept_governance_admin(),
-        EscrowError::TimelockNotElapsed,
+        Error::TimelockNotElapsed,
     );
 }

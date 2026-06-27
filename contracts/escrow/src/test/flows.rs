@@ -1,5 +1,5 @@
 use super::{complete_contract, create_contract, default_milestones, register_client, total_milestone_amount};
-use crate::{EscrowError, ReleaseAuthorization, types::DataKey};
+use crate::{Error, ReleaseAuthorization, types::DataKey};
 use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env};
 
 #[test]
@@ -41,7 +41,7 @@ fn scenario_reputation_invalid_rating_zero_fails() {
     let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
-    super::assert_contract_error(result, EscrowError::InvalidRating);
+    super::assert_contract_error(result, Error::InvalidRating);
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn scenario_reputation_invalid_rating_six_fails() {
     let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
-    super::assert_contract_error(result, EscrowError::InvalidRating);
+    super::assert_contract_error(result, Error::InvalidRating);
 }
 
 #[test]

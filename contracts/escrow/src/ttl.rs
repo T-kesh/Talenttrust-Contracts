@@ -13,15 +13,14 @@ pub const LEDGERS_PER_DAY: u32 = 17_280;
 
 pub const PENDING_APPROVAL_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 7;
 pub const PENDING_APPROVAL_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY;
+pub const MIN_APPROVAL_TTL: u32 = 17_280;
 
 /// Minimum ledgers that must elapse between proposing and finalising a
-/// treasury / admin rotation.  At ~5 s per ledger this is roughly 2 days,
+/// treasury / admin rotation. At ~5 s per ledger this is roughly 2 days,
 /// giving stakeholders time to react to an unexpected proposal.
 pub const ADMIN_ROTATION_MIN_DELAY_LEDGERS: u32 = LEDGERS_PER_DAY * 2;
 
-#[allow(dead_code)]
 pub const PENDING_MIGRATION_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 21;
-#[allow(dead_code)]
 pub const PENDING_MIGRATION_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 3;
 
 /// Persistent storage TTL: extend to 30 days, renew when below 7 days.
@@ -83,19 +82,6 @@ where
 }
 
 /// Loads the milestone vector for a contract and extends its TTL.
-///
-/// # Arguments
-///
-/// * `env` - The contract environment
-/// * `contract_id` - The ID of the contract to load milestones for
-///
-/// # Returns
-///
-/// The vector of `Milestone`s for the contract
-///
-/// # Panics
-///
-/// Panics with `Error::ContractNotFound` if the contract or its milestones are not found
 pub fn load_milestones(env: &Env, contract_id: u32) -> Vec<Milestone> {
     let key = milestone_storage_key(env, contract_id);
     let milestones: Vec<Milestone> = env
@@ -108,12 +94,6 @@ pub fn load_milestones(env: &Env, contract_id: u32) -> Vec<Milestone> {
 }
 
 /// Stores the milestone vector for a contract and extends its TTL.
-///
-/// # Arguments
-///
-/// * `env` - The contract environment
-/// * `contract_id` - The ID of the contract to store milestones for
-/// * `milestones` - The vector of `Milestone`s to store
 pub fn store_milestones(env: &Env, contract_id: u32, milestones: &Vec<Milestone>) {
     let key = milestone_storage_key(env, contract_id);
     env.storage().persistent().set(&key, milestones);
@@ -163,8 +143,6 @@ pub fn extend_contract_and_milestones_ttl(env: &Env, contract_id: u32) {
 }
 
 /// Extend TTL for a participant contract index entry (e.g. client or freelancer id list).
-///
-/// This is called on index writes to avoid index entries expiring during normal usage.
 pub fn extend_participant_contract_index_ttl(env: &Env, key: &crate::DataKey) {
     env.storage()
         .persistent()

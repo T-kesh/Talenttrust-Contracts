@@ -3,18 +3,47 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Contract, ContractStatus, Escrow, EscrowClient, Error, ReleaseAuthorization};
 
 // --- Submodules ---
 
+mod access_control;
+mod accounting_invariants;
+mod admin_auth_helper;
+mod approval_expiry;
+mod authorization_matrix_validation;
+mod cancel_contract;
 mod client_migration;
+mod deposit;
 mod dispute;
 mod emergency_controls;
+mod flows;
+// mod governance; // requires unimplemented cancel_governance_admin_proposal
+mod governance_events;
+mod hello;
+mod input_sanitization_amounts;
+mod input_sanitization_identities;
+mod lifecycle;
 mod mainnet_readiness;
+// mod milestone_schedule; // requires unimplemented get/set_milestone_schedule
+mod pagination_participant_index;
+// mod participant_index_pagination; // requires unimplemented list_contracts_by_participant
 mod pause_controls;
+// mod performance; // references .cancel()/.refund()/.dispute() short-name methods
 mod persistence;
+mod protocol_fees;
+mod refund;
 mod release;
 mod release_authorization;
+mod reputation;
+mod resolution_payouts_prop;
+mod sac_custody;
+mod security;
+mod storage;
+mod summary;
+// mod timeout_tests; // requires unimplemented evaluate_milestone_timeout
+mod treasury_rotation_timelock;
+mod ttl_tests;
 
 // --- Shared constants ---
 
@@ -30,6 +59,19 @@ pub fn register_client(env: &Env) -> EscrowClient<'_> {
     let admin = Address::generate(env);
     client.initialize(&admin);
     client
+}
+
+/// Registers the escrow contract without initializing it.
+pub fn register_escrow(env: &Env) -> EscrowClient<'_> {
+    let id = env.register(Escrow, ());
+    EscrowClient::new(env, &id)
+}
+
+/// Returns a default test environment with all auths mocked.
+pub fn setup_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
 }
 
 pub fn default_milestones(env: &Env) -> soroban_sdk::Vec<i128> {
@@ -101,18 +143,16 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// Assert that a `try_*` call returns the expected contract error.
 ///
 /// Soroban `try_*` methods return:
-///   `Result<Result<T, ConversionError>, Result<soroban_sdk::Error, InvokeError>>`
+///   `Result<Result<T, IE>, Result<soroban_sdk::Error, InvokeError>>`
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
-/// including both `EscrowError` and the canonical `Error` from `types.rs`.
+/// including both `Error` and the canonical `Error` from `types.rs`.
 pub fn assert_contract_error<
     T: core::fmt::Debug,
+    IE: core::fmt::Debug,
     E: Into<soroban_sdk::Error> + core::fmt::Debug,
 >(
-    result: Result<
-        Result<T, soroban_sdk::ConversionError>,
-        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
-    >,
+    result: Result<Result<T, IE>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
     expected: E,
 ) {
     match result {
@@ -145,6 +185,24 @@ pub fn create_default_contract(
     client_addr: &Address,
     freelancer_addr: &Address,
 ) -> u32 {
+    // 1. Initialize contract if not already initialized
+    if !env.storage().persistent().has(&crate::DataKey::Initialized) {
+        let admin = Address::generate(env);
+        client.initialize(&admin);
+    }
+    
+    // 2. Set settlement token if not already set
+    if !env.storage().persistent().has(&crate::DataKey::SettlementToken) {
+        let token_admin = Address::generate(env);
+        let token_address = env.register_stellar_asset_contract(token_admin);
+        client.set_settlement_token(&token_address);
+    }
+
+    // 3. Mint tokens to client_addr
+    let token_address = client.get_settlement_token();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token_address);
+    token_client.mint(client_addr, &100_000_0000000_i128); // mint a large balance
+
     let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
     client.create_contract(
         client_addr,
@@ -153,6 +211,27 @@ pub fn create_default_contract(
         &milestones,
         &ReleaseAuthorization::ClientOnly,
     )
+}
+
+pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+    assert!(client.deposit_funds(&id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&id, &client_addr, &0));
+    assert!(client.release_milestone(&id, &0, &client_addr));
+    assert!(client.approve_milestone_release(&id, &client_addr, &1));
+    assert!(client.release_milestone(&id, &1, &client_addr));
+    assert!(client.approve_milestone_release(&id, &client_addr, &2));
+    assert!(client.release_milestone(&id, &2, &client_addr));
+    (client_addr, freelancer_addr, id)
 }
 
 pub fn assert_contract_state(

@@ -64,3 +64,54 @@ This document reflects the escrow API currently implemented in `contracts/escrow
 
 This prevents a client from requesting refunds against a cancelled, completed,
 or already-finalized contract.
+
+## Canonical Error Codes
+
+The following table documents the authoritative, consolidated contract error codes (`Error` enum in `types.rs`) and their trigger conditions. To ensure client SDK stability, all error codes are treated as append-only.
+
+| Error Code | Variant Name | Trigger Condition |
+| :--- | :--- | :--- |
+| 3 | `IndexOutOfBounds` | The specified milestone index is out of bounds. |
+| 4 | `AlreadyReleased` | The milestone has already been released. |
+| 6 | `EmptyRefundRequest` | The refund request contains no milestones. |
+| 7 | `DuplicateMilestoneInRefund` | Duplicate milestone indices specified in the refund request. |
+| 8 | `AlreadyRefunded` | The milestone has already been refunded. |
+| 9 | `InsufficientFunds` | Insufficient funds available to perform the operation. |
+| 10 | `ContractNotFound` | The requested contract ID was never allocated or does not exist. |
+| 11 | `UnauthorizedRole` | The caller's authorization check failed for this operation. |
+| 12 | `MissingArbiter` | The contract requires an arbiter address but none was provided. |
+| 13 | `InvalidArbiter` | The provided arbiter address is same as client or freelancer. |
+| 14 | `InvalidParticipants` | The client and freelancer addresses are identical or invalid. |
+| 15 | `AmountMustBePositive` | The amount or milestone amount must be strictly greater than zero. |
+| 16 | `InvalidState` | The contract is in an invalid lifecycle state for this operation. |
+| 17 | `MilestoneAlreadyReleased` | The milestone is already released and cannot be released/refunded. |
+| 18 | `AlreadyApproved` | The milestone has already been approved. |
+| 20 | `InsufficientApprovals` | The milestone has not received sufficient approvals to release. |
+| 21 | `FreelancerMismatch` | The freelancer address does not match the stored freelancer. |
+| 22 | `InvalidRating` | The rating value is outside the allowed range (1 to 5). |
+| 23 | `ReputationAlreadyIssued` | Reputation has already been issued for this contract. |
+| 25 | `EmptyMilestones` | The milestone list cannot be empty when creating a contract. |
+| 26 | `InvalidMilestoneAmount` | The milestone amount violates validity limits (e.g. non-positive). |
+| 27 | `ContractIdCollision` | A contract with the specified ID already exists. |
+| 28 | `ContractIdOverflow` | The contract ID has overflowed the maximum limit. |
+| 29 | `EmptyComment` | The comment string is empty. |
+| 30 | `CommentTooLong` | The comment string exceeds the maximum length limit. |
+| 31 | `InvalidParticipant` | The participant address is invalid (e.g. self-matching). |
+| 32 | `InvalidDepositAmount` | The deposit amount is invalid. |
+| 33 | `InvalidMilestone` | The milestone configuration or index is invalid. |
+| 34 | `AlreadyInitialized` | The contract has already been initialized. |
+| 35 | `InsufficientAccumulatedFees` | Insufficient accumulated fees available for extraction. |
+| 36 | `NotInitialized` | The contract has not been initialized. |
+| 37 | `ContractPaused` | The contract is currently paused. |
+| 38 | `EmergencyActive` | Emergency mode is currently active. |
+| 39 | `SelfRating` | Self-rating is not allowed (client and freelancer addresses collapse). |
+| 40 | `NotCompleted` | The contract has not been completed. |
+| 41 | `InvalidStatusTransition` | The requested contract status transition is invalid. |
+| 42 | `ArbiterRequired` | An arbiter is required for this operation. |
+| 43 | `InvalidDisputeSplit` | The dispute split percentage is invalid. |
+| 44 | `AccountingInvariantViolated` | The operation would violate the core accounting invariant. |
+| 45 | `PotentialOverflow` | Checked arithmetic operation resulted in an overflow. |
+| 46 | `AlreadyFinalized` | The contract has already been finalized. |
+| 47 | `EvidenceTooLong` | The work evidence string exceeds the maximum length limit. |
+| 48 | `TimelockNotElapsed` | The governance admin rotation timelock has not elapsed. |
+| 49 | `InvalidProtocolParameters` | The provided protocol parameters are invalid. |

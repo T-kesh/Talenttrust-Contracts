@@ -1,6 +1,6 @@
 use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
-// ─── Indexer summary types ────────────────────────────────────────────────────
+// ── Indexer summary types ────────────────────────────────────────────────────
 
 #[allow(dead_code)]
 pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
@@ -31,7 +31,7 @@ pub struct ContractSummary {
     pub milestones: Vec<MilestoneSummary>,
 }
 
-// Removed duplicate Contract definition with missing fields
+// ── Core contract state ──────────────────────────────────────────────────────
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -67,6 +67,8 @@ pub enum DataKey {
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
+    // Settlement token
+    SettlementToken,
 }
 
 /// Canonical contract error type for all entrypoint-facing errors.
@@ -74,32 +76,96 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
+    /// The specified milestone index is out of bounds.
     IndexOutOfBounds = 3,
+    /// The milestone has already been released.
     AlreadyReleased = 4,
+    /// The refund request is empty.
     EmptyRefundRequest = 6,
+    /// Duplicate milestone indices specified in the refund request.
     DuplicateMilestoneInRefund = 7,
+    /// The milestone has already been refunded.
     AlreadyRefunded = 8,
+    /// Insufficient funds available to perform the operation.
     InsufficientFunds = 9,
+    /// The requested contract was not found.
     ContractNotFound = 10,
+    /// The caller is not authorized for this operation.
     UnauthorizedRole = 11,
+    /// The contract requires an arbiter address but none was provided.
     MissingArbiter = 12,
+    /// The provided arbiter address is invalid (e.g. same as client or freelancer).
     InvalidArbiter = 13,
+    /// The client and freelancer addresses are identical or invalid.
     InvalidParticipants = 14,
+    /// The amount must be strictly greater than zero.
     AmountMustBePositive = 15,
+    /// The contract is in an invalid state for this operation.
     InvalidState = 16,
+    /// The milestone has already been released.
     MilestoneAlreadyReleased = 17,
+    /// The milestone has already been approved.
     AlreadyApproved = 18,
+    /// The milestone has not received sufficient approvals to release.
     InsufficientApprovals = 20,
+    /// The freelancer address does not match the stored freelancer.
     FreelancerMismatch = 21,
+    /// The rating value is outside the allowed range (1 to 5).
     InvalidRating = 22,
+    /// Reputation has already been issued for this contract.
     ReputationAlreadyIssued = 23,
+    /// The milestone list cannot be empty.
     EmptyMilestones = 25,
+    /// The milestone amount is invalid.
     InvalidMilestoneAmount = 26,
+    /// A contract with the specified ID already exists.
     ContractIdCollision = 27,
+    /// The contract ID has overflowed the maximum limit.
     ContractIdOverflow = 28,
+    /// The comment string is empty.
     EmptyComment = 29,
+    /// The comment string exceeds the maximum length limit.
     CommentTooLong = 30,
+    /// The participant address is invalid.
+    InvalidParticipant = 31,
+    /// The deposit amount is invalid.
+    InvalidDepositAmount = 32,
+    /// The milestone configuration is invalid.
+    InvalidMilestone = 33,
+    /// The contract has already been initialized.
+    AlreadyInitialized = 34,
+    /// Insufficient accumulated fees available for extraction.
+    InsufficientAccumulatedFees = 35,
+    /// The contract has not been initialized.
+    NotInitialized = 36,
+    /// The contract is currently paused.
+    ContractPaused = 37,
+    /// Emergency mode is currently active.
+    EmergencyActive = 38,
+    /// Self-rating is not allowed.
+    SelfRating = 39,
+    /// The contract has not been completed.
+    NotCompleted = 40,
+    /// The requested contract status transition is invalid.
+    InvalidStatusTransition = 41,
+    /// An arbiter is required for this operation.
+    ArbiterRequired = 42,
+    /// The dispute split percentage is invalid.
+    InvalidDisputeSplit = 43,
+    /// The operation would violate the core accounting invariant.
+    AccountingInvariantViolated = 44,
+    /// Checked arithmetic operation resulted in an overflow.
+    PotentialOverflow = 45,
+    /// The contract has already been finalized.
+    AlreadyFinalized = 46,
+    /// The work evidence string exceeds the maximum length limit.
+    EvidenceTooLong = 47,
+    /// The governance admin rotation timelock has not elapsed.
+    TimelockNotElapsed = 48,
+    /// The provided protocol parameters are invalid.
+    InvalidProtocolParameters = 49,
 }
+
 
 /// Contract lifecycle states
 #[contracttype]
@@ -123,6 +189,7 @@ pub struct Contract {
     pub freelancer: Address,
     pub arbiter: Option<Address>,
     pub status: ContractStatus,
+    pub total_deposited: i128,
     pub funded_amount: i128,
     pub released_amount: i128,
     pub refunded_amount: i128,
@@ -139,6 +206,10 @@ pub struct Milestone {
     pub refunded: bool,
     pub work_evidence: Option<String>,
     pub refunded_amount: i128,
+    /// Optional Unix timestamp (seconds) after which the client may claim
+    /// a timeout refund for this milestone without arbiter involvement.
+    /// None means no deadline — the milestone never expires.
+    pub deadline: Option<u64>,
 }
 
 /// Defines who can approve milestone releases.
@@ -173,7 +244,45 @@ pub enum DepositMode {
     Incremental = 1,
 }
 
-// Removed duplicate DataKey
+// ── Storage keys ─────────────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    // Admin / pause / emergency
+    Initialized,
+    Admin,
+    Paused,
+    Emergency,
+    // Contract storage
+    Contract(u32),
+    NextContractId,
+    MilestoneReleased(u32, u32),
+    MilestoneApprovals(u32, u32),
+    // Reputation
+    ReputationIssued(u32),
+    PendingReputationCredits(Address),
+    Reputation(Address),
+    ReputationComment(u32),
+    // Client migration
+    PendingClientMigration(u32),
+    // Protocol / governance
+    GovernanceAdmin,
+    PendingGovernanceAdmin,
+    ProtocolParameters,
+    ProtocolFeeBps,
+    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    PendingAdmin,
+    AccumulatedProtocolFees,
+    GovernedParameters,
+    ReadinessChecklist,
+    // Finalization
+    Finalization(u32),
+    // Settlement token
+    SettlementToken,
+}
+
+// ── Governance / readiness ───────────────────────────────────────────────────
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
 #[contracttype]
@@ -204,10 +313,96 @@ pub struct GovernedParameters {
     pub max_escrow_total_stroops: i128,
 }
 
+/// Stores a pending governance admin proposal with the proposed address
+/// and the ledger sequence when it was proposed.
+/// Used for the admin rotation timelock mechanism.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAdminProposal {
+    pub proposed: Address,
+    pub proposed_at_ledger: u32,
+}
+
+// ── Reputation ───────────────────────────────────────────────────────────────
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct Reputation {
     pub completed_contracts: i128,
     pub total_rating: i128,
     pub last_rating: i128,
+}
+
+// ── Dispute Resolution ───────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeSplit {
+    pub client_amount: i128,
+    pub freelancer_amount: i128,
+}
+
+pub type SplitAmounts = DisputeSplit;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeResolution {
+    FullRefund,
+    PartialRefund,
+    FullPayout,
+    Split(DisputeSplit),
+}
+
+// ── Canonical contract error type ────────────────────────────────────────────
+
+/// Canonical contract error type for all entrypoint-facing errors.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
+    EmptyComment = 29,
+    CommentTooLong = 30,
+    InvalidParticipant = 31,
+    InvalidDepositAmount = 32,
+    InvalidMilestone = 33,
+    AlreadyInitialized = 34,
+    InsufficientAccumulatedFees = 35,
+    NotInitialized = 36,
+    ContractPaused = 37,
+    EmergencyActive = 38,
+    SelfRating = 39,
+    NotCompleted = 40,
+    InvalidStatusTransition = 41,
+    ArbiterRequired = 42,
+    InvalidDisputeSplit = 43,
+    AccountingInvariantViolated = 44,
+    PotentialOverflow = 45,
+    AlreadyFinalized = 46,
+    EvidenceTooLong = 47,
+    TimelockNotElapsed = 48,
+    InvalidProtocolParameters = 49,
+    EscrowCapExceeded = 50,
 }
