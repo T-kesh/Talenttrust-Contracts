@@ -209,3 +209,51 @@ fn count_guard_fires_before_amount_guard() {
         Error::TooManyMilestones,
     );
 }
+
+// governed cap tests ───────────────────────────────────────────────────────────
+
+#[test]
+fn accepts_total_below_governed_cap() {
+    let (env, cid) = setup();
+    let client = EscrowClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 1000_i128);
+    
+    let c = Address::generate(&env);
+    let f = Address::generate(&env);
+    client.create_contract(&c, &f, &None, &vec![&env, 500_i128], &ReleaseAuthorization::ClientOnly);
+}
+
+#[test]
+fn rejects_total_above_governed_cap() {
+    let (env, cid) = setup();
+    let client = EscrowClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 1000_i128);
+    
+    let c = Address::generate(&env);
+    let f = Address::generate(&env);
+    assert_err(
+        client.try_create_contract(&c, &f, &None, &vec![&env, 1500_i128], &ReleaseAuthorization::ClientOnly),
+        EscrowError::EscrowCapExceeded,
+    );
+}
+
+#[test]
+fn accepts_total_when_governed_cap_is_zero() {
+    let (env, cid) = setup();
+    let client = EscrowClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.set_governed_params(&admin, 0, 0_i128);
+    
+    let c = Address::generate(&env);
+    let f = Address::generate(&env);
+    client.create_contract(&c, &f, &None, &vec![&env, 1500_i128], &ReleaseAuthorization::ClientOnly);
+}
+
