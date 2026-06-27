@@ -37,7 +37,27 @@ pub struct ContractSummary {
     pub milestones: Vec<MilestoneSummary>,
 }
 
-// Removed duplicate Contract definition with missing fields
+/// Main escrow contract state.
+///
+/// # Fields
+/// - `funded_amount`: Total amount of funds deposited into the contract.
+/// - `released_amount`: Total amount released to the freelancer.
+/// - `refunded_amount`: Total amount refunded to the client.
+/// - `total_deposited`: Accumulated sum of all deposit calls (for invariant tracking).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Contract {
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub status: ContractStatus,
+    pub total_deposited: i128,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refunded_amount: i128,
+    pub release_authorization: ReleaseAuthorization,
+    pub reputation_issued: bool,
+}
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -122,33 +142,22 @@ pub enum ContractStatus {
     PartiallyFunded = 7,
 }
 
-/// Main escrow contract state
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    ClientOnly = 0,
-    ClientAndArbiter = 1,
-    ArbiterOnly = 2,
-    MultiSig = 3,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Contract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub total_deposited: i128,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
-    pub reputation_issued: bool,
-    /// The deposit mode determines whether funds must be deposited in a single exact total or incrementally.
-    pub deposit_mode: DepositMode,
-}
-
+/// Represents a single milestone within an escrow contract.
+///
+/// # Fields
+/// - `amount`: The agreed payout amount for this milestone.
+/// - `funded_amount`: How much of this milestone's amount has been covered by deposits.
+///   Updated during `deposit_funds` (distributed in order across milestones).  
+///   On release, this is set to equal `amount`.
+/// - `released`: Whether the milestone has been released (paid out to the freelancer).
+/// - `refunded`: Whether the milestone has been refunded to the client.
+/// - `work_evidence`: Optional reference to freelancer-submitted deliverable evidence.
+/// - `refunded_amount`: Set to `amount` when the milestone is refunded.
+///   Zero until `refund_unreleased_milestones` marks it.
+///
+/// # Invariant
+/// `sum(milestones.funded_amount) == contract.funded_amount`  
+/// `sum(milestones.refunded_amount) == contract.refunded_amount`
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
@@ -158,21 +167,6 @@ pub struct Milestone {
     pub refunded: bool,
     pub work_evidence: Option<String>,
     pub refunded_amount: i128,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DepositMode {
-    ExactTotal = 0,
-    Incremental = 1,
 }
 
 #[contracttype]

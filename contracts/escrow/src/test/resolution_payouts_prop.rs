@@ -15,13 +15,13 @@ mod tests {
             client: Address::generate(&Env::default()),
             freelancer: Address::generate(&Env::default()),
             arbiter: Some(Address::generate(&Env::default())),
+            status: ContractStatus::Funded,
+            total_deposited: available,
             funded_amount: available,
             released_amount: 0,
             refunded_amount: 0,
-
-            status: ContractStatus::Funded,
-            // other fields defaulted/zeroed as needed
-            ..Default::default()
+            release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         }
     }
 

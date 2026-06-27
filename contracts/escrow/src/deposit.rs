@@ -41,9 +41,52 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
         env.panic_with_error(Error::InvalidState);
     }
 
-    contract.funded_amount += amount;
+    contract.funded_amount = contract
+        .funded_amount
+        .checked_add(amount)
+        .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
+    contract.total_deposited = contract
+        .total_deposited
+        .checked_add(amount)
+        .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
 
-    let milestones: Vec<Milestone> = ttl::load_milestones(&env, contract_id);
+    let milestone_key = Symbol::new(&env, "milestones");
+    let mut milestones: Vec<Milestone> = env
+        .storage()
+        .persistent()
+        .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+        .unwrap();
+
+    ttl::extend_milestone_ttl(&env, contract_id);
+
+    // Distribute the deposited amount across milestones in order,
+    // filling each milestone's funded_amount up to its amount.
+    let mut remaining = amount;
+    for i in 0..milestones.len() {
+        if remaining <= 0 {
+            break;
+        }
+        let mut milestone = milestones.get(i).unwrap();
+        if milestone.funded_amount < milestone.amount {
+            let needed = milestone
+                .amount
+                .checked_sub(milestone.funded_amount)
+                .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
+            let to_add = if remaining >= needed {
+                needed
+            } else {
+                remaining
+            };
+            milestone.funded_amount = milestone
+                .funded_amount
+                .checked_add(to_add)
+                .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
+            milestones.set(i, milestone);
+            remaining = remaining
+                .checked_sub(to_add)
+                .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
+        }
+    }
 
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
@@ -55,11 +98,15 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
         );
     }
 
+    env.storage().persistent().set(
+        &(DataKey::Contract(contract_id), milestone_key),
+        &milestones,
+    );
     env.storage()
         .persistent()
         .set(&DataKey::Contract(contract_id), &contract);
 
-    ttl::extend_contract_ttl(&env, contract_id);
+    ttl::extend_contract_and_milestones_ttl(&env, contract_id);
 
     true
 }

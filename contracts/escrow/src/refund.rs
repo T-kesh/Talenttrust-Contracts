@@ -83,10 +83,14 @@ impl Escrow {
         for idx in milestone_indices.iter() {
             let mut milestone = milestones.get(idx).unwrap();
             milestone.refunded = true;
+            milestone.refunded_amount = milestone.amount;
             milestones.set(idx, milestone);
         }
 
-        contract.refunded_amount += total_refund_amount;
+        contract.refunded_amount = contract
+            .refunded_amount
+            .checked_add(total_refund_amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::InsufficientFunds));
 
         let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
         if all_refunded_or_released {

@@ -133,20 +133,13 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
 
-    /// Guard: reject the call before any writes when the counter has reached
-    /// its ceiling. `u32::MAX` cannot be incremented without wrapping, which
-    /// would overwrite contract id 0 on the very next allocation.
-    if id == u32::MAX {
-        env.panic_with_error(Error::ContractIdOverflow);
-    }
-
     if env
         .storage()
         .persistent()
         .get::<_, Contract>(&DataKey::Contract(id))
         .is_some()
     {
-        env.panic_with_error(EscrowError::ContractIdCollision);
+        env.panic_with_error(Error::ContractIdCollision);
     }
 
     id

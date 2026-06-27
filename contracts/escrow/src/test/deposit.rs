@@ -195,3 +195,52 @@ fn test_deposit_insufficient_funds() {
     // This test is documented for completeness but cannot be triggered in unit tests.
 }
 
+/// Tests that per-milestone funded_amount is distributed correctly across milestones.
+///
+/// When a deposit is made, the amount is distributed in milestone order, filling
+/// each milestone's `funded_amount` up to its `amount` before moving to the next.
+#[test]
+fn deposit_distributes_funds_per_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    // Deposit 250: fills milestone[0] (200) + 50 toward milestone[1]
+    assert!(client.deposit_funds(&contract_id, &client_addr, &250_0000000_i128));
+    let milestones = client.get_milestones(&contract_id);
+    assert_eq!(milestones.get(0).unwrap().funded_amount, 200_0000000_i128);
+    assert_eq!(milestones.get(1).unwrap().funded_amount, 50_0000000_i128);
+    assert_eq!(milestones.get(2).unwrap().funded_amount, 0_i128);
+
+    // Deposit remaining 950: fills milestone[1] (remaining 350) + milestone[2] (600)
+    assert!(client.deposit_funds(&contract_id, &client_addr, &950_0000000_i128));
+    let milestones = client.get_milestones(&contract_id);
+    assert_eq!(milestones.get(0).unwrap().funded_amount, 200_0000000_i128);
+    assert_eq!(milestones.get(1).unwrap().funded_amount, 400_0000000_i128);
+    assert_eq!(milestones.get(2).unwrap().funded_amount, 600_0000000_i128);
+
+    // Verify contract-level sum matches per-milestone sum
+    let contract = client.get_contract(&contract_id);
+    assert_eq!(contract.funded_amount, 1_200_0000000_i128);
+}
+
+/// Tests that per-milestone funded_amount remains consistent after partial deposits.
+#[test]
+fn deposit_partial_fills_first_milestones_only() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    // Deposit 50: only milestone[0] gets partial funding
+    assert!(client.deposit_funds(&contract_id, &client_addr, &50_0000000_i128));
+    let milestones = client.get_milestones(&contract_id);
+    assert_eq!(milestones.get(0).unwrap().funded_amount, 50_0000000_i128);
+    assert_eq!(milestones.get(1).unwrap().funded_amount, 0_i128);
+    assert_eq!(milestones.get(2).unwrap().funded_amount, 0_i128);
+
+    // Invariant: per-milestone sum == contract funded_amount
+    let contract = client.get_contract(&contract_id);
+    let total: i128 = milestones.iter().map(|m| m.funded_amount).sum();
+    assert_eq!(total, contract.funded_amount);
+}
+

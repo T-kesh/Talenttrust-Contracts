@@ -91,6 +91,7 @@ impl Escrow {
 
         let _release_amount = milestone.amount;
         milestone.released = true;
+        milestone.funded_amount = milestone.amount;
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
 

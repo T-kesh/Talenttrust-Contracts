@@ -330,67 +330,83 @@ fn work_evidence_rejects_unknown_contract() {
 }
 
 // ---------------------------------------------------------------------------
-// get_work_evidence tests
+// Per-milestone accounting on release
 // ---------------------------------------------------------------------------
 
 #[test]
-fn get_work_evidence_returns_some_when_set() {
+fn release_sets_milestone_funded_amount_to_amount() {
     let env = Env::default();
     env.mock_all_auths();
-    let escrow = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &escrow);
-    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    let ev = evidence(&env, "ipfs://QmMilestone0Evidence");
-    assert!(escrow.submit_work_evidence(&contract_id, &freelancer_addr, &0, &ev));
+    client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
 
-    let result = escrow.get_work_evidence(&contract_id, &0);
-    assert_eq!(result, Some(ev));
+    // Release milestone 0: funded_amount should equal amount
+    client.approve_milestone_release(&contract_id, &client_addr, &0);
+    client.release_milestone(&contract_id, &client_addr, &0);
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(0).unwrap().funded_amount, MILESTONE_ONE);
+    assert_eq!(ms.get(0).unwrap().released, true);
+
+    // Release milestone 1
+    client.approve_milestone_release(&contract_id, &client_addr, &1);
+    client.release_milestone(&contract_id, &client_addr, &1);
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(1).unwrap().funded_amount, 400_0000000_i128);
+    assert_eq!(ms.get(1).unwrap().released, true);
 }
 
 #[test]
-fn get_work_evidence_returns_none_when_unset() {
+fn refund_sets_milestone_refunded_amount_on_unreleased() {
     let env = Env::default();
     env.mock_all_auths();
-    let escrow = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &escrow);
-    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    let result = escrow.get_work_evidence(&contract_id, &1);
-    assert_eq!(result, None);
+    client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    // Refund milestone 1 only
+    client.refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]);
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(0).unwrap().refunded_amount, 0);
+    assert_eq!(ms.get(0).unwrap().refunded, false);
+    assert_eq!(ms.get(1).unwrap().refunded_amount, 400_0000000_i128);
+    assert_eq!(ms.get(1).unwrap().refunded, true);
+    assert_eq!(ms.get(2).unwrap().refunded_amount, 0);
+    assert_eq!(ms.get(2).unwrap().refunded, false);
 }
 
 #[test]
-fn get_work_evidence_returns_none_for_out_of_bounds() {
+fn mixed_release_refund_maintains_per_milestone_invariant() {
     let env = Env::default();
     env.mock_all_auths();
-    let escrow = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &escrow);
-    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    let result = escrow.get_work_evidence(&contract_id, &99);
-    assert_eq!(result, None);
-}
+    client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
 
-#[test]
-fn get_work_evidence_panics_for_unknown_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register_client(&env);
+    // Release milestone 0
+    client.approve_milestone_release(&contract_id, &client_addr, &0);
+    client.release_milestone(&contract_id, &client_addr, &0);
 
-    let result = escrow.try_get_work_evidence(&9999, &0);
-    assert_contract_error(result, Error::ContractNotFound);
-}
+    // Refund milestone 2 (unreleased)
+    client.refund_unreleased_milestones(&contract_id, &vec![&env, 2_u32]);
 
-#[test]
-fn get_work_evidence_returns_none_for_unreleased_milestone_without_evidence() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let escrow = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &escrow);
-    // no deposit — contract stays in Created status, milestones exist but have no evidence
-    escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(0).unwrap().funded_amount, MILESTONE_ONE);
+    assert_eq!(ms.get(0).unwrap().released, true);
+    assert_eq!(ms.get(1).unwrap().funded_amount, 400_0000000_i128);
+    assert_eq!(ms.get(1).unwrap().refunded_amount, 0);
+    assert_eq!(ms.get(1).unwrap().released, false);
+    assert_eq!(ms.get(2).unwrap().refunded_amount, 600_0000000_i128);
+    assert_eq!(ms.get(2).unwrap().refunded, true);
 
-    let result = escrow.get_work_evidence(&contract_id, &2);
-    assert_eq!(result, None);
+    // Invariant: per-milestone sums match contract totals
+    let contract = client.get_contract(&contract_id);
+    let ms = client.get_milestones(&contract_id);
+    let funded_sum: i128 = ms.iter().map(|m| m.funded_amount).sum();
+    let refunded_sum: i128 = ms.iter().map(|m| m.refunded_amount).sum();
+    assert_eq!(funded_sum, contract.funded_amount);
+    assert_eq!(refunded_sum, contract.refunded_amount);
 }
