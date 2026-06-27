@@ -24,7 +24,6 @@
 #![allow(clippy::useless_conversion)]
 
 mod amount_validation;
-mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -42,27 +41,18 @@ use soroban_sdk::{
 };
 
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
-pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
-pub use types::{Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION};
+pub use types::{
+    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, DisputeResolution, DisputeSplit, Error,
+    GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary, PendingAdminProposal, ReadinessChecklist,
+    ReleaseAuthorization, Reputation, SplitAmounts, CONTRACT_SUMMARY_SCHEMA_VERSION,
+};
 
-// Re-export for internal use
-pub(crate) use amount_validation::safe_subtract_amounts;
-
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+pub type EscrowError = Error;
 
 #[contract]
 pub struct Escrow;
-
-
-
-
-
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
 
 #[contractimpl]
 impl Escrow {
@@ -73,17 +63,22 @@ impl Escrow {
         to
     }
 
-    // ── Settlement Token ──────────────────────────────────────────────────────
+}
 
+impl Escrow {
     /// Get the settlement token address for the escrow contract.
-    pub(crate) fn get_settlement_token(env: &Env) -> Option<Address> {
+    pub(crate) fn read_settlement_token(env: &Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::SettlementToken)
     }
 
     /// Set the settlement token address for the escrow contract.
-    pub(crate) fn set_settlement_token(env: &Env, token: &Address) {
+    pub(crate) fn write_settlement_token(env: &Env, token: &Address) {
         env.storage().instance().set(&DataKey::SettlementToken, token);
     }
+}
+
+#[contractimpl]
+impl Escrow {
 
     /// Set the settlement token for the escrow contract.
     ///
@@ -110,7 +105,7 @@ impl Escrow {
         }
         admin.require_auth();
         
-        Self::set_settlement_token(&env, &token);
+        Self::write_settlement_token(&env, &token);
         true
     }
 
@@ -245,7 +240,7 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         // Transfer tokens from caller to contract
-        let token = Self::get_settlement_token(&env)
+        let token = Self::read_settlement_token(&env)
             .expect("Settlement token not set");
         
         let token_client = token::Client::new(&env, &token);
@@ -519,7 +514,7 @@ impl Escrow {
         let release_amount = milestone.amount;
 
         // Transfer tokens from contract to freelancer
-        let token = Self::get_settlement_token(&env)
+        let token = Self::read_settlement_token(&env)
             .expect("Settlement token not set");
         
         let token_client = token::Client::new(&env, &token);
@@ -543,7 +538,7 @@ impl Escrow {
         // Accumulate protocol fees if initialized with a fee rate and capture
         // the computed fee for inclusion in the emitted event.
         let protocol_fee: i128 = if Self::is_initialized(&env) {
-            let fee_bps = Self::get_protocol_fee_bps(&env);
+            let fee_bps = Self::read_protocol_fee_bps(&env);
             if fee_bps > 0 {
                 let fee = Self::calculate_protocol_fee(release_amount, fee_bps);
                 let current_accumulated: i128 = env
@@ -792,7 +787,7 @@ impl Escrow {
         }
 
         // Transfer tokens from contract to client
-        let token = Self::get_settlement_token(&env)
+        let token = Self::read_settlement_token(&env)
             .expect("Settlement token not set");
         
         let token_client = token::Client::new(&env, &token);
@@ -1080,13 +1075,18 @@ impl Escrow {
     /// Emits `("emergency", "resolved")` with `(admin, timestamp)` payload.
     /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn resolve_emergency(env: Env) -> bool {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+
         if env
             .storage()
             .persistent()
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
-            let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
             admin.require_auth();
         }
         env.storage().persistent().set(&DataKey::Emergency, &false);
@@ -1463,35 +1463,7 @@ impl Escrow {
         milestones.get(milestone_index).unwrap().work_evidence
     }
 
-    // ── Finalization ─────────────────────────────────────────────────────────
-
-    /// Finalizes an escrow contract by writing immutable close metadata.
-    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
-        Self::finalize_contract_impl(env, contract_id, finalizer)
-    }
-
-    /// Returns immutable close metadata for a contract.
-    pub fn get_finalization_record(
-        env: Env,
-        contract_id: u32,
-    ) -> Option<finalize::FinalizationRecord> {
-        Self::get_finalization_record_impl(env, contract_id)
-    }
-
     // ── Governance ───────────────────────────────────────────────────────────
-
-    /// Sets the protocol fee in basis points.
-    pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
-        Self::set_protocol_fee_bps_impl(&env, new_bps)
-    }
-
-    /// Returns the current protocol fee in basis points.
-    pub fn get_protocol_fee_bps_view(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
 
     /// Returns the total accumulated protocol fees in stroops.
     pub fn get_accumulated_protocol_fees(env: Env) -> i128 {
@@ -1501,90 +1473,20 @@ impl Escrow {
             .unwrap_or(0)
     }
 
-    /// Proposes a new governance admin (two-step transfer with timelock).
-    pub fn propose_governance_admin(env: Env, proposed: Address) -> bool {
-        Self::propose_governance_admin_impl(&env, proposed)
-    }
-
-    /// Accepts a pending governance admin proposal (enforces timelock).
-    pub fn accept_governance_admin(env: Env) -> bool {
-        Self::accept_governance_admin_impl(&env)
-    }
-
-    /// Returns the pending governance admin address, if any.
-    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        Self::get_pending_governance_admin_impl(&env)
-    }
-
     /// Returns the ledger sequence at which the pending admin proposal was made.
     ///
     /// Returns `None` if there is no pending proposal. This allows off-chain
     /// indexers and governance dashboards to compute the remaining timelock
     /// before the proposal can be accepted via `accept_governance_admin`.
-    pub fn get_pending_governance_admin_proposed_at(env: Env) -> Option<u32> {
+    pub fn get_pending_admin_proposed_at(env: Env) -> Option<u32> {
         let proposal: Option<PendingAdminProposal> =
             env.storage().persistent().get(&DataKey::PendingAdmin);
         proposal.map(|p| p.proposed_at_ledger)
     }
 
-    /// Returns the current governance admin address.
-    pub fn get_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::Admin)
-    }
-
-    /// Set both governance parameters at once and update the readiness checklist.
-    pub fn set_governed_params(
-        env: Env,
-        admin: Address,
-        protocol_fee_bps: u32,
-        max_escrow_total_stroops: i128,
-    ) -> bool {
-        Self::require_initialized(&env);
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-
-        if admin != stored_admin {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        admin.require_auth();
-
-        if protocol_fee_bps > 10_000 {
-            env.panic_with_error(Error::InvalidProtocolParameters);
-        }
-
-        let params = GovernedParameters {
-            protocol_fee_bps,
-            max_escrow_total_stroops,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::GovernedParameters, &params);
-
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        checklist.governed_params_set = true;
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
-
-        true
-    }
-
-    /// Retrieve the current governed parameters.
-    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
-        env.storage().persistent().get(&DataKey::GovernedParameters)
-    }
-
     // ── Protocol fee helpers ─────────────────────────────────────────────────
 
-    pub(crate) fn get_protocol_fee_bps(env: &Env) -> u32 {
+    pub(crate) fn read_protocol_fee_bps(env: &Env) -> u32 {
         env.storage()
             .persistent()
             .get::<_, u32>(&DataKey::ProtocolFeeBps)
@@ -1592,10 +1494,11 @@ impl Escrow {
     }
 
     pub(crate) fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        if fee_bps == 0 {
-            return 0;
-        }
-        amount * fee_bps as i128 / 10_000
+        let fee_bps_i128 = fee_bps as i128;
+        amount
+            .checked_mul(fee_bps_i128)
+            .and_then(|v| v.checked_div(10000))
+            .unwrap_or(0)
     }
 
     // ── Internal guards ──────────────────────────────────────────────────────
@@ -1617,21 +1520,6 @@ impl Escrow {
             .persistent()
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
-    }
-
-    fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        let fee_bps_i128 = fee_bps as i128;
-        amount
-            .checked_mul(fee_bps_i128)
-            .and_then(|v| v.checked_div(10000))
-            .unwrap_or(0)
     }
 
     // -----------------------------------------------------------------------

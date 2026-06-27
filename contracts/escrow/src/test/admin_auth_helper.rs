@@ -139,7 +139,7 @@ fn pending_admin_proposal_round_trip() {
 
     // Verify anchor ledger
     assert_eq!(
-        client.get_pending_governance_admin_proposed_at(),
+        client.get_pending_admin_proposed_at(),
         Some(anchor_ledger)
     );
 }
@@ -150,7 +150,7 @@ fn pending_admin_returns_none_when_absent() {
     let (client, _admin) = setup(&env);
 
     assert_eq!(client.get_pending_governance_admin(), None);
-    assert_eq!(client.get_pending_governance_admin_proposed_at(), None);
+    assert_eq!(client.get_pending_admin_proposed_at(), None);
 }
 
 // ─── Idempotent / State invariant round-trips ─────────────────────────────────

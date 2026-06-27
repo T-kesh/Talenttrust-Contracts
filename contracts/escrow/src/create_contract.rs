@@ -96,10 +96,10 @@ pub fn create_contract_impl(
         freelancer: freelancer.clone(),
         arbiter,
         status: ContractStatus::Created,
+        total_deposited: 0,
         funded_amount: 0,
         released_amount: 0,
         refunded_amount: 0,
-        deposit_mode: DepositMode::Incremental,
         release_authorization,
         reputation_issued: false,
     };
@@ -118,7 +118,7 @@ pub fn create_contract_impl(
             refunded_amount: 0,
         });
     }
-    let milestone_key = crate::milestone_symbol(&env);
+    let milestone_key = Symbol::new(&env, "milestones");
     env.storage()
         .persistent()
         .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);

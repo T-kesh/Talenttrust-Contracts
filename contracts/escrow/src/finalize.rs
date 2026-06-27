@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, Error, Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION};
 
@@ -19,9 +19,9 @@ pub struct FinalizationRecord {
 }
 
 impl Escrow {
-    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
-        Self::require_not_paused(&env);
-        finalizer.require_auth();
+    fn finalization_key(contract_id: u32) -> DataKey {
+        DataKey::Finalization(contract_id)
+    }
 
     fn load_contract_for_finalization(env: &Env, contract_id: u32) -> Contract {
         env.storage()
@@ -40,17 +40,6 @@ impl Escrow {
         if Self::is_finalized(env, contract_id) {
             env.panic_with_error(Error::AlreadyFinalized);
         }
-
-        let summary = Self::summarize_contract(&env, contract_id, &contract);
-        let record = FinalizationRecord {
-            finalizer: finalizer.clone(),
-            timestamp: env.ledger().timestamp(),
-            summary,
-        };
-
-        env.storage().persistent().set(&DataKey::Finalization(contract_id), &record);
-        env.events().publish((symbol_short!("finalized"), contract_id), (finalizer, record.timestamp));
-        true
     }
 
     pub(crate) fn require_not_paused(env: &Env) {
@@ -82,7 +71,12 @@ impl Escrow {
     }
 
     fn summarize_contract(env: &Env, contract_id: u32, contract: &Contract) -> ContractSummary {
-        let milestones = crate::ttl::load_milestones(env, contract_id);
+        let milestone_key = Symbol::new(env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
         let mut total_amount: i128 = 0;
         let mut released_milestone_count: u32 = 0;
@@ -108,12 +102,6 @@ impl Escrow {
             });
         }
 
-        let after_releases =
-            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
-                .unwrap_or_else(|| env.panic_with_error(Error::AccountingInvariantViolated));
-        let refundable_balance = safe_subtract_amounts(after_releases, contract.refunded_amount)
-            .unwrap_or_else(|| env.panic_with_error(Error::AccountingInvariantViolated));
-
         ContractSummary {
             schema_version: 1,
             client: contract.client.clone(),
@@ -125,8 +113,8 @@ impl Escrow {
             funded_amount: contract.funded_amount,
             released_amount: contract.released_amount,
             refundable_balance: contract.funded_amount - contract.released_amount - contract.refunded_amount,
-            released_milestone_count: released_count,
-            milestones: summary_milestones,
+            released_milestone_count,
+            milestones: milestone_summaries,
         }
     }
 }

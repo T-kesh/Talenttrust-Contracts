@@ -1,127 +1,43 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
+    ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone,
 };
-use soroban_sdk::{Address, Env, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
-#[contractimpl]
-impl Escrow {
-    /// Deposits funds into the contract and allocates them across milestones in order.
-    ///
-    /// Each accepted deposit fills the first underfunded milestone before moving to
-    /// the next one. The aggregate `funded_amount` is still maintained for
-    /// backward-compatible reads.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `amount` - The amount to deposit (in stroops)
-    ///
-    /// # Returns
-    /// `true` if deposit was successful
-    ///
-    /// # Errors
-    /// * `AmountMustBePositive` - If amount is <= 0
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Created state
-    /// * `UnauthorizedRole` - If caller is not the client
-    /// * `FundingExceedsRequired` - If the deposit would exceed the milestone total
-    pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
-        if amount <= 0 {
-            env.panic_with_error(Error::AmountMustBePositive);
-        }
-
-        let mut contract: Contract = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        ttl::extend_contract_ttl(&env, contract_id);
-
-        if caller != contract.client {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        caller.require_auth();
-
-        if contract.status != ContractStatus::Created {
-            env.panic_with_error(Error::InvalidState);
-        }
-
-        let milestone_key = Symbol::new(&env, "milestones");
-        let mut milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-            .unwrap();
-
-        ttl::extend_milestone_ttl(&env, contract_id);
-
-        let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
-        let new_funded_amount = contract
-            .funded_amount
-            .checked_add(amount)
-            .unwrap_or_else(|| env.panic_with_error(Error::FundingExceedsRequired));
-
-        if new_funded_amount > total_amount {
-            env.panic_with_error(Error::FundingExceedsRequired);
-        }
-
-        let mut remaining = amount;
-        for index in 0..milestones.len() {
-            if remaining == 0 {
-                break;
-            }
-
-            let mut milestone = milestones.get(index).unwrap();
-            let capacity = milestone.amount - milestone.funded_amount;
-            if capacity <= 0 {
-                continue;
-            }
-
-            let allocation = if remaining < capacity {
-                remaining
-            } else {
-                capacity
-            };
-
-            milestone.funded_amount += allocation;
-            milestones.set(index, milestone);
-            remaining -= allocation;
-        }
-
-        if remaining > 0 {
-            env.panic_with_error(Error::FundingExceedsRequired);
-        }
-
-        contract.funded_amount = new_funded_amount;
-
-        if contract.funded_amount == total_amount && contract.status == ContractStatus::Created {
-            contract.status = ContractStatus::Funded;
-        }
-
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
-
-        ttl::extend_contract_ttl(&env, contract_id);
-
-        true
+/// Deposits funds into the contract and allocates them across milestones in order.
+///
+/// Each accepted deposit fills the first underfunded milestone before moving to
+/// the next one. The aggregate `funded_amount` is still maintained for
+/// backward-compatible reads.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `contract_id` - The contract ID
+/// * `amount` - The amount to deposit (in stroops)
+///
+/// # Returns
+/// `true` if deposit was successful
+///
+/// # Errors
+/// * `AmountMustBePositive` - If amount is <= 0
+/// * `ContractNotFound` - If contract doesn't exist
+/// * `InvalidState` - If contract is not in Created state
+/// * `UnauthorizedRole` - If caller is not the client
+/// * `FundingExceedsRequired` - If the deposit would exceed the milestone total
+pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: i128) -> bool {
+    if amount <= 0 {
+        env.panic_with_error(Error::AmountMustBePositive);
     }
 
     let mut contract: Contract = env
         .storage()
         .persistent()
         .get(&DataKey::Contract(contract_id))
-        .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
     ttl::extend_contract_ttl(&env, contract_id);
 
     if caller != contract.client {
-        env.panic_with_error(EscrowError::UnauthorizedRole);
+        env.panic_with_error(Error::UnauthorizedRole);
     }
     caller.require_auth();
 
@@ -142,10 +58,10 @@ impl Escrow {
                 .funded_amount
                 .checked_add(amount)
                 .unwrap_or_else(|| {
-                    env.panic_with_error(EscrowError::PotentialOverflow);
+                    env.panic_with_error(Error::PotentialOverflow);
                 });
             if new_total > params.max_escrow_total_stroops {
-                env.panic_with_error(EscrowError::InvalidProtocolParameters);
+                env.panic_with_error(Error::InvalidProtocolParameters);
             }
         }
     }
@@ -193,7 +109,6 @@ impl Escrow {
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
     if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
-        let old_status = contract.status.clone();
         contract.status = ContractStatus::Funded;
         env.events().publish(
             (symbol_short!("status"), contract_id),
@@ -219,7 +134,6 @@ mod tests {
     use super::*;
     use crate::test::{create_contract, register_client, total_milestone_amount};
     use soroban_sdk::testutils::Events as _;
-    use soroban_sdk::TryFromVal;
     extern crate std;
     use std::format;
 
@@ -228,11 +142,19 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
+        let client = register_client(&env);
+        let (client_addr, _, contract_id) = create_contract(&env, &client);
 
-        assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
+        assert!(client.deposit_funds(
+            &contract_id,
+            &client_addr,
+            &total_milestone_amount(),
+        ));
 
-    assert!(events
-        .iter()
-        .any(|e| { format!("{:?}", e).contains("status_changed") }));
+        let events = env.events().all();
+
+        assert!(events.iter().any(|e| {
+            format!("{:?}", e).contains("status_changed")
+        }));
+    }
 }
