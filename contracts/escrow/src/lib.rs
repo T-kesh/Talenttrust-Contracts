@@ -26,12 +26,14 @@
 mod approvals;
 mod ttl;
 mod types;
+mod utils;
 
 pub use types::{
     Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
 };
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
+use utils::now_seconds;
 
 #[contract]
 pub struct Escrow;
@@ -175,6 +177,9 @@ impl Escrow {
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                deadline: None,
+                funded_amount: 0,
+                refunded_amount: 0,
             });
         }
         let milestone_key = Symbol::new(&env, "milestones");
@@ -196,7 +201,7 @@ impl Escrow {
 
         env.events().publish(
             (symbol_short!("created"), id),
-            (client, freelancer, env.ledger().timestamp()),
+            (client, freelancer, now_seconds(&env)), // TIME: using now_seconds(&env) for consistent time source — see utils.rs
         );
         id
     }
@@ -430,6 +435,71 @@ impl Escrow {
         true
     }
 
+    /// Checks if a specific milestone is overdue based on its deadline.
+    ///
+    /// A milestone is considered overdue if:
+    /// - It has a deadline set (Some value)
+    /// - The current time is strictly greater than the deadline (now > deadline)
+    /// - The milestone has not been released
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `milestone_index` - The index of the milestone to check
+    ///
+    /// # Returns
+    /// `true` if the milestone is overdue, `false` otherwise
+    ///
+    /// # Note
+    /// - Returns `false` if milestone has no deadline (None)
+    /// - Returns `false` if milestone is already released
+    /// - Boundary condition: at exactly the deadline (now == deadline), returns `false`
+    ///   because the deadline hasn't passed yet (uses strictly > comparison)
+    ///
+    /// # Security
+    /// Uses `now_seconds(&env)` which is the single source of truth for ledger time.
+    /// Time cannot be manipulated by contract callers.
+    pub fn is_milestone_overdue(env: Env, contract_id: u32, milestone_index: u32) -> bool {
+        let contract: Contract = match env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+        {
+            Some(c) => c,
+            None => return false, // Contract not found, not overdue
+        };
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = match env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+        {
+            Some(m) => m,
+            None => return false, // No milestones, not overdue
+        };
+
+        if milestone_index >= milestones.len() {
+            return false; // Index out of bounds, not overdue
+        }
+
+        let milestone = milestones.get(milestone_index).unwrap();
+
+        // Return false if already released
+        if milestone.released {
+            return false;
+        }
+
+        // Return false if no deadline set
+        match milestone.deadline {
+            None => false,
+            Some(deadline) => {
+                // Overdue if now > deadline (strictly greater)
+                now_seconds(&env) > deadline
+            }
+        }
+    }
+
     /// Refunds unreleased milestones back to the client.
     ///
     /// # Arguments
@@ -492,13 +562,26 @@ impl Escrow {
 
             let milestone = milestones.get(idx).unwrap();
 
+            // SECURITY: Check if milestone is already released
             if milestone.released {
                 env.panic_with_error(Error::AlreadyReleased);
             }
 
+            // SECURITY: Check if milestone is already refunded
             if milestone.refunded {
                 env.panic_with_error(Error::AlreadyRefunded);
             }
+
+            // SECURITY: Check timeout refund conditions - milestone must be overdue if deadline is set
+            if let Some(deadline) = milestone.deadline {
+                // Milestone has a deadline - check if it's overdue
+                if !Self::is_milestone_overdue(env.clone(), contract_id, idx) {
+                    // Deadline set but milestone not yet overdue
+                    env.panic_with_error(Error::MilestoneNotOverdue);
+                }
+                // SECURITY: is_milestone_overdue already verified: now > deadline AND unreleased
+            }
+            // If no deadline (None), allow refund anytime (backward compatibility)
 
             total_refund_amount += milestone.amount;
         }

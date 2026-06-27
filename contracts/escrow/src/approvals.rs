@@ -249,6 +249,9 @@ mod tests {
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                deadline: None,
+                funded_amount: 0,
+                refunded_amount: 0,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
@@ -297,6 +300,9 @@ mod tests {
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                deadline: None,
+                funded_amount: 0,
+                refunded_amount: 0,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");

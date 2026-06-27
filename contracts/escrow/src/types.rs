@@ -39,6 +39,10 @@ pub enum Error {
     FreelancerMismatch = 21,
     InvalidRating = 22,
     ReputationAlreadyIssued = 23,
+    /// Timeout refund attempted but milestone deadline has not passed.
+    MilestoneNotOverdue = 24,
+    /// Timeout refund attempted but this milestone has no deadline set.
+    MilestoneHasNoDeadline = 25,
 }
 
 #[contracttype]
@@ -60,6 +64,10 @@ pub struct Milestone {
     pub refunded: bool,
     pub work_evidence: Option<String>,
     pub refunded_amount: i128,
+    /// Optional Unix timestamp (seconds) after which the client may claim
+    /// a timeout refund for this milestone without arbiter involvement.
+    /// None means no deadline — the milestone never expires.
+    pub deadline: Option<u64>,
 }
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
