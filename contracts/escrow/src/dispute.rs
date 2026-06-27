@@ -1,6 +1,9 @@
-use soroban_sdk::contracttype;
+use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
 
-use crate::{safe_add_amounts, Contract, ContractStatus, Error};
+use crate::{
+    safe_add_amounts, ttl, Contract, ContractStatus, Error as EscrowError, Escrow, DataKey,
+    EscrowClient, EscrowArgs,
+};
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]
@@ -69,5 +72,105 @@ pub fn final_status_after_resolution(contract: &Contract) -> ContractStatus {
         ContractStatus::Refunded
     } else {
         ContractStatus::Completed
+    }
+}
+
+#[contractimpl]
+impl Escrow {
+    /// Raise a dispute on a contract. Blocked when paused.
+    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        Self::require_not_finalized(&env, contract_id);
+
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+        if contract.arbiter.is_none() {
+            env.panic_with_error(EscrowError::ArbiterRequired);
+        }
+        if contract.status != ContractStatus::Funded
+            && contract.status != ContractStatus::PartiallyFunded
+        {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        contract.status = ContractStatus::Disputed;
+
+        env.storage().persistent().set(&key, &contract);
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "dispute"), contract_id),
+            (caller, env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Resolve a dispute on a contract. Blocked when paused.
+    pub fn resolve_dispute(
+        env: Env,
+        contract_id: u32,
+        arbiter: Address,
+        resolution: DisputeResolution,
+    ) -> bool {
+        Self::require_not_paused(&env);
+        arbiter.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        Self::require_not_finalized(&env, contract_id);
+
+        if contract.status != ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+        if contract.arbiter.as_ref() != Some(&arbiter) {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        let (client_payout, freelancer_payout) =
+            resolution_payouts(&contract, &resolution)
+                .unwrap_or_else(|err| env.panic_with_error(err));
+
+        contract.refunded_amount = safe_add_amounts(contract.refunded_amount, client_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.released_amount = safe_add_amounts(contract.released_amount, freelancer_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        if safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            != Some(contract.funded_amount)
+        {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
+
+        contract.status = final_status_after_resolution(&contract);
+
+        env.storage().persistent().set(&key, &contract);
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "dsp_res"), contract_id),
+            (
+                arbiter,
+                resolution.code(),
+                client_payout,
+                freelancer_payout,
+                env.ledger().timestamp(),
+            ),
+        );
+        true
     }
 }

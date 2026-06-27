@@ -251,10 +251,9 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
                 work_evidence: None,
                 refunded_amount: 0,
+                deadline: None,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
@@ -303,10 +302,9 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
                 work_evidence: None,
                 refunded_amount: 0,
+                deadline: None,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");
@@ -361,10 +359,9 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
                 work_evidence: None,
                 refunded_amount: 0,
+                deadline: None,
             }],
         );
         let milestone_key = Symbol::new(&env, "milestones");

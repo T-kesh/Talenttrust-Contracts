@@ -10,7 +10,7 @@ use soroban_sdk::{
     testutils::Address as _,
     testutils::Ledger as _,
     testutils::LedgerInfo,
-    Address, Env, IntoVal, Symbol, Val,
+    Address, Env, IntoVal, Symbol, Val, testutils::Events, FromVal,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -39,10 +39,9 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 // ---------------------------------------------------------------------------
 
 fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
-    let topic_val: Val = topic.into_val(env);
     env.events().all().iter().any(|event| {
         let topics = event.1;
-        topics.len() > 0 && topics.get(0).unwrap() == topic_val
+        topics.len() > 0 && Symbol::from_val(env, &topics.get(0).unwrap()) == *topic
     })
 }
 

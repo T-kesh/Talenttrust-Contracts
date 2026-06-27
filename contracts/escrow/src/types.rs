@@ -100,6 +100,7 @@ pub enum Error {
     MilestoneNotFound = 46,
     ExactDepositRequired = 47,
     InvalidProtocolParameters = 48,
+    ArbiterRequired = 49,
 }
 
 
