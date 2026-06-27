@@ -2,6 +2,9 @@ use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
 use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
+#[path = "test/pause_controls.rs"]
+mod pause_controls;
+
 #[test]
 fn test_hello() {
     let env = Env::default();

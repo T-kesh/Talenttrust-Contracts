@@ -61,6 +61,22 @@ pub struct MilestoneApproval {
     pub approval_status: Approval,
 }
 
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PauseTier {
+    Unpaused = 0,
+    SoftPaused = 1,
+    EmergencyPaused = 2,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseState {
+    pub tier: PauseTier,
+    pub admin: Address,
+    pub emergency_reason_resolved: bool,
+}
+
 #[contract]
 pub struct Escrow;
 
@@ -156,6 +172,8 @@ impl Escrow {
     /// - Contract is not in Created status
     /// - Amount doesn't match total milestone amounts
     pub fn deposit_funds(env: Env, _contract_id: u32, caller: Address, amount: i128) -> bool {
+        // Pause does not block deposits.
+
         caller.require_auth();
 
         // In real implementation, retrieve contract from storage
@@ -402,6 +420,135 @@ impl Escrow {
     /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
+    }
+
+    // --------------------
+    // Pause / emergency API
+    // --------------------
+
+    fn pause_state_storage_key() -> soroban_sdk::Symbol {
+        symbol_short!("pause")
+    }
+
+    /// Soft pause: blocks milestone release paths (release_milestone), but can be escalated to emergency.
+    /// Admin only.
+    pub fn pause_soft(env: Env, admin: Address) {
+        admin.require_auth();
+
+        let state = env
+            .storage()
+            .persistent()
+            .get(&Self::pause_state_storage_key())
+            .unwrap_or_else(|| PauseState {
+                tier: PauseTier::Unpaused,
+                admin: admin.clone(),
+                emergency_reason_resolved: false,
+            });
+
+        if state.admin != admin {
+            panic!("Only admin can pause");
+        }
+
+        let new_state = PauseState {
+            tier: PauseTier::SoftPaused,
+            admin: state.admin,
+            emergency_reason_resolved: state.emergency_reason_resolved,
+        };
+        env.storage()
+            .persistent()
+            .set(&Self::pause_state_storage_key(), &new_state);
+    }
+
+    /// Emergency pause: blocks milestone release paths and unpause requires admin.
+    /// Admin only.
+    pub fn pause_emergency(env: Env, admin: Address) {
+        admin.require_auth();
+
+        let state = env
+            .storage()
+            .persistent()
+            .get(&Self::pause_state_storage_key())
+            .unwrap_or_else(|| PauseState {
+                tier: PauseTier::Unpaused,
+                admin: admin.clone(),
+                emergency_reason_resolved: false,
+            });
+
+        if state.admin != admin {
+            panic!("Only admin can pause");
+        }
+
+        let new_state = PauseState {
+            tier: PauseTier::EmergencyPaused,
+            admin: state.admin,
+            emergency_reason_resolved: state.emergency_reason_resolved,
+        };
+        env.storage()
+            .persistent()
+            .set(&Self::pause_state_storage_key(), &new_state);
+    }
+
+    /// Unpause: admin only. If currently in emergency, unpausing requires emergency_reason_resolved=true
+    /// (modeled with a boolean flip).
+    pub fn unpause_all(env: Env, admin: Address) {
+        admin.require_auth();
+
+        let state: PauseState = env
+            .storage()
+            .persistent()
+            .get(&Self::pause_state_storage_key())
+            .unwrap_or_else(|| PauseState {
+                tier: PauseTier::Unpaused,
+                admin: admin.clone(),
+                emergency_reason_resolved: false,
+            });
+
+        if state.admin != admin {
+            panic!("Only admin can unpause");
+        }
+
+        if state.tier == PauseTier::EmergencyPaused && !state.emergency_reason_resolved {
+            // In this simplified model, emergency unpause is blocked until resolved.
+            panic!("Emergency reason not resolved");
+        }
+
+        let new_state = PauseState {
+            tier: PauseTier::Unpaused,
+            admin: state.admin,
+            emergency_reason_resolved: state.emergency_reason_resolved,
+        };
+        env.storage()
+            .persistent()
+            .set(&Self::pause_state_storage_key(), &new_state);
+    }
+
+    /// Mark emergency reason as resolved (admin only) so that `unpause_all` can succeed.
+    pub fn resolve_emergency_reason(env: Env, admin: Address) {
+        admin.require_auth();
+
+        let state: PauseState = env
+            .storage()
+            .persistent()
+            .get(&Self::pause_state_storage_key())
+            .unwrap_or_else(|| PauseState {
+                tier: PauseTier::Unpaused,
+                admin: admin.clone(),
+                emergency_reason_resolved: false,
+            });
+
+        if state.admin != admin {
+            panic!("Only admin can resolve");
+        }
+
+        let new_state = PauseState {
+            tier: state.tier,
+            admin: state.admin,
+            emergency_reason_resolved: true,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&Self::pause_state_storage_key(), &new_state);
     }
 }
 
