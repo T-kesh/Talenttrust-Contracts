@@ -19,6 +19,7 @@ The contract list readers (`list_contracts_by_participant`) are therefore consis
 | `Paused` | `bool` | `pause`, `unpause`, emergency controls |
 | `Emergency` | `bool` | emergency controls |
 | `Contract(id)` | `EscrowContractData` | create/deposit/release/reputation/cancel |
+| `(Contract(id), "milestones")` | `Vec<Milestone>` | create/deposit/release/refund |
 | `NextContractId` | `u32` | `create_contract` |
 | `ReputationIssued(id)` | `bool` | `issue_reputation` |
 | `PendingReputationCredits(address)` | `u32` | final release, `issue_reputation` |
@@ -67,8 +68,17 @@ authority for released state.
 
 - Contract ids are monotonically assigned from `NextContractId`.
 - Milestone amounts and participant addresses are immutable after creation.
-- `total_deposited`, `released_amount`, and `refunded_amount` are checked after
+- `funded_amount`, `released_amount`, and `refunded_amount` are checked after
   balance-changing operations.
+- `deposit_funds` preserves the aggregate `Contract(id).funded_amount` while
+  also allocating each accepted deposit across `(Contract(id), "milestones")`
+  in milestone order. A milestone's `funded_amount` is capped at its immutable
+  `amount` before funding moves to the next milestone.
+- Deposits that would move aggregate funding above the milestone total are
+  rejected before any per-milestone allocation is persisted.
+- `release_milestone` requires both aggregate availability and the target
+  milestone's own `funded_amount >= amount`, so legacy aggregate-only funding
+  cannot release an underallocated milestone.
 - A milestone release flag can move from absent/false to true only once.
 - Reputation issuance is guarded by `ReputationIssued(contract_id)`.
 

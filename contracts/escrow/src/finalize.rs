@@ -1,6 +1,6 @@
 use crate::{
-    safe_add_amounts, safe_subtract_amounts, ContractStatus, DataKey, EscrowError, Contract as EscrowContractData,
-    ContractSummary, MilestoneSummary, FinalizationRecord, EscrowClient, EscrowArgs, Escrow
+    safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, EscrowError,
+    Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 use soroban_sdk::{symbol_short, Address, Env, Vec, Symbol};
 
@@ -52,6 +52,12 @@ impl Escrow {
                 refunded: m.refunded,
             });
         }
+
+        let after_releases =
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
+        let refundable_balance = safe_subtract_amounts(after_releases, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
 
         ContractSummary {
             schema_version: 1,

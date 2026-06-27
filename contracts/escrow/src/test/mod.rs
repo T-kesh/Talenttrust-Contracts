@@ -8,15 +8,13 @@ use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Release
 // --- Submodules ---
 
 mod client_migration;
-mod contract_id_allocation;
-mod dispute;
+mod deposit;
 mod emergency_controls;
 mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
-mod refund;
-mod release;
 mod release_authorization;
+mod reputation;
 
 // --- Shared constants ---
 

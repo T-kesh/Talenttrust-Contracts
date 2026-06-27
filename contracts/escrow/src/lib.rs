@@ -379,6 +379,9 @@ impl Escrow {
 
     /// Releases a specific milestone, transferring funds to the freelancer.
     ///
+    /// The target milestone must be fully funded through per-milestone deposit
+    /// allocation before it can be released.
+    ///
     /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
     ///
     /// MultiSig semantics are client-and-freelancer approval. A MultiSig
@@ -400,7 +403,7 @@ impl Escrow {
     /// * `InvalidMilestone` - If milestone index is out of bounds
     /// * `AlreadyReleased` - If milestone was already released
     /// * `AlreadyRefunded` - If milestone was already refunded
-    /// * `InsufficientFunds` - If contract doesn't have enough funded balance
+    /// * `InsufficientFunds` - If the milestone or aggregate contract balance is underfunded
     /// * `InsufficientApprovals` - If required approvals are missing
     /// * `ApprovalExpired` - If approvals have expired
     /// * `UnauthorizedRole` - If caller is not authorized to release
@@ -494,7 +497,35 @@ impl Escrow {
         approvals::check_approvals(&env, &contract, contract_id, milestone_index)
             .unwrap_or_else(|e| env.panic_with_error(e));
 
-        // Check if there's enough balance
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
+
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let mut milestone = milestones.get(milestone_index).unwrap().clone();
+
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        if milestone.funded_amount < milestone.amount {
+            env.panic_with_error(Error::InsufficientFunds);
+        }
+
+        // Check if there's enough aggregate balance
         let available_balance =
             contract.funded_amount - contract.released_amount - contract.refunded_amount;
         if available_balance < milestone.amount {
