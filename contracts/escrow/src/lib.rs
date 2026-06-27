@@ -24,6 +24,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod amount_validation;
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -1457,7 +1458,18 @@ impl Escrow {
 
     /// Returns the pending governance admin address, if any.
     pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::PendingAdmin)
+        Self::get_pending_governance_admin_impl(&env)
+    }
+
+    /// Returns the ledger sequence at which the pending admin proposal was made.
+    ///
+    /// Returns `None` if there is no pending proposal. This allows off-chain
+    /// indexers and governance dashboards to compute the remaining timelock
+    /// before the proposal can be accepted via `accept_governance_admin`.
+    pub fn get_pending_governance_admin_proposed_at(env: Env) -> Option<u32> {
+        let proposal: Option<PendingAdminProposal> =
+            env.storage().persistent().get(&DataKey::PendingAdmin);
+        proposal.map(|p| p.proposed_at_ledger)
     }
 
     /// Returns the current governance admin address.

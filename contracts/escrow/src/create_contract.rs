@@ -1,4 +1,7 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization, DepositMode};
+use crate::{
+    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
+    ReleaseAuthorization,
+};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts
@@ -59,6 +62,19 @@ pub fn create_contract_impl(
     for amount in milestones.iter() {
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+        }
+    }
+
+    // Check governed max_escrow_total_stroops cap if set
+    let total_milestones: i128 = milestones.iter().map(|m| m).sum();
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0 && total_milestones > params.max_escrow_total_stroops
+        {
+            env.panic_with_error(EscrowError::EscrowCapExceeded);
         }
     }
 

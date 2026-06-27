@@ -1,5 +1,7 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone};
-use soroban_sdk::{symbol_short, Address, Env, Vec};
+use crate::{
+    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
+};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
@@ -129,14 +131,26 @@ impl Escrow {
         env.panic_with_error(Error::InvalidState);
     }
 
-    contract.funded_amount = contract
-        .funded_amount
-        .checked_add(amount)
-        .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
-    contract.total_deposited = contract
-        .total_deposited
-        .checked_add(amount)
-        .unwrap_or_else(|| env.panic_with_error(Error::AmountMustBePositive));
+    // Check governed max_escrow_total_stroops cap if set
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0 {
+            let new_total = contract
+                .funded_amount
+                .checked_add(amount)
+                .unwrap_or_else(|| {
+                    env.panic_with_error(EscrowError::PotentialOverflow);
+                });
+            if new_total > params.max_escrow_total_stroops {
+                env.panic_with_error(EscrowError::InvalidProtocolParameters);
+            }
+        }
+    }
+
+    contract.funded_amount += amount;
 
     let milestone_key = Symbol::new(&env, "milestones");
     let mut milestones: Vec<Milestone> = env
