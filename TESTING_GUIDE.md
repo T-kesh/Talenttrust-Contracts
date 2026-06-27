@@ -808,3 +808,17 @@ Expected summary:
 **Total Coverage:** 12 reachable error branches + 1 documented unreachable = **13 tests**
 
 All tests use the `try_*` client variant pattern to assert the exact error code being returned from the contract, ensuring comprehensive negative-path coverage for Issue #405.
+
+# Issue #429: Created-to-Funded Boundary Behavior
+
+## Overview
+
+The `deposit_funds` entrypoint dictates the transition from `Created` to `Funded` status. The contract remains in `Created` as long as `funded_amount < total_amount`. Once a deposit brings `funded_amount` to at least `total_amount`, the contract immediately transitions to `Funded`.
+
+## Expected Boundary Behavior
+- **Under by one stroop**: Depositing `total_amount - 1` leaves the contract in `Created` status.
+- **Exact total**: Depositing exactly `total_amount` immediately transitions the contract to `Funded`.
+- **Final stroop**: Depositing `1` stroop into a contract missing only `1` stroop immediately transitions the contract to `Funded`.
+- **Over by one**: Depositing `total_amount + 1` from `Created` transitions the contract to `Funded`.
+- **Deposit on already-Funded**: Attempting to deposit into a contract that is already `Funded` results in an `Error::InvalidState`.
+- **Refundable Balance**: At any point, `get_refundable_balance()` accurately reflects `funded_amount - released_amount - refunded_amount`.

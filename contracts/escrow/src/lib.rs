@@ -23,7 +23,6 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-
 mod amount_validation;
 mod amount_validation;
 mod approvals;
@@ -1164,11 +1163,7 @@ impl Escrow {
     /// # TTL
     /// Extends the milestones vector's persistent TTL on read,
     /// consistent with `get_milestones`.
-    pub fn get_work_evidence(
-        env: Env,
-        contract_id: u32,
-        milestone_index: u32,
-    ) -> Option<String> {
+    pub fn get_work_evidence(env: Env, contract_id: u32, milestone_index: u32) -> Option<String> {
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones: Vec<Milestone> = env
             .storage()

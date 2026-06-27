@@ -1,43 +1,39 @@
 use super::{
-    assert_contract_error, assert_contract_state, create_client, create_default_contract, setup,
+    assert_contract_error, assert_contract_state, create_client, create_contract,
+    create_default_contract, register_client, setup, total_milestone_amount,
 };
-use crate::{types::Error, ContractStatus};
-use soroban_sdk::{testutils::Address as _, Address};
+use crate::{types::Error, ContractStatus, EscrowError};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
-/// Tests that deposits accumulate correctly and transition to Funded status when exactly fully funded.
+/// Tests that incremental deposits accumulate and transition to Funded at the exact total.
 ///
 /// # Security
-/// - Validates state transition from Created to Funded
-/// - Ensures funded_amount tracking is accurate
+/// - Validates state transition from Created to PartiallyFunded to Funded
+/// - Ensures funded_amount tracking is accurate across multiple deposits
 #[test]
-fn deposit_single_full_amount_transitions_created_to_funded() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) =
-        create_contract(&env, &client);
+fn deposit_incremental_two_deposits_transitions_to_funded() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
     let total = total_milestone_amount();
+    let partial = total / 2; // deposit half first
 
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total));
-
-    // Deposit 600 (half of the 1,200 required milestone total)
-    assert!(client.deposit_funds(&contract_id, &client_addr, &600_0000000_i128));
+    // Deposit half the total — should stay in PartiallyFunded
+    assert!(client.deposit_funds(&contract_id, &client_addr, &partial));
     let contract = client.get_contract(&contract_id);
     assert_contract_state(
         contract,
         ContractStatus::PartiallyFunded,
-        600_0000000_i128,
+        partial,
         0,
         0,
     );
 
-    // Deposit remaining 600, transitions status to Funded
-    assert!(client.deposit_funds(&contract_id, &client_addr, &600_0000000_i128));
+    // Deposit remaining half — should transition to Funded
+    assert!(client.deposit_funds(&contract_id, &client_addr, &(total - partial)));
     let contract = client.get_contract(&contract_id);
-    assert_eq!(contract.status, ContractStatus::PartiallyFunded);
-    assert_eq!(contract.funded_amount, partial);
-    assert!(contract.funded_amount > 0);
-    assert!(contract.funded_amount < total_milestone_amount());
+    assert_eq!(contract.status, ContractStatus::Funded);
+    assert_eq!(contract.funded_amount, total);
 }
 
 /// Tests that non-client callers are rejected with UnauthorizedRole.
@@ -195,3 +191,52 @@ fn test_deposit_insufficient_funds() {
     // This test is documented for completeness but cannot be triggered in unit tests.
 }
 
+/// Tests the precise boundary transition from Created to Funded.
+///
+/// # Security
+/// - Validates deterministic state transition upon full funding
+/// - Ensures partial funding does not prematurely transition state
+/// - Verifies refundable balance calculation across deposits
+#[test]
+fn test_funded_boundary_incremental_and_exact() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    
+    // Multi-deposit accumulation: under by one
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    let total = total_milestone_amount();
+    
+    // Deposit total - 1
+    assert!(client.deposit_funds(&contract_id, &client_addr, &(total - 1)));
+    let contract = client.get_contract(&contract_id);
+    assert_eq!(contract.status, ContractStatus::Created);
+    let refundable = client.get_refundable_balance(&contract_id);
+    assert_eq!(refundable, contract.funded_amount - contract.released_amount - contract.refunded_amount);
+    
+    // Deposit final 1 stroop
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_i128));
+    let contract2 = client.get_contract(&contract_id);
+    assert_eq!(contract2.status, ContractStatus::Funded);
+    let refundable2 = client.get_refundable_balance(&contract_id);
+    assert_eq!(refundable2, contract2.funded_amount - contract2.released_amount - contract2.refunded_amount);
+    
+    // Deposit on already-Funded contract is rejected with InvalidState
+    let result = client.try_deposit_funds(&contract_id, &client_addr, &100_i128);
+    assert_contract_error(result, Error::InvalidState);
+    
+    // Deposit exactly total in one call
+    let contract_id2 = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&contract_id2, &client_addr, &total));
+    let contract3 = client.get_contract(&contract_id2);
+    assert_eq!(contract3.status, ContractStatus::Funded);
+    let refundable3 = client.get_refundable_balance(&contract_id2);
+    assert_eq!(refundable3, contract3.funded_amount - contract3.released_amount - contract3.refunded_amount);
+    
+    // Deposit over total by 1 stroop — production code accepts this from Created; asserts Funded
+    let contract_id3 = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&contract_id3, &client_addr, &(total + 1)));
+    let contract4 = client.get_contract(&contract_id3);
+    assert_eq!(contract4.status, ContractStatus::Funded);
+    let refundable4 = client.get_refundable_balance(&contract_id3);
+    assert_eq!(refundable4, contract4.funded_amount - contract4.released_amount - contract4.refunded_amount);
+}

@@ -801,8 +801,7 @@ fn get_milestones_read_extends_persistent_ttl() {
 fn get_work_evidence_read_extends_persistent_ttl() {
     let env = setup_ttl_env();
     let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) =
-        create_contract(&env, &client);
+    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
     client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount());
 
     let ev = soroban_sdk::String::from_str(&env, "ipfs://QmTtlEvidence");
@@ -819,8 +818,9 @@ fn get_work_evidence_read_extends_persistent_ttl() {
     });
 
     env.ledger().with_mut(|li| {
-        li.sequence_number =
-            li.sequence_number.saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
+        li.sequence_number = li
+            .sequence_number
+            .saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
     });
 
     let result = client.get_work_evidence(&contract_id, &0);
