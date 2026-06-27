@@ -220,3 +220,76 @@ fn get_average_rating_fractional_average_is_preserved() {
     // total_rating=3, completed_contracts=2 → 3 * 10_000 / 2 = 15_000
     assert_eq!(client.get_average_rating(&freelancer_addr), Some(15_000));
 }
+
+// ---------------------------------------------------------------------------
+// Comment length boundary tests (byte-length: 1..=200)
+// ---------------------------------------------------------------------------
+
+/// Length 0 must panic with EmptyComment.
+#[test]
+fn issue_reputation_comment_length_0_rejects_with_empty_comment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = complete_contract(&env, &client);
+
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5,
+        &String::from_str(&env, ""),
+    );
+    super::assert_contract_error(result, EscrowError::EmptyComment);
+}
+
+/// Length 1 (minimum valid) must succeed.
+#[test]
+fn issue_reputation_comment_length_1_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = complete_contract(&env, &client);
+
+    assert!(client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5,
+        &String::from_str(&env, "x"),
+    ));
+}
+
+/// Length 200 (maximum valid) must succeed.
+#[test]
+fn issue_reputation_comment_length_200_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = complete_contract(&env, &client);
+
+    // Exactly 200 ASCII bytes.
+    let s = "a".repeat(200);
+    assert!(client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5,
+        &String::from_str(&env, &s),
+    ));
+}
+
+/// Length 201 must panic with CommentTooLong.
+#[test]
+fn issue_reputation_comment_length_201_rejects_with_comment_too_long() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = complete_contract(&env, &client);
+
+    let s = "a".repeat(201);
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5,
+        &String::from_str(&env, &s),
+    );
+    super::assert_contract_error(result, EscrowError::CommentTooLong);
+}

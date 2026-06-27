@@ -871,6 +871,11 @@ impl Escrow {
 
     /// Issues reputation credit for a completed contract.
     ///
+    /// # Comment length
+    /// `comment` must be between 1 and 200 **bytes** (inclusive). Because Soroban
+    /// `String::len()` returns the UTF-8 byte length, a multi-byte character (e.g.
+    /// a 3-byte emoji) counts as 3 toward the limit. ASCII characters are 1 byte each.
+    ///
     /// # Errors
     /// * `ContractPaused` - If the contract is paused while not in emergency mode
     /// * `EmergencyActive` - If the contract is in an active emergency pause
@@ -878,6 +883,8 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not the stored client
     /// * `FreelancerMismatch` - If `freelancer` does not match the stored freelancer
     /// * `InvalidRating` - If rating is not in [1, 5]
+    /// * `EmptyComment` - If comment is 0 bytes
+    /// * `CommentTooLong` - If comment exceeds 200 bytes
     /// * `NotCompleted` - If contract status is not `Completed`
     /// * `ReputationAlreadyIssued` - If reputation was already issued
     /// * `SelfRating` - If client and freelancer are the same address
@@ -885,6 +892,7 @@ impl Escrow {
     /// # Security
     /// * Pause/emergency gate runs BEFORE contract state read so paused
     ///   contracts cannot have reputation mutated while paused.
+    /// * The 200-byte cap prevents unbounded on-chain storage growth.
     pub fn issue_reputation(
         env: Env,
         contract_id: u32,
