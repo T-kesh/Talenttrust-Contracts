@@ -1,4 +1,6 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone};
+use crate::{
+    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
+};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -39,10 +41,19 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
         env.panic_with_error(Error::InvalidState);
     }
 
-    let post_deposit_funded_amount = contract.funded_amount.checked_add(amount).unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+    let post_deposit_funded_amount = contract
+        .funded_amount
+        .checked_add(amount)
+        .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
-    if let Some(params) = env.storage().persistent().get::<_, GovernedParameters>(&DataKey::GovernedParameters) {
-        if params.max_escrow_total_stroops > 0 && post_deposit_funded_amount > params.max_escrow_total_stroops {
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0
+            && post_deposit_funded_amount > params.max_escrow_total_stroops
+        {
             env.panic_with_error(EscrowError::EscrowCapExceeded);
         }
     }

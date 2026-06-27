@@ -24,6 +24,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod amount_validation;
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -33,10 +34,10 @@ mod governance;
 mod migration;
 mod ttl;
 mod types;
-mod amount_validation;
 mod utils;
 
 pub use amount_validation::safe_add_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -45,7 +46,6 @@ pub use types::{
     MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
 // Re-export for internal use
 pub(crate) use amount_validation::safe_subtract_amounts;
@@ -104,8 +104,6 @@ pub enum EscrowError {
     /// A zero or unset governed cap is treated as "no limit".
     EscrowCapExceeded = 32,
 }
-
-
 
 /// Returns `Some(a + b)`, or `None` on overflow.
 pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
@@ -231,7 +229,14 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
-        create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
+        create_contract::create_contract_impl(
+            &env,
+            client,
+            freelancer,
+            arbiter,
+            milestones,
+            release_authorization,
+        )
     }
 
     /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -272,7 +277,10 @@ impl Escrow {
     }
 
     /// Return immutable close metadata for `contract_id`, if it has been finalized.
-    pub fn get_finalization_record(env: Env, contract_id: u32) -> Option<finalize::FinalizationRecord> {
+    pub fn get_finalization_record(
+        env: Env,
+        contract_id: u32,
+    ) -> Option<finalize::FinalizationRecord> {
         finalize::get_finalization_record_impl(&env, contract_id)
     }
 
