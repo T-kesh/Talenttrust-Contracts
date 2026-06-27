@@ -179,6 +179,7 @@ impl Escrow {
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
     if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+        let old_status = contract.status.clone();
         contract.status = ContractStatus::Funded;
         env.events().publish(
             (symbol_short!("status"), contract_id),
