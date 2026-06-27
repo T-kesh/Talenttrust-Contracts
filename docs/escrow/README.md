@@ -1,8 +1,10 @@
 # Escrow Integration Guide
 
 This guide documents the entrypoints currently implemented by the escrow
-contract. Planned features are listed separately and linked to their tracking
-issues so integrators can distinguish live API from roadmap.
+contract. For a compact ABI-style inventory of the live public surface, see
+[abi-reference.md](abi-reference.md). Planned features are listed separately and
+linked to their tracking issues so integrators can distinguish live API from
+roadmap.
 
 ## Module Map
 
