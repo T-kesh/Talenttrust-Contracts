@@ -11,18 +11,22 @@ use soroban_sdk::Env;
 /// Direct calls to `env.ledger().timestamp()` bypass this abstraction and make it impossible
 /// to test timeout-driven refunds reliably.
 ///
-/// # Security
-/// Ledger time on Soroban is set by validators and cannot be manipulated by contract callers.
-/// A milestone deadline cannot be artificially triggered by any on-chain actor.
-/// The timestamp is in Unix seconds, matching the Soroban ledger's native representation.
+/// # Returns
+/// The current ledger timestamp as a `u64` representing seconds since Unix epoch
+///
+/// # Example
+/// ```ignore
+/// use crate::utils::now_seconds;
+///
+/// pub fn check_timeout(env: &Env, deadline: u64) -> bool {
+///     now_seconds(env) > deadline
+/// }
+/// ```
 ///
 /// # Testing
-/// In tests, control time using:
+/// In tests, use `env.ledger().set()` to control time:
 /// ```ignore
-/// env.ledger().with_mut(|li| {
-///     li.timestamp = target_time_in_seconds;
-/// });
-/// ```
+/// use soroban_sdk::testutils::Ledger;
 ///
 /// # Example
 /// ```ignore
