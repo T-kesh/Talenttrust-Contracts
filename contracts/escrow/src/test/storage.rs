@@ -1,8 +1,5 @@
-use super::{
-    assert_contract_error, complete_contract, create_contract, default_milestones,
-    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO,
-};
-use crate::{ContractStatus, DataKey, EscrowError, ReadinessChecklist, ReleaseAuthorization};
+use super::{assert_contract_error, complete_contract, create_contract, default_milestones, generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO};
+use crate::{ContractStatus, DataKey, Error, ReadinessChecklist, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─── Initialized / Admin ──────────────────────────────────────────────────────
@@ -51,7 +48,7 @@ fn double_initialize_fails() {
     client.initialize(&admin);
     assert_contract_error(
         client.try_initialize(&admin),
-        EscrowError::AlreadyInitialized,
+        Error::AlreadyInitialized,
     );
 }
 
@@ -104,7 +101,7 @@ fn paused_blocks_create_contract() {
             &default_milestones(&env),
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -121,7 +118,7 @@ fn paused_blocks_deposit_funds() {
 
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &total_milestone_amount()),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -139,7 +136,7 @@ fn paused_blocks_release_milestone() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -156,7 +153,7 @@ fn paused_blocks_cancel_contract() {
 
     assert_contract_error(
         client.try_cancel_contract(&id, &client_addr),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
 }
 
@@ -216,7 +213,7 @@ fn unpause_blocked_while_emergency_active() {
     client.initialize(&admin);
 
     client.activate_emergency_pause();
-    assert_contract_error(client.try_unpause(), EscrowError::EmergencyActive);
+    assert_contract_error(client.try_unpause(), Error::EmergencyActive);
 }
 
 // ─── Contract / NextContractId ────────────────────────────────────────────────
@@ -261,7 +258,7 @@ fn get_contract_fails_for_unknown_id() {
 
     assert_contract_error(
         client.try_get_contract(&9999),
-        EscrowError::ContractNotFound,
+        Error::ContractNotFound,
     );
 }
 
@@ -299,7 +296,7 @@ fn double_release_same_milestone_fails() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        EscrowError::AlreadyReleased,
+        Error::AlreadyReleased,
     );
 }
 
@@ -314,7 +311,7 @@ fn release_out_of_bounds_milestone_fails() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &99),
-        EscrowError::InvalidMilestone,
+        Error::InvalidMilestone,
     );
 }
 
@@ -355,7 +352,7 @@ fn double_issue_reputation_fails() {
 
     assert_contract_error(
         client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
-        EscrowError::ReputationAlreadyIssued,
+        Error::ReputationAlreadyIssued,
     );
 }
 
@@ -399,7 +396,7 @@ fn reputation_not_issuable_before_completion() {
 
     assert_contract_error(
         client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
-        EscrowError::NotCompleted,
+        Error::NotCompleted,
     );
 }
 
@@ -414,7 +411,7 @@ fn reputation_requires_client_caller() {
 
     assert_contract_error(
         client.try_issue_reputation(&id, &stranger, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
 }
 
@@ -494,6 +491,6 @@ fn deposit_exceeding_total_fails() {
     let (client_addr, _, id) = create_contract(&env, &client);
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &(total_milestone_amount() + 1)),
-        EscrowError::ExactDepositRequired,
+        Error::ExactDepositRequired,
     );
 }

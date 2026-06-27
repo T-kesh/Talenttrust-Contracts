@@ -26,11 +26,8 @@ use soroban_sdk::{
     Address, Env, Symbol, Vec as SorobanVec,
 };
 
-use super::{
-    assert_contract_error, create_contract, register_client, total_milestone_amount,
-    MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE,
-};
-use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
+use super::{assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE};
+use crate::{ContractStatus, Error, ReleaseAuthorization};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -141,7 +138,7 @@ fn bind_settlement_token_rejects_double_bind() {
 
     assert_contract_error(
         client.try_bind_settlement_token(&sac2),
-        EscrowError::SettlementTokenAlreadyBound,
+        Error::SettlementTokenAlreadyBound,
     );
 }
 
@@ -153,7 +150,7 @@ fn bind_settlement_token_rejects_uninit() {
     let sac = env.register_stellar_asset_contract(Address::generate(&env));
     assert_contract_error(
         client.try_bind_settlement_token(&sac),
-        EscrowError::NotInitialized,
+        Error::NotInitialized,
     );
 }
 
@@ -225,7 +222,7 @@ fn deposit_funds_rejects_when_token_unbound() {
 
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &100_i128),
-        EscrowError::SettlementTokenNotConfigured,
+        Error::SettlementTokenNotConfigured,
     );
 
     // State must be unchanged: no funded_amount bump, no status transition.
@@ -246,7 +243,7 @@ fn deposit_funds_rejects_overfunding_even_with_sac_balance() {
 
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &overpay),
-        EscrowError::InvalidDepositAmount,
+        Error::InvalidDepositAmount,
     );
 
     // State unchanged.
@@ -266,7 +263,7 @@ fn deposit_funds_paused_blocks_sac_transfer() {
 
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &total_milestone_amount()),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
     let contract = client.get_contract(&id);
     assert_eq!(contract.funded_amount, 0);
@@ -369,10 +366,12 @@ fn release_milestone_rejects_when_token_unbound() {
                 freelancer: freelancer_addr.clone(),
                 arbiter: None,
                 status: ContractStatus::Funded,
+                total_deposited: total,
                 funded_amount: total,
                 released_amount: 0,
                 refunded_amount: 0,
                 release_authorization: ReleaseAuthorization::ClientOnly,
+                reputation_issued: false,
             },
         );
     });
@@ -386,7 +385,7 @@ fn release_milestone_rejects_when_token_unbound() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        EscrowError::SettlementTokenNotConfigured,
+        Error::SettlementTokenNotConfigured,
     );
 }
 

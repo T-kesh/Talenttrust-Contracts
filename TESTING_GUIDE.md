@@ -417,6 +417,118 @@ If a test fails, check:
 
 ---
 
+## End-to-End Lifecycle Tests
+
+A comprehensive suite of happy-path tests that walk complete escrow contract lifecycles from creation through final completion, asserting every state transition and balance invariant at each step.
+
+### Test Coverage by ReleaseAuthorization Mode
+
+| Test Name | Authorization Mode | Scenario | What It Proves |
+|-----------|-------------------|----------|-----------------|
+| `test_full_lifecycle_single_milestone_client_only_auth` | ClientOnly | 1 milestone, full cycle | Basic happy path: create → deposit → approve → release → Completed |
+| `test_full_lifecycle_multi_milestone_client_only_auth` | ClientOnly | 3 milestones, sequential release | Balance invariant holds at EVERY intermediate step, not just final state |
+| `test_full_lifecycle_multisig_auth` | MultiSig | 2 milestones, dual approval | Both client AND freelancer must approve; single approval doesn't trigger release |
+| `test_full_lifecycle_arbitrator_only_auth` | ArbiterOnly | 2 milestones, arbiter-only approval | Only arbiter can approve; neither client nor freelancer can approve |
+| `test_full_lifecycle_client_and_arbiter_auth` | ClientAndArbiter | 3 milestones, flexible approval | Either client OR arbiter can approve (not both required) |
+| `test_balance_invariant_holds_at_every_step` | ClientOnly | 3 milestones, invariant verification | `funded_amount == released_amount + refundable_balance` holds at EVERY operation |
+| `test_release_without_approval_is_rejected` | ClientOnly | Negative test: no approval | Release fails with `InsufficientApprovals` if approval is missing |
+
+### Balance Invariant Reference
+
+The following table specifies the expected state at each step of a lifecycle with 2 milestones (M1=500_000, M2=500_000, total=1_000_000):
+
+```
+Operation                  | status      | funded_amount | released_amount | refundable_balance
+─────────────────────────────────────────────────────────────────────────────────────────────
+create_contract            | Created     | 0             | 0               | 0
+deposit_funds(1_000_000)   | Funded      | 1_000_000     | 0               | 1_000_000
+approve_milestone(0)       | Funded      | 1_000_000     | 0               | 1_000_000
+release_milestone(0)       | Funded      | 1_000_000     | 500_000         | 500_000
+approve_milestone(1)       | Funded      | 1_000_000     | 500_000         | 500_000
+release_milestone(1)       | Completed   | 1_000_000     | 1_000_000       | 0
+```
+
+**Critical Invariant:** `funded_amount = released_amount + refundable_balance` (no exceptions)
+
+### Running Lifecycle Tests
+
+Run all end-to-end lifecycle tests:
+
+```bash
+cd /workspaces/Talenttrust-Contracts
+cargo test -p escrow flows::test_full_lifecycle --nocapture
+```
+
+Expected output:
+```
+test flows::test_full_lifecycle_single_milestone_client_only_auth ... ok
+test flows::test_full_lifecycle_multi_milestone_client_only_auth ... ok
+test flows::test_full_lifecycle_multisig_auth ... ok
+test flows::test_full_lifecycle_arbitrator_only_auth ... ok
+test flows::test_full_lifecycle_client_and_arbiter_auth ... ok
+test flows::test_balance_invariant_holds_at_every_step ... ok
+test flows::test_release_without_approval_is_rejected ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored
+```
+
+**What a green run proves:**
+✅ All `ReleaseAuthorization` modes are exercised
+✅ Complete lifecycle works end-to-end (create → deposit → approve → release → Completed)
+✅ Balance invariant holds throughout all operations
+✅ Status transitions are correct and occur at the right time
+✅ Approval mechanisms are enforced before release
+✅ The contract is fail-safe: funds are never lost or created from nothing
+
+### Running Lifecycle Tests by Authorization Mode
+
+Test specific authorization modes:
+
+```bash
+# ClientOnly mode (baseline)
+cargo test -p escrow flows::test_full_lifecycle_single_milestone_client_only_auth
+
+# Multi-milestone with invariant checks
+cargo test -p escrow flows::test_full_lifecycle_multi_milestone_client_only_auth
+
+# MultiSig requires both approvals
+cargo test -p escrow flows::test_full_lifecycle_multisig_auth
+
+# ArbiterOnly blocks client/freelancer
+cargo test -p escrow flows::test_full_lifecycle_arbitrator_only_auth
+
+# ClientAndArbiter allows either party
+cargo test -p escrow flows::test_full_lifecycle_client_and_arbiter_auth
+
+# Balance invariant across full lifecycle
+cargo test -p escrow flows::test_balance_invariant_holds_at_every_step
+
+# Security: release without approval fails
+cargo test -p escrow flows::test_release_without_approval_is_rejected
+```
+
+### Assertion Pattern: Balance Invariant Check
+
+All lifecycle tests follow this pattern to verify the balance invariant at every step:
+
+```rust
+let contract = client.get_contract(&contract_id);
+let refundable = client.get_refundable_balance(&contract_id);
+
+// The invariant that must hold at EVERY step
+assert_eq!(
+    contract.funded_amount,
+    contract.released_amount + refundable,
+    "Balance invariant must hold: funded = released + refundable"
+);
+
+// Security: No funds can escape
+assert!(contract.released_amount <= contract.funded_amount);
+assert!(refundable >= 0);
+```
+
+---
+
 ## Expected Test Output Example
 
 ```
@@ -808,3 +920,17 @@ Expected summary:
 **Total Coverage:** 12 reachable error branches + 1 documented unreachable = **13 tests**
 
 All tests use the `try_*` client variant pattern to assert the exact error code being returned from the contract, ensuring comprehensive negative-path coverage for Issue #405.
+
+# Issue #429: Created-to-Funded Boundary Behavior
+
+## Overview
+
+The `deposit_funds` entrypoint dictates the transition from `Created` to `Funded` status. The contract remains in `Created` as long as `funded_amount < total_amount`. Once a deposit brings `funded_amount` to at least `total_amount`, the contract immediately transitions to `Funded`.
+
+## Expected Boundary Behavior
+- **Under by one stroop**: Depositing `total_amount - 1` leaves the contract in `Created` status.
+- **Exact total**: Depositing exactly `total_amount` immediately transitions the contract to `Funded`.
+- **Final stroop**: Depositing `1` stroop into a contract missing only `1` stroop immediately transitions the contract to `Funded`.
+- **Over by one**: Depositing `total_amount + 1` from `Created` transitions the contract to `Funded`.
+- **Deposit on already-Funded**: Attempting to deposit into a contract that is already `Funded` results in an `Error::InvalidState`.
+- **Refundable Balance**: At any point, `get_refundable_balance()` accurately reflects `funded_amount - released_amount - refunded_amount`.

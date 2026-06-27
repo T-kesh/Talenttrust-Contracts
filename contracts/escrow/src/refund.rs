@@ -1,6 +1,4 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone};
 use soroban_sdk::{contractimpl, Env, Symbol, Vec};
 
 #[contractimpl]

@@ -27,18 +27,17 @@ impl DisputeResolution {
             Self::FullRefund => 0,
             Self::PartialRefund => 1,
             Self::FullPayout => 2,
-            Self::Split(_, _) => 3,
+            Self::Split(_) => 3,
         }
     }
 }
 
-#[allow(dead_code)]
 pub fn resolution_payouts(
-    contract: &Contract,
+    contract: &EscrowContractData,
     resolution: &DisputeResolution,
 ) -> Result<(i128, i128), EscrowError> {
     let available = contract
-        .funded_amount
+        .total_deposited
         .checked_sub(contract.released_amount)
         .and_then(|value| value.checked_sub(contract.refunded_amount))
         .ok_or(EscrowError::AccountingInvariantViolated)?;
@@ -65,14 +64,13 @@ pub fn resolution_payouts(
             if total != available {
                 return Err(EscrowError::InvalidDisputeSplit);
             }
-            Ok((*client_amount, *freelancer_amount))
+            Ok((client_amount, freelancer_amount))
         }
     }
 }
 
-#[allow(dead_code)]
-pub fn final_status_after_resolution(contract: &Contract) -> ContractStatus {
-    if contract.refunded_amount == contract.funded_amount {
+pub fn final_status_after_resolution(contract: &EscrowContractData) -> ContractStatus {
+    if contract.refunded_amount == contract.total_deposited {
         ContractStatus::Refunded
     } else {
         ContractStatus::Completed

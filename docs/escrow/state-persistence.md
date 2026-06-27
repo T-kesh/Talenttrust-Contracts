@@ -19,6 +19,7 @@ The contract list readers (`list_contracts_by_participant`) are therefore consis
 | `Paused` | `bool` | `pause`, `unpause`, emergency controls |
 | `Emergency` | `bool` | emergency controls |
 | `Contract(id)` | `EscrowContractData` | create/deposit/release/reputation/cancel |
+| `(Contract(id), "milestones")` | `Vec<Milestone>` | create/deposit/release/refund |
 | `NextContractId` | `u32` | `create_contract` |
 | `ReputationIssued(id)` | `bool` | `issue_reputation` |
 | `PendingReputationCredits(address)` | `u32` | final release, `issue_reputation` |
@@ -45,7 +46,10 @@ Protocol fee implementation is tracked in
 ## Milestone Released State — Single Source of Truth
 
 `release_milestone` sets `milestone.released = true` inside the persisted
-`Vec<Milestone>` stored under `(DataKey::Contract(id), "milestones")`.
+`Vec<Milestone>` stored under `(DataKey::Contract(id), milestone_symbol)` where `milestone_symbol` is derived via the centralized `crate::milestone_symbol` helper returning `symbol_short!("milestone")`.
+
+> [!WARNING]
+> **Migration Note:** The storage key symbol for milestones was shortened from `"milestones"` to `"milestone"` to allow optimization using compile-time `symbol_short!("milestone")` constants, reducing runtime host-call overhead. Consequently, any milestones persisted under the old `"milestones"` key in older contract versions will not be readable in this version without a storage migration.
 
 `summarize_contract` (called by `finalize_contract`) derives
 `released_milestone_count` by iterating that same vector and counting
@@ -64,7 +68,27 @@ authority for released state.
 
 - Contract ids are monotonically assigned from `NextContractId`.
 - Milestone amounts and participant addresses are immutable after creation.
-- `total_deposited`, `released_amount`, and `refunded_amount` are checked after
+- `funded_amount`, `released_amount`, and `refunded_amount` are checked after
   balance-changing operations.
+- `deposit_funds` preserves the aggregate `Contract(id).funded_amount` while
+  also allocating each accepted deposit across `(Contract(id), "milestones")`
+  in milestone order. A milestone's `funded_amount` is capped at its immutable
+  `amount` before funding moves to the next milestone.
+- Deposits that would move aggregate funding above the milestone total are
+  rejected before any per-milestone allocation is persisted.
+- `release_milestone` requires both aggregate availability and the target
+  milestone's own `funded_amount >= amount`, so legacy aggregate-only funding
+  cannot release an underallocated milestone.
 - A milestone release flag can move from absent/false to true only once.
 - Reputation issuance is guarded by `ReputationIssued(contract_id)`.
+
+## Read-Only Views and TTL Extensions
+
+### `get_contract_summary(contract_id)`
+The `get_contract_summary` entrypoint compiles a read-only `ContractSummary` struct of a contract's metadata and its milestones for off-chain consumers (front-ends and indexers).
+
+To prevent active contract details from expiring and getting archived by the network, querying `get_contract_summary` automatically extends the persistent storage TTL for:
+- The contract record (`DataKey::Contract(contract_id)`)
+- The milestones vector (`(DataKey::Contract(contract_id), "milestones")`)
+
+This allows off-chain services or users to keep contract storage alive through reads without requiring caller authentication or mutating transaction fees.
