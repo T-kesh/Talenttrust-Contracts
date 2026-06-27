@@ -44,67 +44,17 @@ pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
-pub use types::{
-    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, GovernedParameters,
-    Milestone, MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization,
-    Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION, PendingAdminProposal
-};
+pub use types::{Contract, ContractStatus, ContractSummary, DataKey, DepositMode, Error, GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION};
 
 // Re-export for internal use
 pub(crate) use amount_validation::safe_subtract_amounts;
 
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+
 #[contract]
 pub struct Escrow;
 
-/// Governance-level errors for admin-gated operations.
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum EscrowError {
-    InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    ContractNotFound = 6,
-    EmptyRefundRequest = 7,
-    DuplicateMilestoneInRefund = 8,
-    AlreadyReleased = 9,
-    AlreadyRefunded = 10,
-    InsufficientFunds = 11,
-    AlreadyInitialized = 12,
-    InsufficientAccumulatedFees = 13,
-    /// Returned by lifecycle entrypoints when `initialize` has not been called.
-    ///
-    /// All money-flow operations require initialization so the admin-controlled
-    /// safety rails (pause, emergency controls, protocol fees) are always in
-    /// scope before any funds can move.
-    NotInitialized = 14,
-    UnauthorizedRole = 15,
-    ContractPaused = 16,
-    EmergencyActive = 17,
-    InvalidState = 18,
-    InvalidRating = 19,
-    SelfRating = 20,
-    ReputationAlreadyIssued = 21,
-    NotCompleted = 22,
-    FreelancerMismatch = 23,
-    InvalidStatusTransition = 24,
-    ArbiterRequired = 25,
-    InvalidDisputeSplit = 26,
-    AccountingInvariantViolated = 27,
-    PotentialOverflow = 28,
-    AlreadyFinalized = 29,
-    AmountMustBePositive = 30,
-    /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
-    EvidenceTooLong = 31,
-    EmptyComment = 32,
-    CommentTooLong = 33,
-    TooManyMilestones = 34,
-    ExactDepositRequired = 35,
-    InvalidProtocolParameters = 36,
-    TimelockNotElapsed = 37,
-}
+
 
 
 
@@ -178,7 +128,7 @@ impl Escrow {
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
-            env.panic_with_error(EscrowError::AlreadyInitialized);
+            env.panic_with_error(Error::AlreadyInitialized);
         }
 
         admin.require_auth();
@@ -820,7 +770,7 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
         // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
@@ -963,7 +913,7 @@ impl Escrow {
             .get::<_, bool>(&DataKey::Emergency)
             .unwrap_or(false)
         {
-            env.panic_with_error(EscrowError::EmergencyActive);
+            env.panic_with_error(Error::EmergencyActive);
         }
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -1000,7 +950,7 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
 
         if env
             .storage()
@@ -1163,15 +1113,15 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
 
         if caller != contract.client {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
+            env.panic_with_error(Error::UnauthorizedRole);
         }
 
         if rating < 1 || rating > 5 {
-            env.panic_with_error(EscrowError::InvalidRating);
+            env.panic_with_error(Error::InvalidRating);
         }
 
         if comment.len() == 0 {
@@ -1183,14 +1133,14 @@ impl Escrow {
         }
 
         if contract.status != ContractStatus::Completed {
-            env.panic_with_error(EscrowError::NotCompleted);
+            env.panic_with_error(Error::NotCompleted);
         }
 
         if contract.reputation_issued {
-            env.panic_with_error(EscrowError::ReputationAlreadyIssued);
+            env.panic_with_error(Error::ReputationAlreadyIssued);
         }
         if contract.client == contract.freelancer {
-            env.panic_with_error(EscrowError::SelfRating);
+            env.panic_with_error(Error::SelfRating);
         }
 
         caller.require_auth();
@@ -1210,7 +1160,7 @@ impl Escrow {
         let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
         let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
         if pending <= 0 {
-            env.panic_with_error(EscrowError::InvalidState);
+            env.panic_with_error(Error::InvalidState);
         }
         env.storage().persistent().set(&pending_key, &(pending - 1));
 
@@ -1346,7 +1296,7 @@ impl Escrow {
 
         // Bound evidence to 256 bytes to prevent storage bloat.
         if evidence.len() > 256 {
-            env.panic_with_error(EscrowError::EvidenceTooLong);
+            env.panic_with_error(Error::EvidenceTooLong);
         }
 
         let milestone_key = Symbol::new(&env, "milestones");
@@ -1528,15 +1478,15 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
 
         if admin != stored_admin {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
+            env.panic_with_error(Error::UnauthorizedRole);
         }
         admin.require_auth();
 
         if protocol_fee_bps > 10_000 {
-            env.panic_with_error(EscrowError::InvalidProtocolParameters);
+            env.panic_with_error(Error::InvalidProtocolParameters);
         }
 
         let params = GovernedParameters {
@@ -1591,7 +1541,7 @@ impl Escrow {
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
         {
-            env.panic_with_error(EscrowError::NotInitialized);
+            env.panic_with_error(Error::NotInitialized);
         }
     }
 
@@ -1657,25 +1607,25 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
         ttl::extend_contract_ttl(&env, contract_id);
         Self::require_not_finalized(&env, contract_id);
 
         // Verify caller is client or freelancer
         if caller != contract.client && caller != contract.freelancer {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
+            env.panic_with_error(Error::UnauthorizedRole);
         }
 
         // Require arbiter assignment
         if contract.arbiter.is_none() {
-            env.panic_with_error(EscrowError::ArbiterRequired);
+            env.panic_with_error(Error::ArbiterRequired);
         }
 
         // Verify contract is in a disputable state (Funded or PartiallyFunded)
         match contract.status {
             ContractStatus::Funded | ContractStatus::PartiallyFunded => {}
-            _ => env.panic_with_error(EscrowError::InvalidState),
+            _ => env.panic_with_error(Error::InvalidState),
         }
 
         contract.status = ContractStatus::Disputed;
@@ -1737,20 +1687,20 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
         ttl::extend_contract_ttl(&env, contract_id);
         Self::require_not_finalized(&env, contract_id);
 
         // Verify contract is in Disputed state
         if contract.status != ContractStatus::Disputed {
-            env.panic_with_error(EscrowError::InvalidStatusTransition);
+            env.panic_with_error(Error::InvalidStatusTransition);
         }
 
         // Verify caller is the assigned arbiter
         match &contract.arbiter {
             Some(contract_arbiter) if *contract_arbiter == arbiter => {}
-            _ => env.panic_with_error(EscrowError::UnauthorizedRole),
+            _ => env.panic_with_error(Error::UnauthorizedRole),
         }
 
         // Compute payouts based on resolution

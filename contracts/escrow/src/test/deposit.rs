@@ -1,9 +1,6 @@
-use super::{
-    assert_contract_error, assert_contract_state, create_client, create_contract,
-    create_default_contract, register_client, setup, total_milestone_amount,
-};
-use crate::{types::Error, ContractStatus, EscrowError};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use super::{assert_contract_error, assert_contract_state, create_client, create_default_contract, setup};
+use crate::{types::Error, ContractStatus};
+use soroban_sdk::{testutils::Address as _, Address};
 
 /// Tests that incremental deposits accumulate and transition to Funded at the exact total.
 ///
@@ -97,7 +94,7 @@ fn test_deposit_unauthorized_role() {
     // Attempt deposit from wrong caller (freelancer instead of client)
     let wrong_caller = Address::generate(&env);
     let result = client.try_deposit_funds(&contract_id, &wrong_caller, &100_0000000_i128);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 /// Tests that deposit_funds panics with InvalidState when contract is not in Created state.
@@ -119,7 +116,7 @@ fn test_deposit_invalid_state() {
 
     // Try to deposit again (contract is now Funded, not Created)
     let result = client.try_deposit_funds(&contract_id, &client_addr, &100_0000000_i128);
-    assert_contract_error(result, EscrowError::InvalidState);
+    assert_contract_error(result, Error::InvalidState);
 }
 
 /// Tests that deposit_funds panics with InsufficientFunds when caller token balance is too low.

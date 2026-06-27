@@ -1,13 +1,6 @@
-use super::{
-    assert_contract_error, complete_contract, create_contract, default_milestones,
-    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE,
-    MILESTONE_THREE, MILESTONE_TWO,
-};
-use crate::{ttl, ContractStatus, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{
-    testutils::{storage::Persistent as _, Address as _, Ledger as _},
-    vec, Address, Env, Symbol,
-};
+use super::{create_contract, register_client};
+use crate::{ContractStatus, Error, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, Symbol};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
@@ -98,7 +91,7 @@ fn try_get_contract_reports_missing_state_without_mutating_storage() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    super::assert_contract_error(client.try_get_contract(&777), EscrowError::ContractNotFound);
+    super::assert_contract_error(client.try_get_contract(&777), Error::ContractNotFound);
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 10_i128];
@@ -138,7 +131,7 @@ fn finalize_rejects_unauthorized_finalizer() {
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &outsider),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
@@ -153,7 +146,7 @@ fn finalize_rejects_created_contract() {
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
@@ -173,7 +166,7 @@ fn finalize_rejects_funded_contract() {
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
@@ -189,7 +182,7 @@ fn finalize_is_idempotent_guarded() {
     assert!(client.finalize_contract(&contract_id, &client_addr));
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -205,7 +198,7 @@ fn release_milestone_rejects_after_finalization() {
 
     super::assert_contract_error(
         client.try_release_milestone(&contract_id, &client_addr, &0),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -222,7 +215,7 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
     let res = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
     match res {
         Err(Ok(e)) => {
-            assert_eq!(e, soroban_sdk::Error::from(EscrowError::AlreadyFinalized));
+            assert_eq!(e, soroban_sdk::Error::from(Error::AlreadyFinalized));
         }
         _ => panic!("expected contract error AlreadyFinalized"),
     }
@@ -240,7 +233,7 @@ fn deposit_funds_rejects_after_finalization() {
 
     super::assert_contract_error(
         client.try_deposit_funds(&contract_id, &client_addr, &1_i128),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -256,7 +249,7 @@ fn approve_milestone_release_rejects_after_finalization() {
 
     super::assert_contract_error(
         client.try_approve_milestone_release(&contract_id, &client_addr, &0),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -292,7 +285,7 @@ fn pause_blocks_finalization() {
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
@@ -353,7 +346,7 @@ fn get_contract_panics_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_contract(&999), EscrowError::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&999), Error::ContractNotFound);
 }
 
 /// `get_contract` panics with `ContractNotFound` even when probed with id zero
@@ -364,7 +357,7 @@ fn get_contract_panics_for_zero_id_when_no_zero_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&0), Error::ContractNotFound);
 }
 
 // ── get_contract: success ─────────────────────────────────────────────────────
@@ -461,7 +454,7 @@ fn get_milestones_panics_for_unknown_id() {
 
     assert_contract_error(
         client.try_get_milestones(&999),
-        EscrowError::ContractNotFound,
+        Error::ContractNotFound,
     );
 }
 
@@ -473,7 +466,7 @@ fn get_milestones_panics_for_zero_id_when_no_zero_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&0), Error::ContractNotFound);
 }
 
 // ── get_milestones: success ───────────────────────────────────────────────────
@@ -533,7 +526,7 @@ fn get_refundable_balance_panics_for_unknown_id() {
     let client = register_client(&env);
 
     match client.try_get_refundable_balance(&999) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
         other => panic!("expected ContractNotFound, got {:?}", other),
     }
 }
@@ -546,7 +539,7 @@ fn get_refundable_balance_panics_for_zero_id() {
     let client = register_client(&env);
 
     match client.try_get_refundable_balance(&0) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
         other => panic!("expected ContractNotFound, got {:?}", other),
     }
 }
@@ -937,6 +930,28 @@ fn read_getters_fail_for_arbitrary_unknown_id() {
 
     // State flags must remain unchanged after the failed reads.
     env.as_contract(&client.address, || {
+        let has_initialized = env.storage().persistent().has(&crate::DataKey::Initialized);
+        let has_admin = env.storage().persistent().has(&crate::DataKey::Admin);
+        let has_paused = env.storage().persistent().has(&crate::DataKey::Paused);
+        let has_emergency = env.storage().persistent().has(&crate::DataKey::Emergency);
+        let was_paused = client.is_paused();
+        let was_emergency = client.is_emergency();
+
+        // Invalid id 4_242 — no getter may mutate stored state.
+        assert_contract_error(
+            client.try_get_contract(&4_242),
+            Error::ContractNotFound,
+        );
+        assert_contract_error(
+            client.try_get_milestones(&4_242),
+            Error::ContractNotFound,
+        );
+        match client.try_get_refundable_balance(&4_242) {
+            Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
+            other => panic!("expected ContractNotFound, got {:?}", other),
+        };
+
+        // State flags must remain unchanged after the failed reads.
         assert_eq!(
             env.storage().persistent().has(&crate::DataKey::Initialized),
             has_initialized
@@ -1061,12 +1076,12 @@ fn read_getters_succeed_after_creating_contract_at_zero_index() {
     // First contract allocated by `create_contract` is at slot 1 (DataKey::NextContractId
     // starts at 1 — see create_contract.rs). Probe the zero slot to confirm
     // it remains not-found, then exercise slot 1.
-    assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
-    assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
-    match client.try_get_refundable_balance(&0) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
-        other => panic!("expected ContractNotFound, got {:?}", other),
-    }
+    assert_contract_error(client.try_get_contract(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&0), Error::ContractNotFound);
+    assert_contract_error(
+        client.try_get_refundable_balance(&0),
+        Error::ContractNotFound,
+    );
 
     let (c, f) = generated_participants(&env);
     let id = client.create_contract(
@@ -1120,14 +1135,14 @@ fn read_getters_unchanged_after_pause() {
     // Not-found assertions still hold while paused.
     assert_contract_error(
         client.try_get_contract(&9999),
-        EscrowError::ContractNotFound,
+        Error::ContractNotFound,
     );
     assert_contract_error(
         client.try_get_milestones(&9999),
-        EscrowError::ContractNotFound,
+        Error::ContractNotFound,
     );
     match client.try_get_refundable_balance(&9999) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
         other => panic!("expected ContractNotFound, got {:?}", other),
     };
 }

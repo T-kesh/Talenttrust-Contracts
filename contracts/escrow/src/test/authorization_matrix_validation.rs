@@ -13,7 +13,7 @@
 #![cfg(test)]
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization};
 
 use super::assert_contract_error;
 
@@ -67,11 +67,11 @@ fn clientonly_matrix_allowed_approvers() {
 
     // Freelancer cannot approve
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 
     // Arbiter cannot approve
     let result = client.try_approve_milestone_release(&id, &arbiter_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn clientonly_matrix_required_approvals() {
 
     // Without approvals, release fails
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::InsufficientApprovals);
+    assert_contract_error(result, Error::InsufficientApprovals);
 
     // With client approval, release succeeds
     assert!(client.approve_milestone_release(&id, &client_addr, &0));
@@ -122,11 +122,11 @@ fn clientonly_matrix_allowed_release_callers() {
 
     // Freelancer cannot release
     let result = client.try_release_milestone(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 
     // Arbiter cannot release
     let result = client.try_release_milestone(&id, &arbiter_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 // ===========================================================================
@@ -154,11 +154,11 @@ fn arbiteronly_matrix_allowed_approvers() {
 
     // Client cannot approve
     let result = client.try_approve_milestone_release(&id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 
     // Freelancer cannot approve
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn arbiteronly_matrix_required_approvals() {
 
     // Without approvals, release fails
     let result = client.try_release_milestone(&id, &arbiter_addr, &0);
-    assert_contract_error(result, EscrowError::InsufficientApprovals);
+    assert_contract_error(result, Error::InsufficientApprovals);
 
     // With arbiter approval, release succeeds
     assert!(client.approve_milestone_release(&id, &arbiter_addr, &0));
@@ -209,11 +209,11 @@ fn arbiteronly_matrix_allowed_release_callers() {
 
     // Client cannot release
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 
     // Freelancer cannot release
     let result = client.try_release_milestone(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 // ===========================================================================
@@ -245,7 +245,7 @@ fn clientandarbiter_matrix_allowed_approvers() {
 
     // Freelancer cannot approve
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
@@ -317,7 +317,7 @@ fn clientandarbiter_matrix_allowed_release_callers() {
 
     // Freelancer cannot release
     let result = client.try_release_milestone(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 // ===========================================================================
@@ -349,7 +349,7 @@ fn multisig_matrix_allowed_approvers() {
 
     // Arbiter cannot approve
     let result = client.try_approve_milestone_release(&id, &arbiter_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn multisig_matrix_required_approvals_and_logic() {
     // With only client approval, release fails
     assert!(client.approve_milestone_release(&id, &client_addr, &0));
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::InsufficientApprovals);
+    assert_contract_error(result, Error::InsufficientApprovals);
 
     // With both approvals, release succeeds
     assert!(client.approve_milestone_release(&id, &freelancer_addr, &0));
@@ -416,7 +416,7 @@ fn multisig_matrix_allowed_release_callers() {
 
     // Arbiter cannot release
     let result = client.try_release_milestone(&id, &arbiter_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 // ===========================================================================
@@ -439,7 +439,7 @@ fn matrix_error_codes_unauthorized_role() {
         &ReleaseAuthorization::ClientOnly,
     );
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn matrix_error_codes_already_approved() {
 
     // Duplicate approval fails
     let result = client.try_approve_milestone_release(&id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::AlreadyApproved);
+    assert_contract_error(result, Error::AlreadyApproved);
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn matrix_error_codes_insufficient_approvals() {
 
     // Release without approval fails
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::InsufficientApprovals);
+    assert_contract_error(result, Error::InsufficientApprovals);
 }
 
 #[test]

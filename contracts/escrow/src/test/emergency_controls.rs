@@ -1,4 +1,4 @@
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, Address) {
@@ -54,7 +54,7 @@ fn unpause_fails_while_emergency_active() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
     client.activate_emergency_pause();
-    super::assert_contract_error(client.try_unpause(), EscrowError::EmergencyActive);
+    super::assert_contract_error(client.try_unpause(), Error::EmergencyActive);
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn emergency_blocks_create_contract() {
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::EmergencyActive,
+        Error::ContractPaused,
     );
 }
 
@@ -100,7 +100,7 @@ fn emergency_blocks_deposit_funds() {
 
     super::assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &50_i128),
-        EscrowError::EmergencyActive,
+        Error::ContractPaused,
     );
 }
 
@@ -115,7 +115,7 @@ fn emergency_blocks_release_milestone() {
 
     super::assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        EscrowError::EmergencyActive,
+        Error::ContractPaused,
     );
 }
 
@@ -131,8 +131,13 @@ fn emergency_blocks_issue_reputation() {
 
     let comment = soroban_sdk::String::from_str(&env, "Good job");
     super::assert_contract_error(
-        client.try_issue_reputation(&id, &client_addr, &5_u32, &comment),
-        EscrowError::ContractPaused,
+        client.try_issue_reputation(
+            &id,
+            &client_addr,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
+        Error::ContractPaused,
     );
 }
 
@@ -147,7 +152,7 @@ fn emergency_blocks_cancel_contract() {
 
     super::assert_contract_error(
         client.try_cancel_contract(&id, &client_addr),
-        EscrowError::EmergencyActive,
+        Error::ContractPaused,
     );
 }
 

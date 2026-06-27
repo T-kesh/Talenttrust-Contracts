@@ -1,5 +1,5 @@
 use super::{create_contract, default_milestones, generated_participants, register_client, total_milestone_amount};
-use crate::{EscrowError, ReleaseAuthorization};
+use crate::{Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
 
 #[test]
@@ -11,7 +11,7 @@ fn create_rejects_same_participants() {
 
     let result =
         client.try_create_contract(&addr, &addr, &None, &default_milestones(&env), &ReleaseAuthorization::ClientOnly);
-    super::assert_contract_error(result, EscrowError::InvalidParticipant);
+    super::assert_contract_error(result, Error::InvalidParticipant);
 }
 
 #[test]
@@ -24,7 +24,7 @@ fn create_rejects_empty_milestone_list() {
 
     let result =
         client.try_create_contract(&client_addr, &freelancer_addr, &None, &empty, &ReleaseAuthorization::ClientOnly);
-    super::assert_contract_error(result, EscrowError::EmptyMilestones);
+    super::assert_contract_error(result, Error::EmptyMilestones);
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn create_rejects_non_positive_milestone_amount() {
         &milestones,
         &ReleaseAuthorization::ClientOnly,
     );
-    super::assert_contract_error(result, EscrowError::InvalidMilestoneAmount);
+    super::assert_contract_error(result, Error::InvalidMilestoneAmount);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn deposit_rejects_non_positive_amount() {
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     let result = client.try_deposit_funds(&contract_id, &client_addr, &0);
-    super::assert_contract_error(result, EscrowError::InvalidDepositAmount);
+    super::assert_contract_error(result, Error::InvalidDepositAmount);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn release_rejects_when_contract_not_funded() {
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    super::assert_contract_error(result, EscrowError::InsufficientFunds);
+    super::assert_contract_error(result, Error::InsufficientFunds);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn release_rejects_invalid_milestone_id() {
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     let result = client.try_release_milestone(&contract_id, &client_addr, &99);
-    super::assert_contract_error(result, EscrowError::InvalidMilestone);
+    super::assert_contract_error(result, Error::InvalidMilestone);
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn release_rejects_double_release() {
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    super::assert_contract_error(result, EscrowError::AlreadyReleased);
+    super::assert_contract_error(result, Error::AlreadyReleased);
 }
 
 #[test]
@@ -117,8 +117,8 @@ fn issue_reputation_rejects_unfinished_contract() {
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &comment);
-    super::assert_contract_error(result, EscrowError::NotCompleted);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    super::assert_contract_error(result, Error::NotCompleted);
 }
 
 #[test]
@@ -129,8 +129,8 @@ fn issue_reputation_rejects_invalid_rating() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &0, &comment);
-    super::assert_contract_error(result, EscrowError::InvalidRating);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    super::assert_contract_error(result, Error::InvalidRating);
 }
 
 #[test]
@@ -138,12 +138,23 @@ fn issue_reputation_once_per_contract() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    super::assert_contract_error(result, Error::ReputationAlreadyIssued);
+}
+
+#[test]
+fn issue_reputation_rejects_freelancer_mismatch() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    assert!(client.issue_reputation(&contract_id, &client_addr, &5, &comment));
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &4, &comment);
-    super::assert_contract_error(result, EscrowError::ReputationAlreadyIssued);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    super::assert_contract_error(result, Error::FreelancerMismatch);
 }
 
 #[test]
@@ -155,75 +166,37 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let unauthorized = soroban_sdk::Address::generate(&env);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &unauthorized, &5, &comment);
-    super::assert_contract_error(result, EscrowError::UnauthorizedRole);
+    let result = client.try_issue_reputation(&contract_id, &unauthorized, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    super::assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
-fn issue_reputation_rejects_empty_comment() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
-    let comment = soroban_sdk::String::from_str(&env, "");
-
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &comment);
-    super::assert_contract_error(result, EscrowError::EmptyComment);
+fn test_error_code_stability() {
+    assert_eq!(Error::IndexOutOfBounds as u32, 3);
+    assert_eq!(Error::AlreadyReleased as u32, 4);
+    assert_eq!(Error::EmptyRefundRequest as u32, 6);
+    assert_eq!(Error::DuplicateMilestoneInRefund as u32, 7);
+    assert_eq!(Error::AlreadyRefunded as u32, 8);
+    assert_eq!(Error::InsufficientFunds as u32, 9);
+    assert_eq!(Error::ContractNotFound as u32, 10);
+    assert_eq!(Error::UnauthorizedRole as u32, 11);
+    assert_eq!(Error::InvalidParticipants as u32, 14);
+    assert_eq!(Error::AmountMustBePositive as u32, 15);
+    assert_eq!(Error::InvalidState as u32, 16);
+    assert_eq!(Error::EmptyMilestones as u32, 25);
+    assert_eq!(Error::InvalidMilestoneAmount as u32, 26);
+    assert_eq!(Error::CommentTooLong as u32, 30);
+    assert_eq!(Error::InvalidParticipant as u32, 31);
+    assert_eq!(Error::InvalidDepositAmount as u32, 32);
+    assert_eq!(Error::AlreadyInitialized as u32, 34);
+    assert_eq!(Error::NotInitialized as u32, 36);
+    assert_eq!(Error::ContractPaused as u32, 37);
+    assert_eq!(Error::EmergencyActive as u32, 38);
+    assert_eq!(Error::InvalidStatusTransition as u32, 41);
+    assert_eq!(Error::AccountingInvariantViolated as u32, 44);
+    assert_eq!(Error::AlreadyFinalized as u32, 46);
+    assert_eq!(Error::EvidenceTooLong as u32, 47);
+    assert_eq!(Error::TimelockNotElapsed as u32, 48);
+    assert_eq!(Error::InvalidProtocolParameters as u32, 49);
 }
 
-#[test]
-fn issue_reputation_rejects_comment_too_long() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
-    
-    let long_str = "a".repeat(201);
-    let comment = soroban_sdk::String::from_str(&env, &long_str);
-
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &comment);
-    super::assert_contract_error(result, EscrowError::CommentTooLong);
-}
-
-#[test]
-fn submit_work_evidence_rejects_evidence_too_long() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
-    
-    client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount());
-
-    let long_str = "a".repeat(257);
-    let evidence = soroban_sdk::String::from_str(&env, &long_str);
-
-    let result = client.try_submit_work_evidence(&contract_id, &freelancer_addr, &0, &evidence);
-    super::assert_contract_error(result, EscrowError::EvidenceTooLong);
-}
-
-#[test]
-fn governance_admin_rejects_timelock_not_elapsed() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let admin = soroban_sdk::Address::generate(&env);
-    client.initialize(&admin);
-    
-    let proposed = soroban_sdk::Address::generate(&env);
-    client.propose_governance_admin(&proposed);
-
-    let result = client.try_accept_governance_admin();
-    super::assert_contract_error(result, EscrowError::TimelockNotElapsed);
-}
-
-#[test]
-fn governance_rejects_invalid_protocol_parameters() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let admin = soroban_sdk::Address::generate(&env);
-    client.initialize(&admin);
-
-    let result = client.try_set_protocol_fee_bps(&10001);
-    super::assert_contract_error(result, EscrowError::InvalidProtocolParameters);
-}

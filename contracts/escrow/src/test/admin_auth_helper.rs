@@ -7,7 +7,7 @@
 //! 2. Calling any entrypoint before `initialize` panics with `NotInitialized`.
 //! 3. A non-admin caller cannot authenticate (Soroban auth failure = panic).
 
-use crate::{Escrow, EscrowClient, EscrowError};
+use crate::{Escrow, EscrowClient, Error};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -36,14 +36,14 @@ fn setup_uninitialized(env: &Env) -> EscrowClient<'_> {
 fn pause_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(client.try_pause(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_pause(), Error::NotInitialized);
 }
 
 #[test]
 fn unpause_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(client.try_unpause(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_unpause(), Error::NotInitialized);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn activate_emergency_pause_before_initialize_panics_not_initialized() {
     let client = setup_uninitialized(&env);
     super::assert_contract_error(
         client.try_activate_emergency_pause(),
-        EscrowError::NotInitialized,
+        Error::NotInitialized,
     );
 }
 
@@ -60,7 +60,7 @@ fn activate_emergency_pause_before_initialize_panics_not_initialized() {
 fn resolve_emergency_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(client.try_resolve_emergency(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_resolve_emergency(), Error::NotInitialized);
 }
 
 // ─── Correct admin loaded and authenticated ───────────────────────────────────

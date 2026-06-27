@@ -1,5 +1,5 @@
 use super::{complete_contract, create_contract, register_client};
-use crate::{Contract, DataKey, EscrowError};
+use crate::{Contract, DataKey, Error};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 fn valid_comment(env: &Env) -> String {
@@ -15,7 +15,7 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let unauthorized = Address::generate(&env);
 
     let result = client.try_issue_reputation(&contract_id, &unauthorized, &5, &valid_comment(&env));
-    super::assert_contract_error(result, EscrowError::UnauthorizedRole);
+    super::assert_contract_error(result, Error::UnauthorizedRole);
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn issue_reputation_rejects_non_completed_contract() {
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &valid_comment(&env));
-    super::assert_contract_error(result, EscrowError::NotCompleted);
+    super::assert_contract_error(result, Error::NotCompleted);
 }
 
 #[test]
@@ -37,10 +37,10 @@ fn issue_reputation_rejects_invalid_rating_bounds() {
     let (client_addr, _freelancer_addr, contract_id) = complete_contract(&env, &client);
 
     let result_low = client.try_issue_reputation(&contract_id, &client_addr, &0, &valid_comment(&env));
-    super::assert_contract_error(result_low, EscrowError::InvalidRating);
+    super::assert_contract_error(result_low, Error::InvalidRating);
 
     let result_high = client.try_issue_reputation(&contract_id, &client_addr, &6, &valid_comment(&env));
-    super::assert_contract_error(result_high, EscrowError::InvalidRating);
+    super::assert_contract_error(result_high, Error::InvalidRating);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn issue_reputation_rejects_empty_comment() {
 
     let empty_comment = String::from_str(&env, "");
     let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
-    super::assert_contract_error(result, EscrowError::EmptyComment);
+    super::assert_contract_error(result, Error::EmptyComment);
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn issue_reputation_rejects_comment_too_long() {
     let long_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let long_comment = String::from_str(&env, long_str);
     let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
-    super::assert_contract_error(result, EscrowError::CommentTooLong);
+    super::assert_contract_error(result, Error::CommentTooLong);
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn issue_reputation_rejects_duplicate_issuance() {
 
     assert!(client.issue_reputation(&contract_id, &client_addr, &5, &valid_comment(&env)));
     let result = client.try_issue_reputation(&contract_id, &client_addr, &4, &valid_comment(&env));
-    super::assert_contract_error(result, EscrowError::ReputationAlreadyIssued);
+    super::assert_contract_error(result, Error::ReputationAlreadyIssued);
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn issue_reputation_rejects_self_rating_when_client_equals_freelancer() {
     });
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &valid_comment(&env));
-    super::assert_contract_error(result, EscrowError::SelfRating);
+    super::assert_contract_error(result, Error::SelfRating);
 }
 
 #[test]
