@@ -7,7 +7,7 @@ use soroban_sdk::{Address, Env, Vec, Symbol};
 /// Approves a milestone for release by the caller.
 ///
 /// Records the approval in temporary storage with TTL expiry.
-/// The approval will automatically expire after PENDING_APPROVAL_TTL_LEDGERS.
+/// The approval will automatically expire after PENDING_APPROVAL_TTL_LEDGERS
 ///
 /// # Arguments
 /// * `env` - The contract environment

@@ -1,7 +1,7 @@
 use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization, DepositMode};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
-/// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
+/// Creates a new escrow contract with the specified client, freelancer, and milestone amounts
 ///
 /// # Arguments
 /// * `env` - The contract environment
