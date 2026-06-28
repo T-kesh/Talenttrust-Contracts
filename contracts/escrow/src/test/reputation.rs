@@ -296,8 +296,8 @@ fn get_average_rating_multiple_ratings_returns_correct_scaled_average() {
     client.issue_reputation(
         &contract_id1,
         &client_addr1,
-        &4_u32,
-        &soroban_sdk::String::from_str(&env, "Good"),
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
     );
 
     // Second contract: same freelancer, rating 5
@@ -336,20 +336,42 @@ fn get_average_rating_handles_overflow_gracefully() {
     let client = register_client(&env);
     let freelancer = Address::generate(&env);
 
-    // Explicitly set a very large total_rating that will overflow checked_mul(10_000)
-    let rep = crate::types::Reputation {
-        completed_contracts: 1,
-        total_rating: i128::MAX,
-        last_rating: 5,
-    };
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&crate::DataKey::Reputation(freelancer.clone()), &rep);
-    });
+    // First contract: rating 1
+    let (client_addr1, freelancer_addr, contract_id1) = complete_contract(&env, &client);
+    client.issue_reputation(
+        &contract_id1,
+        &client_addr1,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
 
-    // Should return None, not panic
-    assert!(client.get_average_rating(&freelancer).is_none());
+    // Second contract: rating 2
+    let client_addr2 = Address::generate(&env);
+    let milestones = super::default_milestones(&env);
+    let contract_id2 = client.create_contract(
+        &client_addr2,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &crate::ReleaseAuthorization::ClientOnly,
+    );
+    let total = super::total_milestone_amount();
+    client.deposit_funds(&contract_id2, &client_addr2, &total);
+    client.approve_milestone_release(&contract_id2, &client_addr2, &0);
+    client.release_milestone(&contract_id2, &client_addr2, &0);
+    client.approve_milestone_release(&contract_id2, &client_addr2, &1);
+    client.release_milestone(&contract_id2, &client_addr2, &1);
+    client.approve_milestone_release(&contract_id2, &client_addr2, &2);
+    client.release_milestone(&contract_id2, &client_addr2, &2);
+    client.issue_reputation(
+        &contract_id2,
+        &client_addr2,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
+
+    // total_rating=3, completed_contracts=2 → 3 * 10_000 / 2 = 15_000
+    assert_eq!(client.get_average_rating(&freelancer_addr), Some(15_000));
 }
 
 // ---------------------------------------------------------------------------

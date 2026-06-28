@@ -1,6 +1,4 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 #[cfg(test)]
