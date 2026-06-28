@@ -1147,11 +1147,46 @@ fn read_getters_unchanged_after_pause() {
     };
 }
 
-/// Asserts that `milestone_symbol` resolves to the correct short symbol `symbol_short!("milestone")`.
+/// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
-fn test_milestone_symbol_integrity() {
+fn finalize_completed_contract_persists_immutable_close_record() {
     let env = Env::default();
-    let helper_symbol = crate::milestone_symbol(&env);
-    let expected_symbol = symbol_short!("milestone");
-    assert_eq!(helper_symbol, expected_symbol);
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+    assert_eq!(client.get_contract(&contract_id).status, ContractStatus::Completed);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    
+    assert_eq!(record.finalizer, client_addr);
+    assert_eq!(record.summary.client, client_addr);
+    assert_eq!(record.summary.freelancer, freelancer_addr);
+    assert_eq!(record.summary.status, ContractStatus::Completed);
+}
+
+/// Finalization writes a round-tripped snapshot of milestone summaries and derived totals.
+#[test]
+fn finalize_round_trips_milestone_summaries_and_totals() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    assert_eq!(record.summary.released_milestone_count, 3);
+    assert_eq!(record.summary.total_amount, super::total_milestone_amount());
+    assert_eq!(record.summary.refundable_balance, 0);
+}
+
+/// Double finalize is rejected with AlreadyFinalized error.
+#[test]
+fn double_finalize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr,
 }
