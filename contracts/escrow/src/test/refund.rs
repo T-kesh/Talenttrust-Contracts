@@ -1,12 +1,9 @@
 use soroban_sdk::{testutils::Address as _, testutils::Events, vec, Address, Env};
 
 use super::{
-    assert_contract_error, complete_contract, create_contract, default_milestones, register_client,
+    assert_contract_error, complete_contract, create_contract, register_client,
     total_milestone_amount,
 };
-use crate::{ContractStatus, Error, EscrowError, ReleaseAuthorization};
-
-use super::{assert_contract_error, complete_contract, create_contract, register_client};
 use crate::{ContractStatus, Error};
 #[test]
 fn refund_succeeds_on_funded_contract() {
@@ -69,3 +66,4 @@ fn rejects_refund_on_finalized_contract() {
         client.try_refund_unreleased_milestones(&contract_id, &refund_ids),
         Error::AlreadyFinalized,
     );
+}

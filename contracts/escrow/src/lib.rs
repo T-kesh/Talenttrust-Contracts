@@ -1129,19 +1129,21 @@ impl Escrow {
 
     // ── Cancel contract ──────────────────────────────────────────────────────
 
-    /// Cancels an active escrow contract.
+    /// Cancels a contract before any milestone has been released.
+    ///
+    /// The caller must be the stored client and must authorize the call. The
+    /// contract must be in `Created` or `Funded` state, with no released
+    /// balance, and the full remaining refundable balance is sent back to the
+    /// client before the contract is marked `Cancelled`.
     ///
     /// # Errors
-    /// * `ContractPaused` - If the contract is paused while not in emergency mode
-    /// * `EmergencyActive` - If the contract is in an active emergency pause
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `UnauthorizedRole` - If caller is not client or freelancer
-    /// * `InvalidState` - If contract is not in Created, PartiallyFunded, or Funded state
-    ///
-    /// # Security
-    /// * Pause/emergency gate runs BEFORE contract state read so a paused
-    ///   contract cannot have its cancellation path tread on the record.
-    pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode.
+    /// * `EmergencyActive` - If the contract is in an active emergency pause.
+    /// * `ContractNotFound` - If the contract does not exist.
+    /// * `UnauthorizedRole` - If the caller is not the stored client.
+    /// * `AlreadyCancelled` - If the contract was already cancelled.
+    /// * `InvalidStatusTransition` - If the contract is not `Created`/`Funded` or has already released funds.
+    pub fn cancel_contract(env: Env, contract_id: u32, client: Address) -> bool {
         Self::require_not_paused(&env);
         let mut contract: Contract = env
             .storage()
@@ -1150,23 +1152,53 @@ impl Escrow {
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
 
-        if caller != contract.client && caller != contract.freelancer {
+        Self::require_not_finalized(&env, contract_id);
+
+        if client != contract.client {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
 
-        match contract.status {
-            ContractStatus::Created | ContractStatus::PartiallyFunded | ContractStatus::Funded => {}
-            _ => env.panic_with_error(EscrowError::InvalidState),
+        if contract.status == ContractStatus::Cancelled {
+            env.panic_with_error(EscrowError::AlreadyCancelled);
         }
 
-        caller.require_auth();
-        Self::require_not_finalized(&env, contract_id);
+        if contract.status != ContractStatus::Created && contract.status != ContractStatus::Funded {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        if contract.released_amount != 0 {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        client.require_auth();
+
+        let refund_amount = contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        if refund_amount > 0 {
+            let token = Self::read_settlement_token(&env)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+            token::Client::new(&env, &token).transfer(
+                &env.current_contract_address(),
+                &client,
+                &refund_amount,
+            );
+        }
+
+        contract.refunded_amount = contract
+            .refunded_amount
+            .checked_add(refund_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::InsufficientFunds));
         contract.status = ContractStatus::Cancelled;
-        // emit_status_changed(env, contract_id, old_status, ContractStatus::Cancelled);
+
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
         ttl::extend_contract_ttl(&env, contract_id);
+
+        env.events().publish(
+            (symbol_short!("cancelled"), contract_id),
+            (client, refund_amount, env.ledger().timestamp()),
+        );
+
         true
     }
 

@@ -271,9 +271,11 @@ existing lifecycle are preserved unchanged on each path.
 escrow.cancel_contract(&contract_id, &caller);
 ```
 
-Cancellation requires `caller.require_auth()`. The caller must be the stored
-client or freelancer. It is blocked after `Completed` and blocked if the
-contract is already `Cancelled`.
+Cancellation requires `client.require_auth()`. The caller must be the stored
+client. It is allowed only while the contract is `Created` or `Funded`, with
+zero released funds; otherwise it panics with `InvalidStatusTransition`.
+The entrypoint refunds the full remaining balance to the client, transitions
+status to `Cancelled`, and panics with `AlreadyCancelled` on a second attempt.
 
 ## Finalization
 
