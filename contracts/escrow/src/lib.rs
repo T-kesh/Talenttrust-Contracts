@@ -35,8 +35,11 @@ mod ttl;
 mod types;
 mod utils;
 
-pub const MAX_MILESTONES: u32 = 10;
-pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String,
+    Symbol, Vec,
+};
+use crate::utils::now_seconds;
 
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
@@ -74,57 +77,8 @@ pub struct Escrow;
 pub const MAX_MILESTONES: u32 = 10;
 pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
 
-/// Governance-level errors for admin-gated operations.
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum EscrowError {
-    InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    ContractNotFound = 6,
-    EmptyRefundRequest = 7,
-    DuplicateMilestoneInRefund = 8,
-    AlreadyReleased = 9,
-    AlreadyRefunded = 10,
-    InsufficientFunds = 11,
-    AlreadyInitialized = 12,
-    InsufficientAccumulatedFees = 13,
-    /// Returned by lifecycle entrypoints when `initialize` has not been called.
-    ///
-    /// All money-flow operations require initialization so the admin-controlled
-    /// safety rails (pause, emergency controls, protocol fees) are always in
-    /// scope before any funds can move.
-    NotInitialized = 14,
-    UnauthorizedRole = 15,
-    ContractPaused = 16,
-    EmergencyActive = 17,
-    InvalidState = 18,
-    InvalidRating = 19,
-    SelfRating = 20,
-    ReputationAlreadyIssued = 21,
-    NotCompleted = 22,
-    FreelancerMismatch = 23,
-    InvalidStatusTransition = 24,
-    ArbiterRequired = 25,
-    InvalidDisputeSplit = 26,
-    AccountingInvariantViolated = 27,
-    PotentialOverflow = 28,
-    AlreadyFinalized = 29,
-    AmountMustBePositive = 30,
-    /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
-    EvidenceTooLong = 31,
-    MissingArbiter = 32,
-    InvalidArbiter = 33,
-    InvalidParticipants = 34,
-    TooManyMilestones = 35,
-    EmptyComment = 36,
-    CommentTooLong = 37,
-    InvalidProtocolParameters = 38,
-    TimelockNotElapsed = 39,
-}
+
+
 
 #[contractimpl]
 impl Escrow {
@@ -152,33 +106,62 @@ impl Escrow {
 #[contractimpl]
 impl Escrow {
 
-    /// Set the settlement token for the escrow contract.
+    /// Bind the settlement token for the escrow contract.
+    ///
+    /// This is the canonical, single-use setter for the settlement token. After
+    /// a successful bind, all deposit/release/refund paths will route token
+    /// transfers through `token`. A second bind attempt panics with
+    /// `SettlementTokenAlreadyBound` so the token identity is immutable for
+    /// the lifetime of the contract.
+    ///
+    /// Returns the settlement SAC `Address` for caller convenience.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
     /// * `admin` - The admin address (must match stored admin)
     /// * `token` - The SAC token address
     ///
-    /// # Returns
-    /// * `bool` - true if successful
-    ///
-    /// # Authorization
-    /// * Requires admin authorization
-    pub fn set_settlement_token(env: Env, admin: Address, token: Address) -> bool {
+    /// # Errors
+    /// * `NotInitialized` if `initialize` has not been called
+    /// * `UnauthorizedRole` if `admin` is not the stored admin
+    /// * `SettlementTokenAlreadyBound` if a token is already bound
+    pub fn bind_settlement_token(env: Env, admin: Address, token: Address) -> bool {
         Self::require_initialized(&env);
         let stored_admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        
+
         if admin != stored_admin {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
         admin.require_auth();
-        
+
+        if Self::read_settlement_token(&env).is_some() {
+            env.panic_with_error(Error::SettlementTokenAlreadyBound);
+        }
+
         Self::write_settlement_token(&env, &token);
         true
+    }
+
+    /// Alias retained for callers that used the historical API name.
+    ///
+    /// Behaves identically to [`bind_settlement_token`]. New code should prefer
+    /// `bind_settlement_token`.
+    pub fn set_settlement_token(env: Env, admin: Address, token: Address) -> bool {
+        Self::bind_settlement_token(env, admin, token)
+    }
+
+    /// Returns the bound settlement token, or `None` if no token has been bound.
+    pub fn get_settlement_token(env: Env) -> Option<Address> {
+        Self::read_settlement_token(&env)
+    }
+
+    /// Returns the stored governance admin address, or `None` if not set.
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Admin)
     }
 
     // ── Initialization ───────────────────────────────────────────────────────
@@ -312,12 +295,14 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         // Transfer tokens from caller to contract
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = match Self::read_settlement_token(&env) {
+            Some(t) => t,
+            None => env.panic_with_error(Error::SettlementTokenNotConfigured),
+        };
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&caller, &env.current_contract_address(), &amount);
-        
+
         deposit::deposit_funds_impl(&env, contract_id, caller, amount)
     }
 
@@ -584,9 +569,11 @@ impl Escrow {
         let release_amount = milestone.amount;
 
         // Transfer tokens from contract to freelancer
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = match Self::read_settlement_token(&env) {
+            Some(t) => t,
+            None => env.panic_with_error(Error::SettlementTokenNotConfigured),
+        };
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -857,9 +844,11 @@ impl Escrow {
         }
 
         // Transfer tokens from contract to client
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = match Self::read_settlement_token(&env) {
+            Some(t) => t,
+            None => env.panic_with_error(Error::SettlementTokenNotConfigured),
+        };
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -1597,11 +1586,10 @@ impl Escrow {
             env.panic_with_error(EscrowError::InsufficientAccumulatedFees);
         }
 
-        let token: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SettlementToken)
-            .unwrap_or_else(|| panic!("Settlement token not configured"));
+        let token = match Self::read_settlement_token(&env) {
+            Some(t) => t,
+            None => env.panic_with_error(Error::SettlementTokenNotConfigured),
+        };
 
         let new_accumulated = accumulated - amount;
         env.storage()

@@ -171,8 +171,34 @@ impl Escrow {
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
     }
 
-    if total_amount > MAX_TOTAL_ESCROW_STROOPS {
-        env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+    // Check governed max_escrow_total_stroops cap if set
+    let total_milestones: i128 = milestones.iter().map(|m| m).sum();
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0 && total_milestones > params.max_escrow_total_stroops
+        {
+            env.panic_with_error(EscrowError::EscrowCapExceeded);
+        }
+    }
+
+    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, x| {
+        acc.checked_add(x)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
+    });
+
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0
+            && total_milestones_amount > params.max_escrow_total_stroops
+        {
+            env.panic_with_error(EscrowError::EscrowCapExceeded);
+        }
     }
 
     let id = next_contract_id(&env);
@@ -205,6 +231,7 @@ impl Escrow {
             refunded: false,
             work_evidence: None,
             refunded_amount: 0,
+            deadline: None,
         });
     }
     let milestone_key = Symbol::new(&env, "milestones");
