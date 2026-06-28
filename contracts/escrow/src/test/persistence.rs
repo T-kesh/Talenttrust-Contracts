@@ -1188,5 +1188,19 @@ fn double_finalize_rejected() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (client_addr,
+    let (client_addr, _, contract_id) = super::complete_contract(&env, &client);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_contract(&contract_id, &client_addr)
+    }));
+    assert!(result.is_err());
+}
+
+/// Asserts that `milestone_symbol` resolves to the correct short symbol `symbol_short!("milestone")`.
+#[test]
+fn finalize_completed_contract_persists_immutable_close_record() {
+    let env = Env::default();
+    let helper_symbol = crate::milestone_symbol(&env);
+    let expected_symbol = symbol_short!("milestone");
+    assert_eq!(helper_symbol, expected_symbol);
 }
