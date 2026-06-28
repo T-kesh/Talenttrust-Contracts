@@ -78,7 +78,7 @@ pub fn create_contract_impl(
         }
     }
 
-    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, &x| {
+    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, x| {
         acc.checked_add(x)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
     });
@@ -125,6 +125,7 @@ pub fn create_contract_impl(
             refunded: false,
             work_evidence: None,
             refunded_amount: 0,
+            deadline: None,
         });
     }
     let milestone_key = Symbol::new(&env, "milestones");
