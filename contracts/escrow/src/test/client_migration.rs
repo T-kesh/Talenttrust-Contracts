@@ -8,9 +8,11 @@
 
 use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
-use crate::{
-    types::{ContractStatus, DataKey},
-    Contract, Escrow, EscrowClient, Error,
+use soroban_sdk::{
+    testutils::Address as _,
+    testutils::Ledger as _,
+    testutils::LedgerInfo,
+    Address, Env, IntoVal, Symbol, Val, testutils::Events, FromVal,
 };
 use soroban_sdk::{testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, IntoVal, Symbol, TryFromVal, Val};
 
@@ -41,15 +43,8 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 
 fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
     env.events().all().iter().any(|event| {
-        let topics = &event.1;
-        topics.len() > 0 && {
-            let sym_res: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
-            if let Ok(sym) = sym_res {
-                sym == *topic
-            } else {
-                false
-            }
-        }
+        let topics = event.1;
+        topics.len() > 0 && Symbol::from_val(env, &topics.get(0).unwrap()) == *topic
     })
 }
 

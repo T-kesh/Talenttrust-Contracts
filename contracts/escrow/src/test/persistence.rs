@@ -222,9 +222,9 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
     let res = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
     match res {
         Err(Ok(e)) => {
-            assert_eq!(e, soroban_sdk::Error::from(Error::AlreadyFinalized));
+            assert_eq!(e, soroban_sdk::Error::from(EscrowError::AlreadyFinalized));
         }
-        _ => panic!("expected contract error AlreadyFinalized"),
+        other => panic!("expected contract error AlreadyFinalized, got {:?}", other),
     }
 }
 

@@ -99,6 +99,10 @@ fn emergency_blocks_deposit_funds() {
     client.activate_emergency_pause();
 
     super::assert_contract_error(
+        client.try_deposit_funds(&id, &caller, &50_i128),
+        EscrowError::ContractPaused,
+    );
+    super::assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &50_i128),
         Error::ContractPaused,
     );
@@ -113,6 +117,10 @@ fn emergency_blocks_release_milestone() {
     let (client_addr, _, id) = setup_funded_contract(&env, &client);
     client.activate_emergency_pause();
 
+    super::assert_contract_error(
+        client.try_release_milestone(&id, &caller, &0),
+        EscrowError::ContractPaused,
+    );
     super::assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
         Error::ContractPaused,

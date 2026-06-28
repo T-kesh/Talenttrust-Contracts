@@ -1,9 +1,9 @@
-// Merged imports
+use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
 
-use crate::{safe_add_amounts, Contract, ContractStatus, DataKey, Escrow, EscrowError};
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
-
-// Removed obsolete duplicated `impl Escrow`
+use crate::{
+    safe_add_amounts, ttl, Contract, ContractStatus, Error as EscrowError, Escrow, DataKey,
+    EscrowClient, EscrowArgs,
+};
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]
@@ -77,19 +77,21 @@ pub fn final_status_after_resolution(contract: &EscrowContractData) -> ContractS
     }
 }
 
+#[contractimpl]
 impl Escrow {
-    /// Raise a dispute on a funded or partially funded escrow.
-    /// Only the client or freelancer may call this.
-    pub(crate) fn raise_dispute_impl(env: Env, contract_id: u32, caller: Address) -> bool {
+    /// Raise a dispute on a contract. Blocked when paused.
+    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
         Self::require_not_paused(&env);
         caller.require_auth();
 
         let key = DataKey::Contract(contract_id);
-        let mut contract = env
+        let mut contract: Contract = env
             .storage()
             .persistent()
-            .get::<_, Contract>(&key)
+            .get(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        Self::require_not_finalized(&env, contract_id);
 
         if caller != contract.client && caller != contract.freelancer {
             env.panic_with_error(EscrowError::UnauthorizedRole);
@@ -100,21 +102,23 @@ impl Escrow {
         if contract.status != ContractStatus::Funded
             && contract.status != ContractStatus::PartiallyFunded
         {
-            env.panic_with_error(EscrowError::InvalidState);
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
         }
 
         contract.status = ContractStatus::Disputed;
+
         env.storage().persistent().set(&key, &contract);
+        ttl::extend_contract_ttl(&env, contract_id);
 
         env.events().publish(
-            (symbol_short!("dispute"), contract_id),
+            (Symbol::new(&env, "dispute"), contract_id),
             (caller, env.ledger().timestamp()),
         );
         true
     }
 
-    /// Resolve a disputed escrow. Only the assigned arbiter may call this.
-    pub(crate) fn resolve_dispute_impl(
+    /// Resolve a dispute on a contract. Blocked when paused.
+    pub fn resolve_dispute(
         env: Env,
         contract_id: u32,
         arbiter: Address,
@@ -124,21 +128,24 @@ impl Escrow {
         arbiter.require_auth();
 
         let key = DataKey::Contract(contract_id);
-        let mut contract = env
+        let mut contract: Contract = env
             .storage()
             .persistent()
-            .get::<_, Contract>(&key)
+            .get(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
+        Self::require_not_finalized(&env, contract_id);
+
         if contract.status != ContractStatus::Disputed {
-            env.panic_with_error(EscrowError::InvalidState);
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
         }
-        if contract.arbiter.clone() != Some(arbiter.clone()) {
+        if contract.arbiter.as_ref() != Some(&arbiter) {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
 
-        let (client_payout, freelancer_payout) = resolution_payouts(&contract, &resolution)
-            .unwrap_or_else(|err| env.panic_with_error(err));
+        let (client_payout, freelancer_payout) =
+            resolution_payouts(&contract, &resolution)
+                .unwrap_or_else(|err| env.panic_with_error(err));
 
         contract.refunded_amount = safe_add_amounts(contract.refunded_amount, client_payout)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
@@ -152,10 +159,12 @@ impl Escrow {
         }
 
         contract.status = final_status_after_resolution(&contract);
+
         env.storage().persistent().set(&key, &contract);
+        ttl::extend_contract_ttl(&env, contract_id);
 
         env.events().publish(
-            (symbol_short!("dsp_res"), contract_id),
+            (Symbol::new(&env, "dsp_res"), contract_id),
             (
                 arbiter,
                 resolution.code(),

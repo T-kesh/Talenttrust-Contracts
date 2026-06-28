@@ -81,8 +81,7 @@ pub fn validate_contract_total(
     max_contract_total: i128,
 ) -> Result<(), crate::Error> {
     if total_amount > max_contract_total {
-        // Map to InvalidMilestoneAmount for contract total overflow
-        return Err(crate::Error::InvalidMilestoneAmount);
+        return Err(crate::EscrowError::TotalCapExceeded);
     }
     Ok(())
 }
@@ -130,7 +129,7 @@ pub fn validate_deposit_amount(
     // Check if deposit would exceed contract maximum
     if let Some(new_total) = current_deposited.checked_add(deposit_amount) {
         if new_total > max_contract_total {
-            return Err(crate::Error::InvalidMilestoneAmount);
+            return Err(crate::EscrowError::DepositWouldExceedTotal);
         }
     } else {
         return Err(crate::Error::PotentialOverflow);
@@ -214,7 +213,7 @@ mod tests {
         assert!(validate_contract_total(max_total, max_total).is_ok());
         assert_eq!(
             validate_contract_total(max_total + 1, max_total),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(crate::Error::TotalCapExceeded)
         );
     }
 
@@ -226,7 +225,7 @@ mod tests {
         let milestones2 = [500_000_0000000, 600_000_0000000];
         assert_eq!(
             validate_milestone_amounts(&milestones2, max_contract_total),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(crate::Error::TotalCapExceeded)
         );
     }
 
@@ -237,7 +236,7 @@ mod tests {
         assert!(validate_deposit_amount(100_0000000, 500_0000000, max_contract_total).is_ok());
         assert_eq!(
             validate_deposit_amount(600_000_0000000, 500_000_0000000, max_contract_total),
-            Err(crate::Error::InvalidMilestoneAmount)
+            Err(crate::Error::DepositWouldExceedTotal)
         );
     }
 

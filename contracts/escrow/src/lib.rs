@@ -35,8 +35,10 @@ mod ttl;
 mod types;
 mod utils;
 
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, MAX_SINGLE_AMOUNT_STROOPS};
-pub use dispute::DisputeResolution;
+pub const MAX_MILESTONES: u32 = 10;
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
+
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
