@@ -24,7 +24,6 @@
 #![allow(clippy::useless_conversion)]
 
 mod amount_validation;
-mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -36,9 +35,12 @@ mod ttl;
 mod types;
 mod utils;
 
+use soroban_sdk::{Symbol, Env, Address};
+
 pub use amount_validation::safe_add_amounts;
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
-pub use dispute::DisputeResolution;
+pub use amount_validation::safe_subtract_amounts;
+pub use dispute::resolution_payouts;
+pub use dispute::final_status_after_resolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 // Keep shared storage keys and escrow domain types centralized in `types.rs`.
@@ -49,8 +51,9 @@ pub use types::{
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
-pub type EscrowError = Error;
+// Maximum bounds constants - re-export from amount_validation for API visibility
 pub const MAX_MILESTONES: u32 = 10;
+pub const MAX_SINGLE_AMOUNT_STROOPS: i128 = crate::amount_validation::MAX_SINGLE_AMOUNT_STROOPS;
 pub const MAX_TOTAL_ESCROW_STROOPS: i128 = MAX_SINGLE_AMOUNT_STROOPS;
 
 #[contract]
@@ -96,15 +99,6 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
-}
-
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
-
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
 }
 
 #[contractimpl]

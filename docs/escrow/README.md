@@ -457,6 +457,38 @@ every operation order:
 - cross-check that `get_refundable_balance` matches `get_contract` fields exactly
 - partial deposit with partial refund never goes negative
 
+## Dispute Resolution Payout Matrix
+
+When a dispute is raised on a funded or partially funded contract, the assigned arbiter
+chooses a resolution. The contract enforces conservation of the available balance:
+
+```
+available = funded_amount - released_amount - refunded_amount
+client_payout + freelancer_payout == available
+```
+
+### Resolution Variants
+
+| Variant | Client Payout | Freelancer Payout | Notes |
+|---|---|---|---|
+| `FullRefund` | `available` | `0` | All remaining funds to client. Status becomes `Refunded`. |
+| `FullPayout` | `0` | `available` | All remaining funds to freelancer. Status becomes `Completed`. |
+| `PartialRefund` | `available - floor(available * 30 / 100)` | `floor(available * 30 / 100)` | 70/30 split with floor rounding. Status becomes `Completed`. |
+| `Split(client_amount, freelancer_amount)` | `client_amount` | `freelancer_amount` | Custom split; both must be non-negative and sum to available. |
+
+### Security Invariants
+
+- **Conservation**: The payout values always sum to `available`. Negative splits are
+  rejected with `InvalidDisputeSplit`.
+- **Overflow protection**: All arithmetic uses checked operations; overflow returns
+  `PotentialOverflow`.
+- **Accounting integrity**: If `released + refunded > funded`, resolution fails with
+  `AccountingInvariantViolated`.
+- **Status determination**: `FinalRefund` sets status to `Refunded` only when the full
+  funded amount has been refunded; otherwise `Completed`.
+
+Test coverage is provided in `contracts/escrow/src/test/dispute.rs`.
+
 ## Planned Features
 
 These features are not implemented entrypoints today:
