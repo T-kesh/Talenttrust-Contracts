@@ -1,5 +1,5 @@
-use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, Env, Vec};
+use crate::{ttl, DataKey, Error, Escrow, EscrowClient, MilestoneApprovals, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Env, LedgerInfo, Vec};
 
 fn setup_contract(
     env: &Env,
@@ -12,9 +12,19 @@ fn setup_contract(
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(env, &contract_id);
 
+    let admin = soroban_sdk::Address::generate(env);
+    assert!(client.initialize(&admin));
+
+    let token_admin = soroban_sdk::Address::generate(env);
+    let token_address = env.register_stellar_asset_contract(token_admin);
+    assert!(client.set_settlement_token(&admin, &token_address));
+
     let client_addr = soroban_sdk::Address::generate(env);
     let freelancer_addr = soroban_sdk::Address::generate(env);
     let arbiter_addr = soroban_sdk::Address::generate(env);
+
+    let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token_address);
+    token_client.mint(&client_addr, &100_000_0000000_i128);
 
     (client, client_addr, freelancer_addr, arbiter_addr)
 }
@@ -28,6 +38,27 @@ fn default_milestones(env: &Env) -> Vec<i128> {
 
 fn total_milestones() -> i128 {
     6000_0000000_i128
+}
+
+const TEMP_ENTRY_TTL_LIMIT: u32 = ttl::PENDING_APPROVAL_TTL_LEDGERS * 4;
+
+fn setup_ttl_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let initial = env.ledger().get();
+    env.ledger().set(LedgerInfo {
+        sequence_number: 1_000,
+        timestamp: initial.timestamp,
+        protocol_version: initial.protocol_version,
+        network_id: initial.network_id,
+        base_reserve: initial.base_reserve,
+        min_temp_entry_ttl: 1,
+        min_persistent_entry_ttl: TEMP_ENTRY_TTL_LIMIT,
+        max_entry_ttl: TEMP_ENTRY_TTL_LIMIT,
+    });
+
+    env
 }
 
 #[test]
@@ -270,9 +301,8 @@ fn test_multisig_requires_both_approvals() {
 }
 
 #[test]
-fn test_approval_expiry_simulation() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn test_get_milestone_approvals_renews_ttl_on_read() {
+    let env = setup_ttl_env();
 
     let (client, client_addr, freelancer_addr, _arbiter_addr) = setup_contract(&env);
 
@@ -287,13 +317,91 @@ fn test_approval_expiry_simulation() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
 
-    // Verify approval exists
-    let approvals = client.get_milestone_approvals(&contract_id, &0);
-    assert!(approvals.is_some());
+    let approval_key = DataKey::MilestoneApprovals(contract_id, 0);
+    let initial_ttl: u32 = env.as_contract(&client.address, || {
+        env.storage().temporary().get_ttl(&approval_key)
+    });
 
-    // Note: In a real scenario, we would advance ledgers beyond TTL
-    // For now, we verify the approval mechanism works
-    // TTL expiry is handled by Soroban's temporary storage automatically
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li
+            .sequence_number
+            .saturating_add(initial_ttl.saturating_sub(ttl::PENDING_APPROVAL_BUMP_THRESHOLD) + 1);
+    });
+
+    let ttl_before_read: u32 = env.as_contract(&client.address, || {
+        env.storage().temporary().get_ttl(&approval_key)
+    });
+    assert!(
+        ttl_before_read < ttl::PENDING_APPROVAL_BUMP_THRESHOLD,
+        "approval TTL should be within bump threshold before the read (got {})",
+        ttl_before_read
+    );
+
+    let approvals = client.get_milestone_approvals(&contract_id, &0);
+    assert_eq!(
+        approvals,
+        Some(MilestoneApprovals {
+            client_approved: true,
+            freelancer_approved: false,
+            arbiter_approved: false,
+        })
+    );
+
+    let ttl_after_read: u32 = env.as_contract(&client.address, || {
+        env.storage().temporary().get_ttl(&approval_key)
+    });
+    assert!(
+        ttl_after_read >= ttl::PENDING_APPROVAL_BUMP_THRESHOLD,
+        "read should renew approval TTL back into the live window (got {})",
+        ttl_after_read
+    );
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li
+            .sequence_number
+            .saturating_add(ttl::PENDING_APPROVAL_BUMP_THRESHOLD + 1);
+    });
+
+    let approvals_after_original_expiry = client.get_milestone_approvals(&contract_id, &0);
+    assert!(
+        approvals_after_original_expiry.is_some(),
+        "approval should still exist after the original expiry window once read renewed TTL"
+    );
+}
+
+#[test]
+fn test_get_milestone_approvals_missing_entry_returns_none_without_write() {
+    let env = setup_ttl_env();
+
+    let (client, client_addr, freelancer_addr, _arbiter_addr) = setup_contract(&env);
+
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &default_milestones(&env),
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    let approval_key = DataKey::MilestoneApprovals(contract_id, 0);
+    let exists_before_read = env.as_contract(&client.address, || {
+        env.storage().temporary().has(&approval_key)
+    });
+    assert!(
+        !exists_before_read,
+        "missing approval should not exist before the read"
+    );
+
+    let approvals = client.get_milestone_approvals(&contract_id, &0);
+    assert!(approvals.is_none());
+
+    let exists_after_read = env.as_contract(&client.address, || {
+        env.storage().temporary().has(&approval_key)
+    });
+    assert!(
+        !exists_after_read,
+        "missing approval read must not create or extend a temporary entry"
+    );
 }
 
 #[test]

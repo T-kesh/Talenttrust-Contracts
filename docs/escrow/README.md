@@ -53,8 +53,8 @@ Read-only queries:
 
 ### Read-only getter semantics
 
-The read getters below are stable, side-effect-free paths that indexers and
-off-chain callers rely on. They share three properties:
+The read getters below are stable query paths that indexers and off-chain
+callers rely on. They share four properties:
 
 1. **Not-found**: every getter that takes a `contract_id` panics the contract
    with `ContractNotFound` when `contract_id` was never allocated. The
@@ -66,13 +66,16 @@ off-chain callers rely on. They share three properties:
    Accounting-only fields (`funded_amount`, `released_amount`,
    `refunded_amount`) and per-milestone `released`/`refunded` flags are
    bitwise-stable across arbitrary numbers of repeated calls.
-3. **TTL on read (persistent only)**: on a successful read the contract
-   extends the persistent TTL of the entry being read from (`Contract(id)`,
-   `(Contract(id), "milestones")`) to `PERSISTENT_TTL_LEDGERS` (30 days).
-   This keeps idle but live contracts in storage without rebuilding them. The
-   `get_milestone_approvals` getter reads from temporary storage and is
-   therefore exempt from this rule; it is governed by
-   `PENDING_APPROVAL_TTL_LEDGERS` and the host's auto-eviction.
+3. **TTL on read**: on a successful read the contract extends the TTL of the
+   entry being read. Persistent entries (`Contract(id)`,
+   `(Contract(id), "milestones")`) are renewed to `PERSISTENT_TTL_LEDGERS`
+   (30 days). `get_milestone_approvals` renews its temporary approval entry
+   with `PENDING_APPROVAL_BUMP_THRESHOLD` /
+   `PENDING_APPROVAL_TTL_LEDGERS` only when the approval record exists.
+4. **Storage-touching getters**: `get_milestone_approvals` is not a zero-cost
+   pure getter. Polling it touches temporary storage and may renew a live
+   approval window; absent or expired entries still return `None` without
+   creating state.
 
 Per-getter details:
 
@@ -91,9 +94,10 @@ Per-getter details:
 - `get_milestone_approvals(contract_id, milestone_index)` returns `Some`
   only if a non-expired approval record for that milestone exists in
   temporary storage. Returns `None` when no approval has been recorded or
-  when the contract id is unknown. Does not extend persistent TTL because
-  approvals live in temporary storage bounded by
-  `PENDING_APPROVAL_TTL_LEDGERS`.
+  when the contract id is unknown. On a successful read it renews the
+  approval entry with `PENDING_APPROVAL_BUMP_THRESHOLD` /
+  `PENDING_APPROVAL_TTL_LEDGERS`; absent or expired entries remain `None`
+  without creating state.
 - `get_work_evidence(contract_id, milestone_index)` returns `Some(String)`
   if the milestone exists and work evidence was submitted via
   `submit_work_evidence`. Returns `None` when the index is out of bounds or

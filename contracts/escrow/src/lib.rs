@@ -988,14 +988,32 @@ impl Escrow {
     /// elapsed. Treat `None` and an all-`false` struct identically — neither
     /// unblocks `release_milestone`.
     ///
-    /// See `approve_milestone_release` and `docs/escrow/approvals-and-release.md`.
+    /// On a successful read, this entrypoint renews the temporary approval
+    /// record's TTL using `PENDING_APPROVAL_BUMP_THRESHOLD` /
+    /// `PENDING_APPROVAL_TTL_LEDGERS`, consistent with the approval write path.
+    /// Missing or expired entries still return `None` without writing.
+    ///
+    /// # Cost Semantics
+    /// This is a storage-touching read of temporary state, not a zero-cost pure
+    /// getter. Integrators that poll approval state should account for the host
+    /// storage access and TTL bump behavior.
+    ///
+    /// See `approve_milestone_release` and `docs/escrow/authorization.md`.
     pub fn get_milestone_approvals(
         env: Env,
         contract_id: u32,
         milestone_index: u32,
     ) -> Option<MilestoneApprovals> {
         let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
-        env.storage().temporary().get(&approval_key)
+        let approvals = env.storage().temporary().get(&approval_key);
+        if approvals.is_some() {
+            env.storage().temporary().extend_ttl(
+                &approval_key,
+                ttl::PENDING_APPROVAL_BUMP_THRESHOLD,
+                ttl::PENDING_APPROVAL_TTL_LEDGERS,
+            );
+        }
+        approvals
     }
 
     // ── Pause / unpause ──────────────────────────────────────────────────────
