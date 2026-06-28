@@ -81,11 +81,7 @@ pub fn create_contract_impl(
         .unwrap_or(MAX_TOTAL_ESCROW_STROOPS);
 
     if total_milestones_amount > governed_cap {
-        let err = if env
-            .storage()
-            .persistent()
-            .has(&DataKey::GovernedParameters)
-        {
+        let err = if env.storage().persistent().has(&DataKey::GovernedParameters) {
             EscrowError::EscrowCapExceeded
         } else {
             EscrowError::InvalidMilestoneAmount

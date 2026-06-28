@@ -1,6 +1,4 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract and allocates them across milestones in order.
@@ -145,16 +143,12 @@ mod tests {
         let client = register_client(&env);
         let (client_addr, _, contract_id) = create_contract(&env, &client);
 
-        assert!(client.deposit_funds(
-            &contract_id,
-            &client_addr,
-            &total_milestone_amount(),
-        ));
+        assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
 
         let events = env.events().all();
 
-        assert!(events.iter().any(|e| {
-            format!("{:?}", e).contains("status_changed")
-        }));
+        assert!(events
+            .iter()
+            .any(|e| { format!("{:?}", e).contains("status_changed") }));
     }
 }

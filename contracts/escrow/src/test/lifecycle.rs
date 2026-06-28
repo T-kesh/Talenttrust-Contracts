@@ -1,4 +1,7 @@
-use crate::{ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, Error, ReleaseAuthorization};
+use crate::{
+    ContractStatus, DepositMode, DisputeResolution, Error, Escrow, EscrowClient,
+    ReleaseAuthorization,
+};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, Address, Env};
 
 fn setup() -> (Env, Address) {
@@ -171,7 +174,12 @@ fn finalized_contract_rejects_subsequent_mutations() {
         Error::AlreadyFinalized,
     );
     super::assert_contract_error(
-        client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
+        client.try_issue_reputation(
+            &contract_id,
+            &client_addr,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         Error::AlreadyFinalized,
     );
     super::assert_contract_error(

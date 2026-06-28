@@ -23,7 +23,7 @@ use soroban_sdk::{
 };
 
 use super::register_client;
-use crate::{ContractStatus, EscrowError, Escrow, EscrowClient, ReleaseAuthorization};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // ---------------------------------------------------------------------------
 // Helpers

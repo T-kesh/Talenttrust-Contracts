@@ -1,4 +1,6 @@
-use super::{assert_contract_error, assert_contract_state, create_client, create_default_contract, setup};
+use super::{
+    assert_contract_error, assert_contract_state, create_client, create_default_contract, setup,
+};
 use crate::{types::Error, ContractStatus};
 use soroban_sdk::{testutils::Address as _, Address};
 
@@ -18,13 +20,7 @@ fn deposit_incremental_two_deposits_transitions_to_funded() {
     // Deposit half the total — should stay in PartiallyFunded
     assert!(client.deposit_funds(&contract_id, &client_addr, &partial));
     let contract = client.get_contract(&contract_id);
-    assert_contract_state(
-        contract,
-        ContractStatus::PartiallyFunded,
-        partial,
-        0,
-        0,
-    );
+    assert_contract_state(contract, ContractStatus::PartiallyFunded, partial, 0, 0);
 
     // Deposit remaining half — should transition to Funded
     assert!(client.deposit_funds(&contract_id, &client_addr, &(total - partial)));
@@ -80,7 +76,7 @@ fn release_rejects_legacy_aggregate_funding_without_milestone_allocation() {
 /// Tests that deposit_funds panics with UnauthorizedRole when caller is not the depositor.
 ///
 /// Asserts the exact error code when an unauthorized address attempts to deposit.
-/// 
+///
 /// # Security
 /// - Prevents unauthorized fund deposits
 /// - Enforces client-only deposit authorization
@@ -100,7 +96,7 @@ fn test_deposit_unauthorized_role() {
 /// Tests that deposit_funds panics with InvalidState when contract is not in Created state.
 ///
 /// Asserts the exact error code when attempting to deposit after contract has been funded.
-/// 
+///
 /// # Security
 /// - Prevents state machine violations
 /// - Ensures deposits only occur during contract setup phase
@@ -123,7 +119,7 @@ fn test_deposit_invalid_state() {
 ///
 /// Note: In Soroban test environment with mocked auth, balance checks are typically bypassed.
 /// This test documents the error branch but may not be directly testable without token contract integration.
-/// 
+///
 /// # UNREACHABLE
 /// InsufficientFunds in deposit_funds is currently unreachable because:
 /// - The contract does not perform balance verification in the current implementation
@@ -149,42 +145,54 @@ fn test_deposit_insufficient_funds() {
 fn test_funded_boundary_incremental_and_exact() {
     let (env, client_addr, freelancer_addr) = setup();
     let client = create_client(&env);
-    
+
     // Multi-deposit accumulation: under by one
     let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
     let total = total_milestone_amount();
-    
+
     // Deposit total - 1
     assert!(client.deposit_funds(&contract_id, &client_addr, &(total - 1)));
     let contract = client.get_contract(&contract_id);
     assert_eq!(contract.status, ContractStatus::Created);
     let refundable = client.get_refundable_balance(&contract_id);
-    assert_eq!(refundable, contract.funded_amount - contract.released_amount - contract.refunded_amount);
-    
+    assert_eq!(
+        refundable,
+        contract.funded_amount - contract.released_amount - contract.refunded_amount
+    );
+
     // Deposit final 1 stroop
     assert!(client.deposit_funds(&contract_id, &client_addr, &1_i128));
     let contract2 = client.get_contract(&contract_id);
     assert_eq!(contract2.status, ContractStatus::Funded);
     let refundable2 = client.get_refundable_balance(&contract_id);
-    assert_eq!(refundable2, contract2.funded_amount - contract2.released_amount - contract2.refunded_amount);
-    
+    assert_eq!(
+        refundable2,
+        contract2.funded_amount - contract2.released_amount - contract2.refunded_amount
+    );
+
     // Deposit on already-Funded contract is rejected with InvalidState
     let result = client.try_deposit_funds(&contract_id, &client_addr, &100_i128);
     assert_contract_error(result, Error::InvalidState);
-    
+
     // Deposit exactly total in one call
     let contract_id2 = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
     assert!(client.deposit_funds(&contract_id2, &client_addr, &total));
     let contract3 = client.get_contract(&contract_id2);
     assert_eq!(contract3.status, ContractStatus::Funded);
     let refundable3 = client.get_refundable_balance(&contract_id2);
-    assert_eq!(refundable3, contract3.funded_amount - contract3.released_amount - contract3.refunded_amount);
-    
+    assert_eq!(
+        refundable3,
+        contract3.funded_amount - contract3.released_amount - contract3.refunded_amount
+    );
+
     // Deposit over total by 1 stroop — production code accepts this from Created; asserts Funded
     let contract_id3 = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
     assert!(client.deposit_funds(&contract_id3, &client_addr, &(total + 1)));
     let contract4 = client.get_contract(&contract_id3);
     assert_eq!(contract4.status, ContractStatus::Funded);
     let refundable4 = client.get_refundable_balance(&contract_id3);
-    assert_eq!(refundable4, contract4.funded_amount - contract4.released_amount - contract4.refunded_amount);
+    assert_eq!(
+        refundable4,
+        contract4.funded_amount - contract4.released_amount - contract4.refunded_amount
+    );
 }

@@ -1,6 +1,6 @@
 use crate::{
-    safe_add_amounts, Contract as EscrowContractData, ContractStatus, DisputeResolution, DisputeSplit,
-    Error, EscrowError,
+    safe_add_amounts, Contract as EscrowContractData, ContractStatus, DisputeResolution,
+    DisputeSplit, Error, EscrowError,
 };
 use soroban_sdk::{Address, Env};
 

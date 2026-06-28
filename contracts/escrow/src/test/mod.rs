@@ -3,7 +3,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Contract, ContractStatus, Escrow, EscrowClient, Error, ReleaseAuthorization};
+use crate::{Contract, ContractStatus, Error, Escrow, EscrowClient, ReleaseAuthorization};
 
 // --- Submodules ---
 
@@ -190,9 +190,13 @@ pub fn create_default_contract(
         let admin = Address::generate(env);
         client.initialize(&admin);
     }
-    
+
     // 2. Set settlement token if not already set
-    if !env.storage().persistent().has(&crate::DataKey::SettlementToken) {
+    if !env
+        .storage()
+        .persistent()
+        .has(&crate::DataKey::SettlementToken)
+    {
         let token_admin = Address::generate(env);
         let token_address = env.register_stellar_asset_contract(token_admin);
         client.set_settlement_token(&token_address);

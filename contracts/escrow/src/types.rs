@@ -35,6 +35,11 @@ pub struct ContractSummary {
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
 
+/// Canonical storage-key namespace for the escrow contract.
+///
+/// Keep this enum as the single source of truth for Soroban storage access
+/// across `lib.rs` and helper modules. Variant ordering must remain append-only
+/// so serialized keys stay stable for persisted state.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -56,11 +61,13 @@ pub enum DataKey {
     // Client migration
     PendingClientMigration(u32),
     // Protocol / governance
+    /// Legacy reserved governance-admin slot retained for append-only storage compatibility.
     GovernanceAdmin,
+    /// Legacy reserved pending-governance-admin slot retained for append-only storage compatibility.
     PendingGovernanceAdmin,
     ProtocolParameters,
     ProtocolFeeBps,
-    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance.
     PendingAdmin,
     AccumulatedProtocolFees,
     GovernedParameters,
@@ -188,7 +195,11 @@ pub enum ContractStatus {
     PartiallyFunded = 7,
 }
 
-/// Main escrow contract state
+/// Canonical persisted escrow contract record.
+///
+/// This struct is the single shared contract-state payload stored under
+/// [`DataKey::Contract`], and all lifecycle/accounting logic should serialize
+/// and deserialize through this definition.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Contract {
@@ -219,7 +230,10 @@ pub struct Milestone {
     pub deadline: Option<u64>,
 }
 
-/// Defines who can approve milestone releases.
+/// Canonical release-authorization policy for milestone approvals.
+///
+/// Contract creation, approval tracking, and release execution all share this
+/// enum so authorization semantics stay consistent across modules and tests.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseAuthorization {
@@ -234,8 +248,10 @@ pub enum ReleaseAuthorization {
     MultiSig = 3,
 }
 
-/// Tracks approval status for a milestone.
-/// Stored in temporary storage with TTL for expiry grace period.
+/// Canonical approval snapshot for a milestone release decision.
+///
+/// Stored in temporary storage under [`DataKey::MilestoneApprovals`] with TTL
+/// so approval state round-trips through one shared representation.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneApprovals {
@@ -244,6 +260,10 @@ pub struct MilestoneApprovals {
     pub arbiter_approved: bool,
 }
 
+/// Canonical deposit-mode enum for escrow funding flows.
+///
+/// Keep this definition centralized here even if only a subset of modes is
+/// currently exercised so future funding logic and tests do not fork the type.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DepositMode {
@@ -323,4 +343,3 @@ pub enum DisputeResolution {
     FullPayout,
     Split(DisputeSplit),
 }
-

@@ -2,7 +2,7 @@ extern crate std;
 
 use soroban_sdk::{testutils::Address as _, testutils::Events, Address, Env};
 
-use crate::{Escrow, EscrowClient, Error};
+use crate::{Error, Escrow, EscrowClient};
 
 /// Returns a fresh (Env, contract Address) pair with all auths mocked.
 fn setup() -> (Env, Address) {

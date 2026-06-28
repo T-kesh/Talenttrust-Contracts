@@ -452,10 +452,7 @@ fn get_milestones_panics_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(
-        client.try_get_milestones(&999),
-        Error::ContractNotFound,
-    );
+    assert_contract_error(client.try_get_milestones(&999), Error::ContractNotFound);
 }
 
 /// `get_milestones` panics with `ContractNotFound` for the zero id when no
@@ -938,14 +935,8 @@ fn read_getters_fail_for_arbitrary_unknown_id() {
         let was_emergency = client.is_emergency();
 
         // Invalid id 4_242 — no getter may mutate stored state.
-        assert_contract_error(
-            client.try_get_contract(&4_242),
-            Error::ContractNotFound,
-        );
-        assert_contract_error(
-            client.try_get_milestones(&4_242),
-            Error::ContractNotFound,
-        );
+        assert_contract_error(client.try_get_contract(&4_242), Error::ContractNotFound);
+        assert_contract_error(client.try_get_milestones(&4_242), Error::ContractNotFound);
         match client.try_get_refundable_balance(&4_242) {
             Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
             other => panic!("expected ContractNotFound, got {:?}", other),
@@ -1133,14 +1124,8 @@ fn read_getters_unchanged_after_pause() {
     assert_eq!(refundable_after, refundable_before);
 
     // Not-found assertions still hold while paused.
-    assert_contract_error(
-        client.try_get_contract(&9999),
-        Error::ContractNotFound,
-    );
-    assert_contract_error(
-        client.try_get_milestones(&9999),
-        Error::ContractNotFound,
-    );
+    assert_contract_error(client.try_get_contract(&9999), Error::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&9999), Error::ContractNotFound);
     match client.try_get_refundable_balance(&9999) {
         Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
         other => panic!("expected ContractNotFound, got {:?}", other),

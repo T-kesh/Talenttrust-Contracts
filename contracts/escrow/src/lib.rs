@@ -49,10 +49,12 @@ pub use amount_validation::{
 };
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
+// Keep shared storage keys and escrow domain types centralized in `types.rs`.
 pub use types::{
-    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, DisputeResolution, DisputeSplit, Error,
-    GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary, PendingAdminProposal, ReadinessChecklist,
-    ReleaseAuthorization, Reputation, SplitAmounts, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, DisputeResolution,
+    DisputeSplit, Error, GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary,
+    PendingAdminProposal, ReadinessChecklist, ReleaseAuthorization, Reputation, SplitAmounts,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 pub type EscrowError = Error;
@@ -70,25 +72,28 @@ impl Escrow {
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
     }
-
 }
 
 impl Escrow {
-    /// Get the settlement token address for the escrow contract.
+    /// Get the settlement token address from the canonical `DataKey` binding.
     pub(crate) fn read_settlement_token(env: &Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::SettlementToken)
+        env.storage().persistent().get(&DataKey::SettlementToken)
     }
 
-    /// Set the settlement token address for the escrow contract.
+    /// Persist the settlement token address under the canonical `DataKey` binding.
     pub(crate) fn write_settlement_token(env: &Env, token: &Address) {
-        env.storage().instance().set(&DataKey::SettlementToken, token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SettlementToken, token);
     }
 }
 
 #[contractimpl]
 impl Escrow {
-
     /// Set the settlement token for the escrow contract.
+    ///
+    /// Writes the canonical [`DataKey::SettlementToken`] binding used by escrow
+    /// funding, releases, refunds, and protocol-fee withdrawal paths.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -107,12 +112,12 @@ impl Escrow {
             .persistent()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        
+
         if admin != stored_admin {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
         admin.require_auth();
-        
+
         Self::write_settlement_token(&env, &token);
         true
     }
@@ -230,7 +235,6 @@ impl Escrow {
     /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
     /// * `ContractIdCollision` - If the allocated id slot is already occupied
     pub fn create_contract(
-        
         env: Env,
         client: Address,
         freelancer: Address,
@@ -267,12 +271,11 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         // Transfer tokens from caller to contract
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&caller, &env.current_contract_address(), &amount);
-        
+
         deposit::deposit_funds_impl(&env, contract_id, caller, amount)
     }
 
@@ -550,9 +553,8 @@ impl Escrow {
         let release_amount = milestone.amount;
 
         // Transfer tokens from contract to freelancer
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -823,9 +825,8 @@ impl Escrow {
         }
 
         // Transfer tokens from contract to client
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -1097,7 +1098,13 @@ impl Escrow {
                 Symbol::new(&env, "emergency"),
                 Symbol::new(&env, "activated"),
             ),
-            (env.storage().persistent().get::<_, Address>(&DataKey::Admin).unwrap(), env.ledger().timestamp()),
+            (
+                env.storage()
+                    .persistent()
+                    .get::<_, Address>(&DataKey::Admin)
+                    .unwrap(),
+                env.ledger().timestamp(),
+            ),
         );
         true
     }
@@ -1111,20 +1118,13 @@ impl Escrow {
     /// Emits `("emergency", "resolved")` with `(admin, timestamp)` payload.
     /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn resolve_emergency(env: Env) -> bool {
+        Self::require_initialized(&env);
         let admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-
-        if env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            admin.require_auth();
-        }
+        admin.require_auth();
         env.storage().persistent().set(&DataKey::Emergency, &false);
         env.storage().persistent().set(&DataKey::Paused, &false);
 
@@ -1146,8 +1146,6 @@ impl Escrow {
         );
         true
     }
-
-
 
     pub fn is_emergency(env: Env) -> bool {
         env.storage()
@@ -1544,7 +1542,6 @@ impl Escrow {
             env.panic_with_error(EscrowError::AmountMustBePositive);
         }
 
-
         let accumulated: i128 = env
             .storage()
             .persistent()
@@ -1620,7 +1617,9 @@ impl Escrow {
         admin.require_auth();
 
         let old_bps = Self::read_protocol_fee_bps(&env);
-        env.storage().persistent().set(&DataKey::ProtocolFeeBps, &new_bps);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeBps, &new_bps);
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
