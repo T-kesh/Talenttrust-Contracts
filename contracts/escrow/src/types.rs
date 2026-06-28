@@ -376,7 +376,6 @@ pub enum Error {
     SettlementTokenNotConfigured = 53,
 }
 
-
 /// Contract lifecycle states
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

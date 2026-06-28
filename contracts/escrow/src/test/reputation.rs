@@ -36,10 +36,12 @@ fn issue_reputation_rejects_invalid_rating_bounds() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = complete_contract(&env, &client);
 
-    let result_low = client.try_issue_reputation(&contract_id, &client_addr, &0, &valid_comment(&env));
+    let result_low =
+        client.try_issue_reputation(&contract_id, &client_addr, &0, &valid_comment(&env));
     super::assert_contract_error(result_low, Error::InvalidRating);
 
-    let result_high = client.try_issue_reputation(&contract_id, &client_addr, &6, &valid_comment(&env));
+    let result_high =
+        client.try_issue_reputation(&contract_id, &client_addr, &6, &valid_comment(&env));
     super::assert_contract_error(result_high, Error::InvalidRating);
 }
 
@@ -51,7 +53,12 @@ fn issue_reputation_rejects_empty_comment() {
     let (client_addr, _freelancer_addr, contract_id) = complete_contract(&env, &client);
 
     let empty_comment = String::from_str(&env, "");
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::EmptyComment);
 }
 
@@ -64,7 +71,12 @@ fn issue_reputation_rejects_comment_too_long() {
 
     let long_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let long_comment = String::from_str(&env, long_str);
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::CommentTooLong);
 }
 
@@ -143,11 +155,13 @@ fn get_reputation_comment_returns_stored_comment() {
     env.mock_all_auths();
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = complete_contract(&env, &client);
-    
+
     let comment = String::from_str(&env, "Excellent worker!");
     assert!(client.issue_reputation(&contract_id, &client_addr, &5, &comment));
-    
-    let stored = client.get_reputation_comment(&contract_id).expect("should have comment");
+
+    let stored = client
+        .get_reputation_comment(&contract_id)
+        .expect("should have comment");
     assert_eq!(stored, comment);
 }
 
@@ -227,7 +241,30 @@ fn get_average_rating_returns_none_for_unknown_address() {
     env.mock_all_auths();
     let client = register_client(&env);
     let unknown = Address::generate(&env);
+    // Missing reputation record returns None
     assert!(client.get_average_rating(&unknown).is_none());
+}
+
+#[test]
+fn get_average_rating_returns_none_for_zero_completed_contracts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let freelancer = Address::generate(&env);
+
+    // Explicitly set a reputation record with 0 completed contracts
+    let rep = crate::types::Reputation {
+        completed_contracts: 0,
+        total_rating: 10,
+        last_rating: 5,
+    };
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Reputation(freelancer.clone()), &rep);
+    });
+
+    assert!(client.get_average_rating(&freelancer).is_none());
 }
 
 #[test]
@@ -237,10 +274,15 @@ fn get_average_rating_single_rating_returns_scaled_value() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
 
-    client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
 
-    // 4 * 10_000 / 1 = 40_000
-    assert_eq!(client.get_average_rating(&freelancer_addr), Some(40_000));
+    // 5 * 10_000 / 1 = 50_000
+    assert_eq!(client.get_average_rating(&freelancer_addr), Some(50_000));
 }
 
 #[test]
@@ -249,9 +291,14 @@ fn get_average_rating_multiple_ratings_returns_correct_scaled_average() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    // First contract: rating 3
+    // First contract: rating 4
     let (client_addr1, freelancer_addr, contract_id1) = complete_contract(&env, &client);
-    client.issue_reputation(&contract_id1, &client_addr1, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(
+        &contract_id1,
+        &client_addr1,
+        &4_u32,
+        &soroban_sdk::String::from_str(&env, "Good"),
+    );
 
     // Second contract: same freelancer, rating 5
     let client_addr2 = Address::generate(&env);
@@ -271,44 +318,38 @@ fn get_average_rating_multiple_ratings_returns_correct_scaled_average() {
     client.release_milestone(&contract_id2, &client_addr2, &1);
     client.approve_milestone_release(&contract_id2, &client_addr2, &2);
     client.release_milestone(&contract_id2, &client_addr2, &2);
-    client.issue_reputation(&contract_id2, &client_addr2, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(
+        &contract_id2,
+        &client_addr2,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
 
-    // total_rating=8, completed_contracts=2 → 8 * 10_000 / 2 = 40_000
-    assert_eq!(client.get_average_rating(&freelancer_addr), Some(40_000));
+    // total_rating=9, completed_contracts=2 → 9 * 10_000 / 2 = 45_000
+    assert_eq!(client.get_average_rating(&freelancer_addr), Some(45_000));
 }
 
 #[test]
-fn get_average_rating_fractional_average_is_preserved() {
+fn get_average_rating_handles_overflow_gracefully() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
+    let freelancer = Address::generate(&env);
 
-    // First contract: rating 1
-    let (client_addr1, freelancer_addr, contract_id1) = complete_contract(&env, &client);
-    client.issue_reputation(&contract_id1, &client_addr1, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    // Explicitly set a very large total_rating that will overflow checked_mul(10_000)
+    let rep = crate::types::Reputation {
+        completed_contracts: 1,
+        total_rating: i128::MAX,
+        last_rating: 5,
+    };
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Reputation(freelancer.clone()), &rep);
+    });
 
-    // Second contract: rating 2
-    let client_addr2 = Address::generate(&env);
-    let milestones = super::default_milestones(&env);
-    let contract_id2 = client.create_contract(
-        &client_addr2,
-        &freelancer_addr,
-        &None,
-        &milestones,
-        &crate::ReleaseAuthorization::ClientOnly,
-    );
-    let total = super::total_milestone_amount();
-    client.deposit_funds(&contract_id2, &client_addr2, &total);
-    client.approve_milestone_release(&contract_id2, &client_addr2, &0);
-    client.release_milestone(&contract_id2, &client_addr2, &0);
-    client.approve_milestone_release(&contract_id2, &client_addr2, &1);
-    client.release_milestone(&contract_id2, &client_addr2, &1);
-    client.approve_milestone_release(&contract_id2, &client_addr2, &2);
-    client.release_milestone(&contract_id2, &client_addr2, &2);
-    client.issue_reputation(&contract_id2, &client_addr2, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
-
-    // total_rating=3, completed_contracts=2 → 3 * 10_000 / 2 = 15_000
-    assert_eq!(client.get_average_rating(&freelancer_addr), Some(15_000));
+    // Should return None, not panic
+    assert!(client.get_average_rating(&freelancer).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -323,12 +364,8 @@ fn issue_reputation_comment_length_0_rejects_with_empty_comment() {
     let client = register_client(&env);
     let (client_addr, _, contract_id) = complete_contract(&env, &client);
 
-    let result = client.try_issue_reputation(
-        &contract_id,
-        &client_addr,
-        &5,
-        &String::from_str(&env, ""),
-    );
+    let result =
+        client.try_issue_reputation(&contract_id, &client_addr, &5, &String::from_str(&env, ""));
     super::assert_contract_error(result, EscrowError::EmptyComment);
 }
 
@@ -340,12 +377,7 @@ fn issue_reputation_comment_length_1_succeeds() {
     let client = register_client(&env);
     let (client_addr, _, contract_id) = complete_contract(&env, &client);
 
-    assert!(client.issue_reputation(
-        &contract_id,
-        &client_addr,
-        &5,
-        &String::from_str(&env, "x"),
-    ));
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5, &String::from_str(&env, "x"),));
 }
 
 /// Length 200 (maximum valid) must succeed.
@@ -358,12 +390,7 @@ fn issue_reputation_comment_length_200_succeeds() {
 
     // Exactly 200 ASCII bytes.
     let s = "a".repeat(200);
-    assert!(client.issue_reputation(
-        &contract_id,
-        &client_addr,
-        &5,
-        &String::from_str(&env, &s),
-    ));
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5, &String::from_str(&env, &s),));
 }
 
 /// Length 201 must panic with CommentTooLong.
@@ -375,11 +402,7 @@ fn issue_reputation_comment_length_201_rejects_with_comment_too_long() {
     let (client_addr, _, contract_id) = complete_contract(&env, &client);
 
     let s = "a".repeat(201);
-    let result = client.try_issue_reputation(
-        &contract_id,
-        &client_addr,
-        &5,
-        &String::from_str(&env, &s),
-    );
+    let result =
+        client.try_issue_reputation(&contract_id, &client_addr, &5, &String::from_str(&env, &s));
     super::assert_contract_error(result, EscrowError::CommentTooLong);
 }

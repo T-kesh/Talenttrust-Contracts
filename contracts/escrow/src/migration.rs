@@ -1,5 +1,5 @@
 use crate::ttl::{read_if_live, remove_transient, store_with_ttl, PENDING_MIGRATION_TTL_LEDGERS};
-use crate::{Contract, ContractStatus, DataKey, Escrow, Error};
+use crate::{Contract, ContractStatus, DataKey, Error, Escrow};
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 #[contracttype]

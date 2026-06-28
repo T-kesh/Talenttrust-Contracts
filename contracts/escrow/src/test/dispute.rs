@@ -10,17 +10,8 @@
 
 #![cfg(test)]
 
-extern crate std;
-
-use crate::dispute::{final_status_after_resolution, resolution_payouts};
-use crate::EscrowError as Error;
-use crate::{
-    ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
-};
-use soroban_sdk::{
-    testutils::{Address as _, Events},
-    vec, Address, Env,
-};
+use crate::{ContractStatus, DisputeResolution, Error, Escrow, EscrowClient, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,11 +134,17 @@ fn resolution_payouts_partial_refund_uses_floor_rounded_70_30_split() {
 fn resolution_payouts_partial_refund_handles_rounding_boundaries() {
     let env = make_env();
     assert_eq!(
-        resolution_payouts(&payout_contract(&env, 0, 0, 0), &DisputeResolution::PartialRefund),
+        resolution_payouts(
+            &payout_contract(&env, 0, 0, 0),
+            &DisputeResolution::PartialRefund
+        ),
         Ok((0, 0))
     );
     assert_eq!(
-        resolution_payouts(&payout_contract(&env, 1, 0, 0), &DisputeResolution::PartialRefund),
+        resolution_payouts(
+            &payout_contract(&env, 1, 0, 0),
+            &DisputeResolution::PartialRefund
+        ),
         Ok((1, 0))
     );
 }
@@ -158,11 +155,23 @@ fn resolution_payouts_split_rejects_negative_legs() {
     let env = make_env();
     let contract = payout_contract(&env, 100, 0, 0);
     assert_eq!(
-        resolution_payouts(&contract, &DisputeResolution::Split(DisputeSplit { client_amount: -1, freelancer_amount: 101 })),
+        resolution_payouts(
+            &contract,
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: -1,
+                freelancer_amount: 101
+            })
+        ),
         Err(EscrowError::InvalidDisputeSplit)
     );
     assert_eq!(
-        resolution_payouts(&contract, &DisputeResolution::Split(DisputeSplit { client_amount: 101, freelancer_amount: -1 })),
+        resolution_payouts(
+            &contract,
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 101,
+                freelancer_amount: -1
+            })
+        ),
         Err(EscrowError::InvalidDisputeSplit)
     );
 }
@@ -173,11 +182,23 @@ fn resolution_payouts_split_rejects_non_conserving_sums() {
     let env = make_env();
     let contract = payout_contract(&env, 100, 0, 0);
     assert_eq!(
-        resolution_payouts(&contract, &DisputeResolution::Split(DisputeSplit { client_amount: 40, freelancer_amount: 59 })),
+        resolution_payouts(
+            &contract,
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 40,
+                freelancer_amount: 59
+            })
+        ),
         Err(EscrowError::InvalidDisputeSplit)
     );
     assert_eq!(
-        resolution_payouts(&contract, &DisputeResolution::Split(DisputeSplit { client_amount: 40, freelancer_amount: 61 })),
+        resolution_payouts(
+            &contract,
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 40,
+                freelancer_amount: 61
+            })
+        ),
         Err(EscrowError::InvalidDisputeSplit)
     );
 }
@@ -187,11 +208,23 @@ fn resolution_payouts_split_rejects_non_conserving_sums() {
 fn resolution_payouts_split_accepts_exact_splits() {
     let env = make_env();
     assert_eq!(
-        resolution_payouts(&payout_contract(&env, 100, 0, 0), &DisputeResolution::Split(DisputeSplit { client_amount: 40, freelancer_amount: 60 })),
+        resolution_payouts(
+            &payout_contract(&env, 100, 0, 0),
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 40,
+                freelancer_amount: 60
+            })
+        ),
         Ok((40, 60))
     );
     assert_eq!(
-        resolution_payouts(&payout_contract(&env, 0, 0, 0), &DisputeResolution::Split(DisputeSplit { client_amount: 0, freelancer_amount: 0 })),
+        resolution_payouts(
+            &payout_contract(&env, 0, 0, 0),
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 0,
+                freelancer_amount: 0
+            })
+        ),
         Ok((0, 0))
     );
 }
@@ -202,7 +235,13 @@ fn resolution_payouts_split_rejects_overflowing_sum() {
     let env = make_env();
     let contract = payout_contract(&env, i128::MAX, 0, 0);
     assert_eq!(
-        resolution_payouts(&contract, &DisputeResolution::Split(DisputeSplit { client_amount: i128::MAX, freelancer_amount: 1 })),
+        resolution_payouts(
+            &contract,
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: i128::MAX,
+                freelancer_amount: 1
+            })
+        ),
         Err(EscrowError::PotentialOverflow)
     );
 }
@@ -300,11 +339,9 @@ fn raise_dispute_requires_assigned_arbiter() {
 
 #[test]
 fn raise_dispute_rejects_completed_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = new_client(&env);
-    let (client_addr, _, _, escrow_id) =
-        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
+    let env = make_env();
+    let client = make_client(&env);
+    let (client_addr, _, _, id) = funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
 
     client.release_milestone(&id, &client_addr, &0);
 
@@ -418,7 +455,14 @@ fn resolve_split_accepts_custom_amounts_that_match_available_balance() {
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 40_i128, 60_i128], 100_i128);
 
     assert!(client.raise_dispute(&escrow_id, &client_addr));
-    assert!(client.resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::Split(DisputeSplit { client_amount: 35, freelancer_amount: 65 })));
+    assert!(client.resolve_dispute(
+        &escrow_id,
+        &arbiter_addr,
+        &DisputeResolution::Split(DisputeSplit {
+            client_amount: 35,
+            freelancer_amount: 65
+        })
+    ));
 
     let contract = client.get_contract(&escrow_id);
     assert_eq!(contract.status, ContractStatus::Completed);
@@ -438,7 +482,14 @@ fn resolve_split_rejects_invalid_totals() {
 
     // Split doesn't match available balance
     super::assert_contract_error(
-        client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::Split(DisputeSplit { client_amount: 30, freelancer_amount: 50 })),
+        client.try_resolve_dispute(
+            &escrow_id,
+            &arbiter_addr,
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 30,
+                freelancer_amount: 50,
+            }),
+        ),
         Error::InvalidDisputeSplit,
     );
 }
@@ -457,7 +508,10 @@ fn resolve_split_rejects_negative_amounts() {
         client.try_resolve_dispute(
             &escrow_id,
             &arbiter_addr,
-            &DisputeResolution::Split(DisputeSplit { client_amount: -10, freelancer_amount: 110 }),
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: -10,
+                freelancer_amount: 110,
+            }),
         ),
         Error::InvalidDisputeSplit,
     );
@@ -465,11 +519,9 @@ fn resolve_split_rejects_negative_amounts() {
 
 #[test]
 fn resolve_dispute_requires_assigned_arbiter() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = new_client(&env);
-    let (client_addr, _, _, escrow_id) =
-        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
+    let env = make_env();
+    let client = make_client(&env);
+    let (client_addr, _, _, id) = funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
 
     client.raise_dispute(&id, &client_addr);
 
@@ -481,11 +533,9 @@ fn resolve_dispute_requires_assigned_arbiter() {
 
 #[test]
 fn resolve_dispute_rejects_non_disputed_contract() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = new_client(&env);
-    let (_, _, arbiter_addr, escrow_id) =
-        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
+    let env = make_env();
+    let client = make_client(&env);
+    let (_, _, arbiter_addr, id) = funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
 
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
@@ -537,7 +587,14 @@ fn split_conserves_funded_amount_when_sum_equals_available() {
         funded_with_arbiter(&env, &client, vec![&env, 40_i128, 60_i128], 100);
 
     client.raise_dispute(&id, &client_addr);
-    client.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::Split(DisputeSplit { client_amount: 35, freelancer_amount: 65 }));
+    client.resolve_dispute(
+        &id,
+        &arbiter_addr,
+        &DisputeResolution::Split(DisputeSplit {
+            client_amount: 35,
+            freelancer_amount: 65,
+        }),
+    );
 
     let c = client.get_contract(&id);
     assert_eq!(c.status, ContractStatus::Completed);

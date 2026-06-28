@@ -1,4 +1,4 @@
-use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization};
+use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, Address) {

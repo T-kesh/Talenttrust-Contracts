@@ -1,7 +1,5 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone,
-};
-use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 #[cfg(test)]
 extern crate std;
@@ -145,9 +143,12 @@ fn deposit_emits_status_changed_event() {
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
 
-    let events = env.events().all();
+        assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
 
-    assert!(events
-        .iter()
-        .any(|e| { format!("{:?}", e).contains("status_changed") }));
+        let events = env.events().all();
+
+        assert!(events
+            .iter()
+            .any(|e| { format!("{:?}", e).contains("status_changed") }));
+    }
 }

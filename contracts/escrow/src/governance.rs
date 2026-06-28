@@ -1,16 +1,9 @@
+use crate::ttl::ADMIN_ROTATION_MIN_DELAY_LEDGERS;
 use crate::{
-    DataKey, Error, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters,
-    ReadinessChecklist, ADMIN_ROTATION_MIN_DELAY_LEDGERS,
+    DataKey, Error, Escrow, EscrowArgs, EscrowClient, GovernedParameters, PendingAdminProposal,
+    ReadinessChecklist,
 };
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
-
-/// Pending admin proposal stored under `DataKey::PendingAdmin`.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingAdminProposal {
-    pub proposed: Address,
-    pub proposed_at_ledger: u32,
-}
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 #[soroban_sdk::contractimpl]
 impl Escrow {
@@ -24,23 +17,108 @@ impl Escrow {
     // single huge file.
 
     pub fn set_protocol_fee_bps(env: Env, admin: Address, new_bps: u32) -> bool {
-        if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
             env.panic_with_error(Error::NotInitialized);
         }
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
         if admin != stored_admin {
             env.panic_with_error(Error::UnauthorizedRole);
         }
         admin.require_auth();
 
-        let old_bps: u32 = env.storage().persistent().get(&DataKey::ProtocolFeeBps).unwrap_or(0u32);
-        env.storage().persistent().set(&DataKey::ProtocolFeeBps, &new_bps);
+        let old_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeBps, &new_bps);
 
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
         );
         true
+    }
+
+    pub fn propose_governance_admin(env: Env, admin: Address, proposed: Address) -> bool {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(Error::NotInitialized);
+        }
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+        if admin != stored_admin {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+        admin.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingAdmin, &proposed);
+        env.events().publish(
+            (symbol_short!("admin"), Symbol::new(&env, "proposed")),
+            (admin, proposed.clone(), env.ledger().timestamp()),
+        );
+        true
+    }
+
+    pub fn accept_governance_admin(env: Env, proposed_admin: Address) -> bool {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(Error::NotInitialized);
+        }
+        let pending: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingAdmin)
+            .unwrap_or_else(|| env.panic_with_error(Error::InvalidState));
+        if proposed_admin != pending {
+            env.panic_with_error(Error::UnauthorizedRole);
+        }
+        proposed_admin.require_auth();
+
+        let old_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+        env.storage().persistent().set(&DataKey::Admin, &pending);
+        env.storage().persistent().remove(&DataKey::PendingAdmin);
+
+        env.events().publish(
+            (symbol_short!("admin"), Symbol::new(&env, "accepted")),
+            (old_admin, pending.clone(), env.ledger().timestamp()),
+        );
+        true
+    }
+
+    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::PendingAdmin)
+    }
+
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Admin)
     }
 
     /// Returns the current protocol fee in basis points.

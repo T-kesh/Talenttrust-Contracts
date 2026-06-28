@@ -1,4 +1,7 @@
-use super::{assert_contract_error, complete_contract, create_contract, default_milestones, generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO};
+use super::{
+    assert_contract_error, complete_contract, create_contract, default_milestones,
+    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO,
+};
 use crate::{ContractStatus, DataKey, Error, ReadinessChecklist, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -46,10 +49,7 @@ fn double_initialize_fails() {
     let admin = Address::generate(&env);
 
     client.initialize(&admin);
-    assert_contract_error(
-        client.try_initialize(&admin),
-        Error::AlreadyInitialized,
-    );
+    assert_contract_error(client.try_initialize(&admin), Error::AlreadyInitialized);
 }
 
 // ─── Paused ───────────────────────────────────────────────────────────────────
@@ -256,10 +256,7 @@ fn get_contract_fails_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(
-        client.try_get_contract(&9999),
-        Error::ContractNotFound,
-    );
+    assert_contract_error(client.try_get_contract(&9999), Error::ContractNotFound);
 }
 
 // ─── Milestone released flag (milestone vector) ───────────────────────────────
@@ -279,9 +276,18 @@ fn milestone_released_flag_set_in_vector_on_release() {
     client.release_milestone(&id, &client_addr, &0);
 
     let milestones = client.get_milestones(&id);
-    assert!(milestones.get(0).unwrap().released, "index 0 must be released");
-    assert!(!milestones.get(1).unwrap().released, "index 1 must not be released");
-    assert!(!milestones.get(2).unwrap().released, "index 2 must not be released");
+    assert!(
+        milestones.get(0).unwrap().released,
+        "index 0 must be released"
+    );
+    assert!(
+        !milestones.get(1).unwrap().released,
+        "index 1 must not be released"
+    );
+    assert!(
+        !milestones.get(2).unwrap().released,
+        "index 2 must not be released"
+    );
 }
 
 #[test]
@@ -324,7 +330,12 @@ fn reputation_issued_written_and_reputation_updated() {
     let client = register_client(&env);
 
     let (c, f, id) = complete_contract(&env, &client);
-    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(
+        &id,
+        &c,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
 
     env.as_contract(&client.address, || {
         let issued: bool = env
@@ -348,10 +359,20 @@ fn double_issue_reputation_fails() {
     let client = register_client(&env);
 
     let (c, f, id) = complete_contract(&env, &client);
-    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(
+        &id,
+        &c,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
+        client.try_issue_reputation(
+            &id,
+            &c,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         Error::ReputationAlreadyIssued,
     );
 }
@@ -375,7 +396,12 @@ fn pending_reputation_credits_decremented_on_issue() {
     let (c, f, id) = complete_contract(&env, &client);
     assert_eq!(client.get_pending_reputation_credits(&f), 1);
 
-    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(
+        &id,
+        &c,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     assert_eq!(client.get_pending_reputation_credits(&f), 0);
 }
 
@@ -395,7 +421,12 @@ fn reputation_not_issuable_before_completion() {
     );
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
+        client.try_issue_reputation(
+            &id,
+            &c,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         Error::NotCompleted,
     );
 }
@@ -410,7 +441,12 @@ fn reputation_requires_client_caller() {
     let stranger = Address::generate(&env);
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &stranger, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
+        client.try_issue_reputation(
+            &id,
+            &stranger,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         Error::UnauthorizedRole,
     );
 }

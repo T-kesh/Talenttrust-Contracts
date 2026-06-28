@@ -6,8 +6,8 @@ mod tests {
     use proptest::prelude::*;
     use soroban_sdk::{Address, Env};
 
-    use crate::{Contract, ContractStatus, ReleaseAuthorization, DisputeSplit};
     use crate::dispute::{resolution_payouts, DisputeResolution};
+    use crate::{Contract, ContractStatus, DisputeSplit, ReleaseAuthorization};
 
     // Helper to create a dummy contract with given funded, released, refunded amounts
     fn dummy_contract(available: i128) -> Contract {
