@@ -1,8 +1,5 @@
-use super::{
-    create_contract, default_milestones, generated_participants, register_client,
-    total_milestone_amount,
-};
-use crate::{Error, ReleaseAuthorization};
+use super::{create_contract, default_milestones, generated_participants, register_client, total_milestone_amount};
+use crate::{safe_add_amounts, safe_subtract_amounts, Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
 
 #[test]
@@ -211,6 +208,77 @@ fn issue_reputation_rejects_unauthorized_caller() {
         &soroban_sdk::String::from_str(&env, "Great"),
     );
     super::assert_contract_error(result, Error::UnauthorizedRole);
+}
+
+// ── Safe arithmetic helpers (overflow / underflow) ──────────────────────
+
+#[test]
+fn safe_add_overflow_returns_none() {
+    assert_eq!(safe_add_amounts(i128::MAX, 1), None);
+    assert_eq!(safe_add_amounts(i128::MAX, 1_000), None);
+    assert_eq!(safe_add_amounts(1, i128::MAX), None);
+}
+
+#[test]
+fn safe_add_underflow_returns_none() {
+    assert_eq!(safe_add_amounts(i128::MIN, -1), None);
+    assert_eq!(safe_add_amounts(i128::MIN, -1_000), None);
+    assert_eq!(safe_add_amounts(-1, i128::MIN), None);
+}
+
+#[test]
+fn safe_add_normal_values() {
+    assert_eq!(safe_add_amounts(100, 200), Some(300));
+    assert_eq!(safe_add_amounts(0, 0), Some(0));
+    assert_eq!(safe_add_amounts(-50, 50), Some(0));
+    assert_eq!(safe_add_amounts(i128::MAX, 0), Some(i128::MAX));
+    assert_eq!(safe_add_amounts(i128::MIN, 0), Some(i128::MIN));
+}
+
+#[test]
+fn safe_subtract_underflow_returns_none() {
+    assert_eq!(safe_subtract_amounts(i128::MIN, 1), None);
+    assert_eq!(safe_subtract_amounts(i128::MIN, 10), None);
+}
+
+#[test]
+fn safe_subtract_normal_values() {
+    assert_eq!(safe_subtract_amounts(300, 100), Some(200));
+    assert_eq!(safe_subtract_amounts(100, 100), Some(0));
+    assert_eq!(safe_subtract_amounts(0, 0), Some(0));
+    assert_eq!(safe_subtract_amounts(50, 100), Some(-50));
+    assert_eq!(safe_subtract_amounts(i128::MAX, 0), Some(i128::MAX));
+    assert_eq!(safe_subtract_amounts(i128::MIN, 0), Some(i128::MIN));
+}
+
+#[test]
+fn safe_arithmetic_round_trip() {
+    let vals = [0_i128, 1, 100, 1_000_000, i128::MAX / 2, -1, -100];
+    for &a in &vals {
+        for &b in &vals {
+            if let Some(sum) = safe_add_amounts(a, b) {
+                if let Some(diff) = safe_subtract_amounts(sum, b) {
+                    assert_eq!(diff, a, "round-trip failed: {} + {} - {} != {}", a, b, b, a);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn safe_add_subtract_edge_cases() {
+    // Adding zero never overflows
+    assert_eq!(safe_add_amounts(i128::MAX, 0), Some(i128::MAX));
+    assert_eq!(safe_add_amounts(i128::MIN, 0), Some(i128::MIN));
+    // Subtracting zero never underflows
+    assert_eq!(safe_subtract_amounts(i128::MAX, 0), Some(i128::MAX));
+    assert_eq!(safe_subtract_amounts(i128::MIN, 0), Some(i128::MIN));
+    // MAX overflow boundary
+    assert_eq!(safe_add_amounts(i128::MAX - 1, 1), Some(i128::MAX));
+    assert_eq!(safe_add_amounts(i128::MAX - 1, 2), None);
+    // MIN underflow boundary
+    assert_eq!(safe_subtract_amounts(i128::MIN + 1, 1), Some(i128::MIN));
+    assert_eq!(safe_subtract_amounts(i128::MIN + 1, 2), None);
 }
 
 #[test]
