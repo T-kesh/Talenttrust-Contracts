@@ -1753,6 +1753,8 @@ impl Escrow {
     }
 
     /// Sets the current protocol fee in basis points.
+    ///
+    /// `new_bps` must be less than or equal to `10_000`, which represents 100%.
     pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
         Self::require_initialized(&env);
 
@@ -1762,6 +1764,7 @@ impl Escrow {
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
         admin.require_auth();
+        Self::require_valid_protocol_fee_bps(&env, new_bps);
 
         let old_bps = Self::read_protocol_fee_bps(&env);
         env.storage()
