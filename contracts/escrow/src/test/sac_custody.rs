@@ -335,7 +335,9 @@ fn release_milestone_rejects_when_token_unbound() {
     let client = crate::EscrowClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin);
+    let __escrow_admin = client.get_admin().unwrap();
     client.bind_settlement_token(
+        &__escrow_admin,
         &env.register_stellar_asset_contract(admin.clone()),
     );
 
