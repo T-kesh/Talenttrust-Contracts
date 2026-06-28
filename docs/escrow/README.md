@@ -202,7 +202,8 @@ escrow.release_milestone(&contract_id, &client_addr, &0);
    `ReleaseAuthorization`, milestone state, balance) hold.
 2. The escrow reads the bound settlement token; if no token has been bound it
    panics with `SettlementTokenNotConfigured`.
-3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`); the
+3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`, capped at
+   `10_000` basis points / 100%); the
    payout to the freelancer is `milestone.amount - fee`, with `fee` retained
    inside the contract via `DataKey::AccumulatedProtocolFees`.
 4. `token::Client::transfer(escrow, freelancer, payout)` is invoked BEFORE

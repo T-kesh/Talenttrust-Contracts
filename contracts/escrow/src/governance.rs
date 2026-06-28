@@ -3,6 +3,9 @@ use crate::{
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
+/// Maximum protocol fee expressed in basis points.
+pub(crate) const MAX_PROTOCOL_FEE_BPS: u32 = 10_000;
+
 impl Escrow {
     // ── Two-step admin transfer ───────────────────────────────────────────────
 
@@ -109,9 +112,7 @@ impl Escrow {
         }
         admin.require_auth();
 
-        if protocol_fee_bps > 10_000 {
-            env.panic_with_error(Error::InvalidProtocolParameters);
-        }
+        Self::require_valid_protocol_fee_bps(env, protocol_fee_bps);
 
         let params = GovernedParameters {
             protocol_fee_bps,
@@ -137,5 +138,12 @@ impl Escrow {
     /// Retrieve the current governed parameters.
     pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
         env.storage().persistent().get(&DataKey::GovernedParameters)
+    }
+
+    /// Rejects protocol fees above 100% (10_000 basis points).
+    pub(crate) fn require_valid_protocol_fee_bps(env: &Env, protocol_fee_bps: u32) {
+        if protocol_fee_bps > MAX_PROTOCOL_FEE_BPS {
+            env.panic_with_error(Error::InvalidProtocolParameters);
+        }
     }
 }

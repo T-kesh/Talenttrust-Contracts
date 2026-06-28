@@ -333,7 +333,7 @@ The list intentionally omits planned or reserved entrypoints that are not implem
 - Signature: `set_protocol_fee_bps(env: Env, new_bps: u32) -> bool`
 - Kind: Mutating
 - Auth: stored admin
-- Semantics: Updates the configured protocol fee in basis points.
+- Semantics: Updates the configured protocol fee in basis points, capped at `10_000` (100%).
 - Events: `("protocol_fee_bps",)`
 - Errors: `NotInitialized`, `UnauthorizedRole`, `InvalidProtocolParameters`
 
@@ -396,7 +396,7 @@ The list intentionally omits planned or reserved entrypoints that are not implem
 - Signature: `set_governed_params(env: Env, admin: Address, protocol_fee_bps: u32, max_escrow_total_stroops: i128) -> bool`
 - Kind: Mutating
 - Auth: stored admin
-- Semantics: Stores the protocol fee and maximum escrow total and updates the readiness checklist.
+- Semantics: Stores the protocol fee (capped at `10_000`, or 100%) and maximum escrow total and updates the readiness checklist.
 - Events: None
 - Errors: `NotInitialized`, `UnauthorizedRole`, `InvalidProtocolParameters`
 
