@@ -1,40 +1,16 @@
-use crate::{approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone, ReleaseAuthorization};
+use crate::{
+    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    ReleaseAuthorization,
+};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 impl Escrow {
     /// Core logic for releasing a milestone, transferring funds to the freelancer.
     ///
-    /// The target milestone must be fully funded through per-milestone deposit
-    /// allocation before it can be released.
-    ///
-    /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `caller` - The address of the caller (must be authorized)
-    /// * `milestone_index` - The index of the milestone to release
-    ///
-    /// # Returns
-    /// `true` if release was successful
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Funded state
-    /// * `InvalidMilestone` - If milestone index is out of bounds
-    /// * `AlreadyReleased` - If milestone was already released
-    /// * `AlreadyRefunded` - If milestone was already refunded
-    /// * `InsufficientFunds` - If the milestone or aggregate contract balance is underfunded
-    /// * `InsufficientApprovals` - If required approvals are missing
-    /// * `ApprovalExpired` - If approvals have expired
-    /// * `UnauthorizedRole` - If caller is not authorized to release
-    ///
-    /// # Security
-    /// - Requires valid approvals that haven't expired
-    /// - Approvals are cleared after successful release
-    /// - Fail-closed: missing or expired approvals prevent release
-    pub fn release_milestone(
-        env: Env,
+    /// Called from the single `#[contractimpl]` block in lib.rs after the
+    /// initialization, pause, and auth guards have been checked.
+    pub(crate) fn release_milestone_impl(
+        env: &Env,
         contract_id: u32,
         caller: Address,
         milestone_index: u32,
@@ -88,7 +64,14 @@ impl Escrow {
             }
         }
 
-        let mut milestones: Vec<Milestone> = ttl::load_milestones(&env, contract_id);
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
+
+        ttl::extend_milestone_ttl(&env, contract_id);
 
         if milestone_index >= milestones.len() {
             env.panic_with_error(Error::IndexOutOfBounds);
@@ -104,9 +87,8 @@ impl Escrow {
             env.panic_with_error(Error::AlreadyRefunded);
         }
 
-        if milestone.funded_amount < milestone.amount {
-            env.panic_with_error(Error::InsufficientFunds);
-        }
+        approvals::check_approvals(&env, &contract, contract_id, milestone_index)
+            .unwrap_or_else(|e| env.panic_with_error(e));
 
         let available_balance =
             contract.funded_amount - contract.released_amount - contract.refunded_amount;
@@ -116,7 +98,6 @@ impl Escrow {
 
         let _release_amount = milestone.amount;
         milestone.released = true;
-        milestone.funded_amount = milestone.amount;
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
 
@@ -146,12 +127,15 @@ impl Escrow {
             env.storage().persistent().set(&pending_key, &(pending + 1));
         }
 
-        ttl::store_milestones(env, contract_id, &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
 
-        ttl::extend_contract_ttl(env, contract_id);
+        ttl::extend_contract_and_milestones_ttl(env, contract_id);
 
         env.events().publish(
             (Symbol::new(&env, "milestone_released"), contract_id),

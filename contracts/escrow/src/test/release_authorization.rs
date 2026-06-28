@@ -23,7 +23,7 @@ use soroban_sdk::{
 };
 
 use super::register_client;
-use crate::{ContractStatus, EscrowError, Escrow, EscrowClient, ReleaseAuthorization};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -716,17 +716,10 @@ fn release_emits_events() {
     let events = env.events().all();
     assert!(events.len() > 0);
 
-    // Find the release event
-    let release_event = events.iter().find(|event| {
-        let topics = &event.1;
-        topics.len() > 0 && {
-            if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(0).unwrap()) {
-                sym == soroban_sdk::symbol_short!("mlstn_rls")
-            } else {
-                false
-            }
-        }
-    });
+    let topic_val = Symbol::new(&env, "milestone_released");
+    let release_event = events
+        .iter()
+        .find(|event| event.1.len() > 0 && Symbol::from_val(&env, &event.1.get(0).unwrap()) == topic_val);
     assert!(release_event.is_some());
 }
 
@@ -786,9 +779,9 @@ fn rejects_refund_after_release_and_release_after_refund() {
     let refund_result = client.try_refund_unreleased_milestones(&contract_id, &refund_ids);
     match refund_result {
         Err(Ok(e)) => {
-            assert_eq!(e, soroban_sdk::Error::from(EscrowError::AlreadyReleased));
+            assert_eq!(e, soroban_sdk::Error::from(Error::AlreadyReleased));
         }
-        _ => panic!("expected contract error AlreadyReleased"),
+        other => panic!("expected contract error AlreadyReleased, got {:?}", other),
     }
 
     let refund_ids = vec![&env, 1_u32];

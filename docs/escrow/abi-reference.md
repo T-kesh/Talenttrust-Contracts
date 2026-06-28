@@ -178,9 +178,9 @@ The list intentionally omits planned or reserved entrypoints that are not implem
 ### get_milestone_approvals
 
 - Signature: `get_milestone_approvals(env: Env, contract_id: u32, milestone_index: u32) -> Option<MilestoneApprovals>`
-- Kind: Read-only
+- Kind: Read query (touches temporary storage)
 - Auth: None
-- Semantics: Returns the approval state for a milestone, if it exists and has not expired.
+- Semantics: Returns the approval state for a milestone, if it exists and has not expired. Successful reads renew the live temporary entry with `PENDING_APPROVAL_BUMP_THRESHOLD` / `PENDING_APPROVAL_TTL_LEDGERS`; missing or expired entries return `None` without creating state.
 - Events: None
 - Errors: None
 
@@ -333,7 +333,7 @@ The list intentionally omits planned or reserved entrypoints that are not implem
 - Signature: `set_protocol_fee_bps(env: Env, new_bps: u32) -> bool`
 - Kind: Mutating
 - Auth: stored admin
-- Semantics: Updates the configured protocol fee in basis points.
+- Semantics: Updates the configured protocol fee in basis points, capped at `10_000` (100%).
 - Events: `("protocol_fee_bps",)`
 - Errors: `NotInitialized`, `UnauthorizedRole`, `InvalidProtocolParameters`
 
@@ -396,7 +396,7 @@ The list intentionally omits planned or reserved entrypoints that are not implem
 - Signature: `set_governed_params(env: Env, admin: Address, protocol_fee_bps: u32, max_escrow_total_stroops: i128) -> bool`
 - Kind: Mutating
 - Auth: stored admin
-- Semantics: Stores the protocol fee and maximum escrow total and updates the readiness checklist.
+- Semantics: Stores the protocol fee (capped at `10_000`, or 100%) and maximum escrow total and updates the readiness checklist.
 - Events: None
 - Errors: `NotInitialized`, `UnauthorizedRole`, `InvalidProtocolParameters`
 

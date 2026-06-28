@@ -1,10 +1,8 @@
 # Escrow Integration Guide
 
 This guide documents the entrypoints currently implemented by the escrow
-contract. For a compact ABI-style inventory of the live public surface, see
-[abi-reference.md](abi-reference.md). Planned features are listed separately and
-linked to their tracking issues so integrators can distinguish live API from
-roadmap.
+contract. Planned features are listed separately and linked to their tracking
+issues so integrators can distinguish live API from roadmap.
 
 ## Module Map
 
@@ -38,7 +36,6 @@ Read-only queries:
 - `get_milestones(contract_id) -> Vec<Milestone>`
 - `get_refundable_balance(contract_id) -> i128`
 - `get_milestone_approvals(contract_id, milestone_index) -> Option<MilestoneApprovals>`
-- `get_work_evidence(contract_id, milestone_index) -> Option<String>`
 - `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_average_rating(freelancer) -> Option<i128>` — scaled average (see [Average Rating](#average-rating))
@@ -94,11 +91,6 @@ Per-getter details:
   when the contract id is unknown. Does not extend persistent TTL because
   approvals live in temporary storage bounded by
   `PENDING_APPROVAL_TTL_LEDGERS`.
-- `get_work_evidence(contract_id, milestone_index)` returns `Some(String)`
-  if the milestone exists and work evidence was submitted via
-  `submit_work_evidence`. Returns `None` when the index is out of bounds or
-  no evidence was recorded. Panics `ContractNotFound` for an unknown id.
-  Reads persist the milestones entry's TTL, consistent with `get_milestones`.
 
 These properties are locked in by tests under
 `contracts/escrow/src/test/persistence.rs` (issue #475).
@@ -110,7 +102,6 @@ Operational controls:
 - `unpause() -> bool`
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
-- `withdraw_protocol_fees(amount, to) -> bool`
 
 Governance admin transfer (two-step):
 
@@ -211,17 +202,16 @@ escrow.release_milestone(&contract_id, &client_addr, &0);
    `ReleaseAuthorization`, milestone state, balance) hold.
 2. The escrow reads the bound settlement token; if no token has been bound it
    panics with `SettlementTokenNotConfigured`.
-3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`); the
+3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`, capped at
+   `10_000` basis points / 100%); the
    payout to the freelancer is `milestone.amount - fee`, with `fee` retained
    inside the contract via `DataKey::AccumulatedProtocolFees`.
 4. `token::Client::transfer(escrow, freelancer, payout)` is invoked BEFORE
    the milestone is marked released and the contract status is updated — so
    a token-transfer failure leaves the contract untouched.
 
-Whenever a contract successfully transitions to the `Completed` status—either 
-through the final milestone release, a refund operation that leaves some 
-milestones released, or a dispute resolution—exactly one pending reputation 
-credit is granted to the freelancer.
+When the final milestone is released, status becomes `Completed` and one
+pending reputation credit is added for the freelancer.
 
 `PendingReputationCredits` is a non-negative counter that tracks completed
 contracts awaiting client-issued reputation for a freelancer. `issue_reputation`
@@ -473,7 +463,11 @@ These features are not implemented entrypoints today:
 
 - Two-step admin transfer: planned in
   [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318).
-- Protocol fee treasury withdrawal: Implemented. The `withdraw_protocol_fees` entrypoint allows the admin to withdraw accumulated fees to a specified address.
+- Protocol fee treasury withdrawal: planned in
+  [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
+  Note: fee accumulation is now wired into `release_milestone` (issue #439).
+  A `withdraw_protocol_fees` entrypoint remains unimplemented pending the
+  dedicated fee-treasury issue.
 - Governed parameter setter/readiness wiring: planned in
   [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323).
 - `refund_unreleased_milestones` SAC refund path (the function exists but

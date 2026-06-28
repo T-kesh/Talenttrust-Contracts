@@ -1,6 +1,13 @@
-use super::{create_contract, register_client};
-use crate::{ContractStatus, Error, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, Symbol};
+use super::{
+    assert_contract_error, complete_contract, create_contract, default_milestones,
+    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE,
+    MILESTONE_THREE, MILESTONE_TWO,
+};
+use crate::{ttl, ContractStatus, EscrowError, ReleaseAuthorization};
+use soroban_sdk::{
+    testutils::{storage::Persistent, Address as _, Ledger},
+    vec, Address, Env, Symbol,
+};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
@@ -215,9 +222,9 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
     let res = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
     match res {
         Err(Ok(e)) => {
-            assert_eq!(e, soroban_sdk::Error::from(Error::AlreadyFinalized));
+            assert_eq!(e, soroban_sdk::Error::from(EscrowError::AlreadyFinalized));
         }
-        _ => panic!("expected contract error AlreadyFinalized"),
+        other => panic!("expected contract error AlreadyFinalized, got {:?}", other),
     }
 }
 
@@ -346,7 +353,7 @@ fn get_contract_panics_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_contract(&999), Error::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&999), EscrowError::ContractNotFound);
 }
 
 /// `get_contract` panics with `ContractNotFound` even when probed with id zero
@@ -357,7 +364,7 @@ fn get_contract_panics_for_zero_id_when_no_zero_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_contract(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
 }
 
 // ── get_contract: success ─────────────────────────────────────────────────────
@@ -420,7 +427,6 @@ fn get_contract_observations_are_pure() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let initial = client.get_contract(&contract_id);
@@ -452,10 +458,7 @@ fn get_milestones_panics_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(
-        client.try_get_milestones(&999),
-        Error::ContractNotFound,
-    );
+    assert_contract_error(client.try_get_milestones(&999), Error::ContractNotFound);
 }
 
 /// `get_milestones` panics with `ContractNotFound` for the zero id when no
@@ -466,7 +469,7 @@ fn get_milestones_panics_for_zero_id_when_no_zero_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_milestones(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
 }
 
 // ── get_milestones: success ───────────────────────────────────────────────────
@@ -503,7 +506,6 @@ fn get_milestones_observations_are_pure() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let initial = client.get_milestones(&contract_id);
@@ -581,7 +583,6 @@ fn get_refundable_balance_subtracts_released_amount() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let expected = total_milestone_amount() - MILESTONE_ONE;
@@ -609,7 +610,6 @@ fn get_refundable_balance_observations_are_pure() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let initial = client.get_refundable_balance(&contract_id);
@@ -938,14 +938,8 @@ fn read_getters_fail_for_arbitrary_unknown_id() {
         let was_emergency = client.is_emergency();
 
         // Invalid id 4_242 — no getter may mutate stored state.
-        assert_contract_error(
-            client.try_get_contract(&4_242),
-            Error::ContractNotFound,
-        );
-        assert_contract_error(
-            client.try_get_milestones(&4_242),
-            Error::ContractNotFound,
-        );
+        assert_contract_error(client.try_get_contract(&4_242), Error::ContractNotFound);
+        assert_contract_error(client.try_get_milestones(&4_242), Error::ContractNotFound);
         match client.try_get_refundable_balance(&4_242) {
             Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
             other => panic!("expected ContractNotFound, got {:?}", other),
@@ -1076,8 +1070,8 @@ fn read_getters_succeed_after_creating_contract_at_zero_index() {
     // First contract allocated by `create_contract` is at slot 1 (DataKey::NextContractId
     // starts at 1 — see create_contract.rs). Probe the zero slot to confirm
     // it remains not-found, then exercise slot 1.
-    assert_contract_error(client.try_get_contract(&0), Error::ContractNotFound);
-    assert_contract_error(client.try_get_milestones(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
     assert_contract_error(
         client.try_get_refundable_balance(&0),
         Error::ContractNotFound,
@@ -1133,23 +1127,66 @@ fn read_getters_unchanged_after_pause() {
     assert_eq!(refundable_after, refundable_before);
 
     // Not-found assertions still hold while paused.
-    assert_contract_error(
-        client.try_get_contract(&9999),
-        Error::ContractNotFound,
-    );
-    assert_contract_error(
-        client.try_get_milestones(&9999),
-        Error::ContractNotFound,
-    );
+    assert_contract_error(client.try_get_contract(&9999), Error::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&9999), Error::ContractNotFound);
     match client.try_get_refundable_balance(&9999) {
         Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(Error::ContractNotFound)),
         other => panic!("expected ContractNotFound, got {:?}", other),
     };
 }
 
+/// Finalization succeeds from Completed status; record snapshot matches contract state.
+#[test]
+fn finalize_completed_contract_persists_immutable_close_record() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+    assert_eq!(client.get_contract(&contract_id).status, ContractStatus::Completed);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    
+    assert_eq!(record.finalizer, client_addr);
+    assert_eq!(record.summary.client, client_addr);
+    assert_eq!(record.summary.freelancer, freelancer_addr);
+    assert_eq!(record.summary.status, ContractStatus::Completed);
+}
+
+/// Finalization writes a round-tripped snapshot of milestone summaries and derived totals.
+#[test]
+fn finalize_round_trips_milestone_summaries_and_totals() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    let record = client
+        .get_finalization_record(&contract_id)
+        .expect("finalization record should exist");
+    assert_eq!(record.summary.released_milestone_count, 3);
+    assert_eq!(record.summary.total_amount, super::total_milestone_amount());
+    assert_eq!(record.summary.refundable_balance, 0);
+}
+
+/// Double finalize is rejected with AlreadyFinalized error.
+#[test]
+fn double_finalize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = super::complete_contract(&env, &client);
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_contract(&contract_id, &client_addr)
+    }));
+    assert!(result.is_err());
+}
+
 /// Asserts that `milestone_symbol` resolves to the correct short symbol `symbol_short!("milestone")`.
 #[test]
-fn test_milestone_symbol_integrity() {
+fn finalize_completed_contract_persists_immutable_close_record() {
     let env = Env::default();
     let helper_symbol = crate::milestone_symbol(&env);
     let expected_symbol = symbol_short!("milestone");

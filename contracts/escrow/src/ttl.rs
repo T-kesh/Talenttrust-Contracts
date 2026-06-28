@@ -1,11 +1,38 @@
 //! Deterministic TTL / expiration policy for transient and persistent storage.
 //!
-//! All TTL values are denominated in ledgers (Soroban-native, ~5s per ledger
-//! on Stellar mainnet). Pending approvals and pending migrations are stored
-//! in `env.storage().temporary()`; Soroban auto-evicts entries whose TTL has
-//! elapsed, so `read_if_live` returns `None` for both "never set" and
-//! "expired".
-
+//! This module defines all time‑to‑live (TTL) constants used by the escrow contract and provides
+//! helper utilities for storing, reading and extending entries. The constants are expressed in
+//! **ledger counts** – on Stellar mainnet a ledger is ~5 seconds. For readability we also expose the
+//! equivalent number of days.
+//!
+//! | Constant                              | Ledger count | Days (≈) | Governs
+//! |--------------------------------------|--------------|----------|------------------------------------------------------------
+//! | `LEDGERS_PER_DAY`                    | 17_280       | 1        | conversion factor
+//! | `PENDING_APPROVAL_TTL_LEDGERS`       | 120_960      | 7        | transient approvals stored in `temporary()`
+//! | `PENDING_MIGRATION_TTL_LEDGERS`      | 362_880      | 21       | transient migration requests in `temporary()`
+//! | `PERSISTENT_TTL_LEDGERS`             | 518_400      | 30       | persistent contract data stored in `persistent()`
+//! | `PENDING_APPROVAL_BUMP_THRESHOLD`    | 17_280       | 1        | when a read occurs within this many ledgers of expiry, its TTL is bumped
+//! | `PENDING_MIGRATION_BUMP_THRESHOLD`   | 51_840       | 3        | same, but for migrations
+//! | `PERSISTENT_BUMP_THRESHOLD`          | 120_960      | 7        | bump threshold for persistent entries
+//!
+//! **Bump‑on‑read strategy** – The `extend_if_below_threshold` helper is used by entry‑point
+//! implementations to extend the TTL of a transient entry when it is accessed and the remaining
+//! lifetime falls below the corresponding *bump threshold*. This ensures that active approvals or
+//! migrations survive a series of reads without being evicted, while still allowing them to expire
+//! if they become stale.
+//!
+//! **Eviction risk** – If a contract (or its milestone vector) is never accessed for more than
+//! `PERSISTENT_TTL_LEDGERS` (30 days) the Soroban host will evict the persistent storage entry. The
+//! contract then becomes inaccessible; any subsequent reads will return `None`. This is a deliberate
+//! safety measure – stale contracts are archived automatically.
+//!
+//! **`read_if_live` semantics** – The `read_if_live` helper reads from `temporary()` storage and
+//! returns `None` for two distinct cases:
+//!   1. The key was never set ("absent").
+//!   2. The key was set but its TTL has expired and the entry was evicted.
+//! This "fail‑closed" behaviour is important for approvals and migrations: a missing entry is
+//! interpreted as not approved/not migrated, preventing any stale permission from being honored.
+//!
 use crate::{DataKey, Error, Milestone};
 use soroban_sdk::{Env, IntoVal, Symbol, TryFromVal, Val, Vec};
 

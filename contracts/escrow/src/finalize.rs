@@ -1,6 +1,9 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
-use crate::{safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, Error, Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION};
+use crate::{
+    safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Error, Escrow,
+    Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+};
 
 /// Immutable metadata written when an escrow contract is closed.
 ///
@@ -112,7 +115,9 @@ impl Escrow {
             total_amount,
             funded_amount: contract.funded_amount,
             released_amount: contract.released_amount,
-            refundable_balance: contract.funded_amount - contract.released_amount - contract.refunded_amount,
+            refundable_balance: contract.funded_amount
+                - contract.released_amount
+                - contract.refunded_amount,
             released_milestone_count,
             milestones: milestone_summaries,
         }
@@ -141,7 +146,7 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
     Escrow::require_finalizer_role(&env, &contract, &finalizer);
 
     if contract.status != ContractStatus::Completed && contract.status != ContractStatus::Disputed {
-        env.panic_with_error(Error::InvalidStatusTransition);
+        env.panic_with_error(EscrowError::InvalidStatusTransition);
     }
 
     let record = FinalizationRecord {

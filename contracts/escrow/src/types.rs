@@ -158,6 +158,8 @@ pub enum Error {
     PotentialOverflow = 45,
     /// The contract has already been finalized.
     AlreadyFinalized = 46,
+    /// The contract has already been cancelled.
+    AlreadyCancelled = 50,
     /// The work evidence string exceeds the maximum length limit.
     EvidenceTooLong = 47,
     /// The governance admin rotation timelock has not elapsed.

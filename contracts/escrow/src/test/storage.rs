@@ -1,5 +1,8 @@
-use super::{assert_contract_error, complete_contract, create_contract, default_milestones, generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO};
-use crate::{ContractStatus, DataKey, Error, ReadinessChecklist, ReleaseAuthorization};
+use super::{
+    assert_contract_error, complete_contract, create_contract, default_milestones,
+    generated_participants, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO,
+};
+use crate::{ContractStatus, DataKey, EscrowError, ReadinessChecklist, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─── Initialized / Admin ──────────────────────────────────────────────────────
@@ -48,7 +51,7 @@ fn double_initialize_fails() {
     client.initialize(&admin);
     assert_contract_error(
         client.try_initialize(&admin),
-        Error::AlreadyInitialized,
+        EscrowError::AlreadyInitialized,
     );
 }
 
@@ -101,7 +104,7 @@ fn paused_blocks_create_contract() {
             &default_milestones(&env),
             &ReleaseAuthorization::ClientOnly,
         ),
-        Error::ContractPaused,
+        EscrowError::ContractPaused,
     );
 }
 
@@ -118,7 +121,7 @@ fn paused_blocks_deposit_funds() {
 
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &total_milestone_amount()),
-        Error::ContractPaused,
+        EscrowError::ContractPaused,
     );
 }
 
@@ -136,7 +139,7 @@ fn paused_blocks_release_milestone() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        Error::ContractPaused,
+        EscrowError::ContractPaused,
     );
 }
 
@@ -153,7 +156,7 @@ fn paused_blocks_cancel_contract() {
 
     assert_contract_error(
         client.try_cancel_contract(&id, &client_addr),
-        Error::ContractPaused,
+        EscrowError::ContractPaused,
     );
 }
 
@@ -213,7 +216,7 @@ fn unpause_blocked_while_emergency_active() {
     client.initialize(&admin);
 
     client.activate_emergency_pause();
-    assert_contract_error(client.try_unpause(), Error::EmergencyActive);
+    assert_contract_error(client.try_unpause(), EscrowError::EmergencyActive);
 }
 
 // ─── Contract / NextContractId ────────────────────────────────────────────────
@@ -258,7 +261,7 @@ fn get_contract_fails_for_unknown_id() {
 
     assert_contract_error(
         client.try_get_contract(&9999),
-        Error::ContractNotFound,
+        EscrowError::ContractNotFound,
     );
 }
 
@@ -296,7 +299,7 @@ fn double_release_same_milestone_fails() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        Error::AlreadyReleased,
+        EscrowError::AlreadyReleased,
     );
 }
 
@@ -311,7 +314,7 @@ fn release_out_of_bounds_milestone_fails() {
 
     assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &99),
-        Error::InvalidMilestone,
+        EscrowError::InvalidMilestone,
     );
 }
 
@@ -324,7 +327,7 @@ fn reputation_issued_written_and_reputation_updated() {
     let client = register_client(&env);
 
     let (c, f, id) = complete_contract(&env, &client);
-    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(&id, &c, &f, &5);
 
     env.as_contract(&client.address, || {
         let issued: bool = env
@@ -348,11 +351,11 @@ fn double_issue_reputation_fails() {
     let client = register_client(&env);
 
     let (c, f, id) = complete_contract(&env, &client);
-    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(&id, &c, &f, &4);
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
-        Error::ReputationAlreadyIssued,
+        client.try_issue_reputation(&id, &c, &f, &4),
+        EscrowError::ReputationAlreadyIssued,
     );
 }
 
@@ -375,7 +378,7 @@ fn pending_reputation_credits_decremented_on_issue() {
     let (c, f, id) = complete_contract(&env, &client);
     assert_eq!(client.get_pending_reputation_credits(&f), 1);
 
-    client.issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    client.issue_reputation(&id, &c, &f, &3);
     assert_eq!(client.get_pending_reputation_credits(&f), 0);
 }
 
@@ -395,8 +398,8 @@ fn reputation_not_issuable_before_completion() {
     );
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &c, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
-        Error::NotCompleted,
+        client.try_issue_reputation(&id, &c, &f, &5),
+        EscrowError::NotCompleted,
     );
 }
 
@@ -410,8 +413,8 @@ fn reputation_requires_client_caller() {
     let stranger = Address::generate(&env);
 
     assert_contract_error(
-        client.try_issue_reputation(&id, &stranger, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
-        Error::UnauthorizedRole,
+        client.try_issue_reputation(&id, &stranger, &f, &5),
+        EscrowError::UnauthorizedRole,
     );
 }
 
@@ -491,6 +494,6 @@ fn deposit_exceeding_total_fails() {
     let (client_addr, _, id) = create_contract(&env, &client);
     assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &(total_milestone_amount() + 1)),
-        Error::ExactDepositRequired,
+        EscrowError::ExactDepositRequired,
     );
 }
