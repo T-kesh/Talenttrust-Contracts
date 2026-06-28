@@ -1,6 +1,11 @@
-use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Events, vec, Address, Env, String, Symbol, TryFromVal, Val};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Events, vec, Address, Env, String, Symbol,
+    TryFromVal, Val,
+};
 
-use super::{assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE};
+use super::{
+    assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE,
+};
 use crate::{ContractStatus, Error, ReleaseAuthorization};
 
 fn evidence(env: &Env, s: &str) -> String {
@@ -410,89 +415,120 @@ fn mixed_release_refund_maintains_per_milestone_invariant() {
 fn release_moves_funds_on_chain() {
     let (env, client_addr, freelancer_addr) = setup();
     let client = create_client(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
     client.set_settlement_token(&token_address);
-    
+
     let milestones = soroban_sdk::vec![&env, 100_i128, 200_i128];
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::types::ReleaseAuthorization::ClientOnly);
-    
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &crate::types::ReleaseAuthorization::ClientOnly,
+    );
+
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
     token_client.mint(&client_addr, &300_i128);
-    
+
     // Deposit total contract amount (300)
     assert!(client.deposit_funds(&contract_id, &client_addr, &300_i128));
-    
+
     // Release milestone 0 (100)
     let token_query = soroban_sdk::token::Client::new(&env, &token_address);
     assert_eq!(token_query.balance(&freelancer_addr), 0_i128);
-    assert_eq!(token_query.balance(&env.current_contract_address()), 300_i128);
-    
+    assert_eq!(
+        token_query.balance(&env.current_contract_address()),
+        300_i128
+    );
+
     assert!(client.release_milestone(&contract_id, &0, &client_addr));
-    
+
     // Verify freelancer received funds, contract balance decreased
     assert_eq!(token_query.balance(&freelancer_addr), 100_i128);
-    assert_eq!(token_query.balance(&env.current_contract_address()), 200_i128);
+    assert_eq!(
+        token_query.balance(&env.current_contract_address()),
+        200_i128
+    );
 }
 
 #[test]
 fn refund_moves_funds_on_chain() {
     let (env, client_addr, freelancer_addr) = setup();
     let client = create_client(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
     client.set_settlement_token(&token_address);
-    
+
     let milestones = soroban_sdk::vec![&env, 100_i128, 200_i128];
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::types::ReleaseAuthorization::ClientOnly);
-    
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &crate::types::ReleaseAuthorization::ClientOnly,
+    );
+
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
     token_client.mint(&client_addr, &300_i128);
-    
+
     assert!(client.deposit_funds(&contract_id, &client_addr, &300_i128));
-    
+
     // Refund milestone 1 (200)
     let token_query = soroban_sdk::token::Client::new(&env, &token_address);
     let refund_ids = soroban_sdk::vec![&env, 1_u32];
-    
+
     let refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);
     assert_eq!(refunded, 200_i128);
-    
+
     // Verify client received refund back, contract balance decreased
     assert_eq!(token_query.balance(&client_addr), 200_i128);
-    assert_eq!(token_query.balance(&env.current_contract_address()), 100_i128);
+    assert_eq!(
+        token_query.balance(&env.current_contract_address()),
+        100_i128
+    );
 }
 
 #[test]
 fn dispute_resolution_moves_funds_on_chain() {
     let (env, client_addr, freelancer_addr) = setup();
     let client = create_client(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
     client.set_settlement_token(&token_address);
-    
+
     let arbiter_addr = Address::generate(&env);
     let milestones = soroban_sdk::vec![&env, 300_i128];
-    let contract_id = client.create_contract_with_arbiter(&client_addr, &freelancer_addr, &arbiter_addr, &milestones, &crate::types::DepositMode::ExactTotal);
-    
+    let contract_id = client.create_contract_with_arbiter(
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &milestones,
+        &crate::types::DepositMode::ExactTotal,
+    );
+
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
     token_client.mint(&client_addr, &300_i128);
-    
+
     assert!(client.deposit_funds(&contract_id, &client_addr, &300_i128));
-    
+
     // Dispute and resolve split
     assert!(client.raise_dispute(&contract_id, &client_addr));
-    
+
     let token_query = soroban_sdk::token::Client::new(&env, &token_address);
     let split = crate::types::SplitAmounts {
         client_amount: 100_i128,
         freelancer_amount: 200_i128,
     };
-    assert!(client.resolve_dispute(&contract_id, &arbiter_addr, &crate::types::DisputeResolution::Split(split)));
-    
+    assert!(client.resolve_dispute(
+        &contract_id,
+        &arbiter_addr,
+        &crate::types::DisputeResolution::Split(split)
+    ));
+
     // Verify split payouts
     assert_eq!(token_query.balance(&client_addr), 100_i128);
     assert_eq!(token_query.balance(&freelancer_addr), 200_i128);
@@ -504,22 +540,28 @@ fn dispute_resolution_moves_funds_on_chain() {
 fn release_fails_underfunded() {
     let (env, client_addr, freelancer_addr) = setup();
     let client = create_client(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_address = env.register_stellar_asset_contract(token_admin);
     client.set_settlement_token(&token_address);
-    
+
     let milestones = soroban_sdk::vec![&env, 100_i128, 200_i128];
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::types::ReleaseAuthorization::ClientOnly);
-    
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &crate::types::ReleaseAuthorization::ClientOnly,
+    );
+
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
     token_client.mint(&client_addr, &300_i128);
     client.deposit_funds(&contract_id, &client_addr, &300_i128);
-    
+
     // Set settlement token to unregistered_token (which holds 0 balance)
     let unregistered_token = env.register_stellar_asset_contract(Address::generate(&env));
     client.set_settlement_token(&unregistered_token);
-    
+
     // Now trying to release should panic because the contract balance on unregistered_token is 0!
     client.release_milestone(&contract_id, &0, &client_addr);
 }

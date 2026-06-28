@@ -69,3 +69,4 @@ fn rejects_refund_on_finalized_contract() {
         client.try_refund_unreleased_milestones(&contract_id, &refund_ids),
         Error::AlreadyFinalized,
     );
+}

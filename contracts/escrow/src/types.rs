@@ -166,7 +166,6 @@ pub enum Error {
     InvalidProtocolParameters = 49,
 }
 
-
 /// Contract lifecycle states
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

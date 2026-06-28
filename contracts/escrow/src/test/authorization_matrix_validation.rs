@@ -12,8 +12,8 @@
 
 #![cfg(test)]
 
+use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
-use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization};
 
 use super::assert_contract_error;
 
@@ -37,7 +37,13 @@ fn create_funded_contract(
     auth: &ReleaseAuthorization,
 ) -> u32 {
     let milestones = vec![env, 500_0000000_i128, 300_0000000_i128];
-    let id = client.create_contract(client_addr, freelancer_addr, &arbiter.cloned(), &milestones, auth);
+    let id = client.create_contract(
+        client_addr,
+        freelancer_addr,
+        &arbiter.cloned(),
+        &milestones,
+        auth,
+    );
     client.deposit_funds(&id, client_addr, &800_0000000_i128);
     id
 }
@@ -63,7 +69,10 @@ fn clientonly_matrix_allowed_approvers() {
 
     // Client can approve
     let result = client.try_approve_milestone_release(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Client should be allowed to approve in ClientOnly mode");
+    assert!(
+        result.is_ok(),
+        "Client should be allowed to approve in ClientOnly mode"
+    );
 
     // Freelancer cannot approve
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
@@ -96,7 +105,10 @@ fn clientonly_matrix_required_approvals() {
     // With client approval, release succeeds
     assert!(client.approve_milestone_release(&id, &client_addr, &0));
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Release should succeed with client approval");
+    assert!(
+        result.is_ok(),
+        "Release should succeed with client approval"
+    );
 }
 
 #[test]
@@ -118,7 +130,10 @@ fn clientonly_matrix_allowed_release_callers() {
 
     // Client can release
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Client should be allowed to release in ClientOnly mode");
+    assert!(
+        result.is_ok(),
+        "Client should be allowed to release in ClientOnly mode"
+    );
 
     // Freelancer cannot release
     let result = client.try_release_milestone(&id, &freelancer_addr, &0);
@@ -150,7 +165,10 @@ fn arbiteronly_matrix_allowed_approvers() {
 
     // Arbiter can approve
     let result = client.try_approve_milestone_release(&id, &arbiter_addr, &0);
-    assert!(result.is_ok(), "Arbiter should be allowed to approve in ArbiterOnly mode");
+    assert!(
+        result.is_ok(),
+        "Arbiter should be allowed to approve in ArbiterOnly mode"
+    );
 
     // Client cannot approve
     let result = client.try_approve_milestone_release(&id, &client_addr, &0);
@@ -183,7 +201,10 @@ fn arbiteronly_matrix_required_approvals() {
     // With arbiter approval, release succeeds
     assert!(client.approve_milestone_release(&id, &arbiter_addr, &0));
     let result = client.try_release_milestone(&id, &arbiter_addr, &0);
-    assert!(result.is_ok(), "Release should succeed with arbiter approval");
+    assert!(
+        result.is_ok(),
+        "Release should succeed with arbiter approval"
+    );
 }
 
 #[test]
@@ -205,7 +226,10 @@ fn arbiteronly_matrix_allowed_release_callers() {
 
     // Arbiter can release
     let result = client.try_release_milestone(&id, &arbiter_addr, &0);
-    assert!(result.is_ok(), "Arbiter should be allowed to release in ArbiterOnly mode");
+    assert!(
+        result.is_ok(),
+        "Arbiter should be allowed to release in ArbiterOnly mode"
+    );
 
     // Client cannot release
     let result = client.try_release_milestone(&id, &client_addr, &0);
@@ -237,11 +261,17 @@ fn clientandarbiter_matrix_allowed_approvers() {
 
     // Client can approve
     let result = client.try_approve_milestone_release(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Client should be allowed to approve in ClientAndArbiter mode");
+    assert!(
+        result.is_ok(),
+        "Client should be allowed to approve in ClientAndArbiter mode"
+    );
 
     // Arbiter can approve
     let result = client.try_approve_milestone_release(&id, &arbiter_addr, &0);
-    assert!(result.is_ok(), "Arbiter should be allowed to approve in ClientAndArbiter mode");
+    assert!(
+        result.is_ok(),
+        "Arbiter should be allowed to approve in ClientAndArbiter mode"
+    );
 
     // Freelancer cannot approve
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
@@ -265,7 +295,10 @@ fn clientandarbiter_matrix_required_approvals_or_logic() {
     );
     assert!(client.approve_milestone_release(&id1, &client_addr, &0));
     let result = client.try_release_milestone(&id1, &client_addr, &0);
-    assert!(result.is_ok(), "Release should succeed with only client approval (OR logic)");
+    assert!(
+        result.is_ok(),
+        "Release should succeed with only client approval (OR logic)"
+    );
 
     // Test with arbiter approval only
     let id2 = create_funded_contract(
@@ -278,7 +311,10 @@ fn clientandarbiter_matrix_required_approvals_or_logic() {
     );
     assert!(client.approve_milestone_release(&id2, &arbiter_addr, &0));
     let result = client.try_release_milestone(&id2, &arbiter_addr, &0);
-    assert!(result.is_ok(), "Release should succeed with only arbiter approval (OR logic)");
+    assert!(
+        result.is_ok(),
+        "Release should succeed with only arbiter approval (OR logic)"
+    );
 }
 
 #[test]
@@ -300,7 +336,10 @@ fn clientandarbiter_matrix_allowed_release_callers() {
 
     // Client can release
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Client should be allowed to release in ClientAndArbiter mode");
+    assert!(
+        result.is_ok(),
+        "Client should be allowed to release in ClientAndArbiter mode"
+    );
 
     // Arbiter can release
     let id2 = create_funded_contract(
@@ -313,7 +352,10 @@ fn clientandarbiter_matrix_allowed_release_callers() {
     );
     assert!(client.approve_milestone_release(&id2, &arbiter_addr, &0));
     let result = client.try_release_milestone(&id2, &arbiter_addr, &0);
-    assert!(result.is_ok(), "Arbiter should be allowed to release in ClientAndArbiter mode");
+    assert!(
+        result.is_ok(),
+        "Arbiter should be allowed to release in ClientAndArbiter mode"
+    );
 
     // Freelancer cannot release
     let result = client.try_release_milestone(&id, &freelancer_addr, &0);
@@ -341,11 +383,17 @@ fn multisig_matrix_allowed_approvers() {
 
     // Client can approve
     let result = client.try_approve_milestone_release(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Client should be allowed to approve in MultiSig mode");
+    assert!(
+        result.is_ok(),
+        "Client should be allowed to approve in MultiSig mode"
+    );
 
     // Freelancer can approve
     let result = client.try_approve_milestone_release(&id, &freelancer_addr, &0);
-    assert!(result.is_ok(), "Freelancer should be allowed to approve in MultiSig mode");
+    assert!(
+        result.is_ok(),
+        "Freelancer should be allowed to approve in MultiSig mode"
+    );
 
     // Arbiter cannot approve
     let result = client.try_approve_milestone_release(&id, &arbiter_addr, &0);
@@ -375,7 +423,10 @@ fn multisig_matrix_required_approvals_and_logic() {
     // With both approvals, release succeeds
     assert!(client.approve_milestone_release(&id, &freelancer_addr, &0));
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Release should succeed with both client and freelancer approval (AND logic)");
+    assert!(
+        result.is_ok(),
+        "Release should succeed with both client and freelancer approval (AND logic)"
+    );
 }
 
 #[test]
@@ -398,7 +449,10 @@ fn multisig_matrix_allowed_release_callers() {
 
     // Client can release
     let result = client.try_release_milestone(&id, &client_addr, &0);
-    assert!(result.is_ok(), "Client should be allowed to release in MultiSig mode");
+    assert!(
+        result.is_ok(),
+        "Client should be allowed to release in MultiSig mode"
+    );
 
     // Freelancer can release
     let id2 = create_funded_contract(
@@ -412,7 +466,10 @@ fn multisig_matrix_allowed_release_callers() {
     assert!(client.approve_milestone_release(&id2, &client_addr, &0));
     assert!(client.approve_milestone_release(&id2, &freelancer_addr, &0));
     let result = client.try_release_milestone(&id2, &freelancer_addr, &0);
-    assert!(result.is_ok(), "Freelancer should be allowed to release in MultiSig mode");
+    assert!(
+        result.is_ok(),
+        "Freelancer should be allowed to release in MultiSig mode"
+    );
 
     // Arbiter cannot release
     let result = client.try_release_milestone(&id, &arbiter_addr, &0);
@@ -500,6 +557,8 @@ fn matrix_error_codes_missing_arbiter() {
         &milestones,
         &ReleaseAuthorization::ArbiterOnly,
     );
-    assert!(result.is_err(), "ArbiterOnly mode should require arbiter at contract creation");
+    assert!(
+        result.is_err(),
+        "ArbiterOnly mode should require arbiter at contract creation"
+    );
 }
-

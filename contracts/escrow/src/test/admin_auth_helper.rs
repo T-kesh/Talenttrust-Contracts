@@ -7,7 +7,7 @@
 //! 2. Calling any entrypoint before `initialize` panics with `NotInitialized`.
 //! 3. A non-admin caller cannot authenticate (Soroban auth failure = panic).
 
-use crate::{Escrow, EscrowClient, Error};
+use crate::{Error, Escrow, EscrowClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -50,10 +50,7 @@ fn unpause_before_initialize_panics_not_initialized() {
 fn activate_emergency_pause_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(
-        client.try_activate_emergency_pause(),
-        Error::NotInitialized,
-    );
+    super::assert_contract_error(client.try_activate_emergency_pause(), Error::NotInitialized);
 }
 
 #[test]
@@ -132,16 +129,10 @@ fn pending_admin_proposal_round_trip() {
     assert!(client.propose_governance_admin(&proposed_admin));
 
     // Verify proposed address
-    assert_eq!(
-        client.get_pending_governance_admin(),
-        Some(proposed_admin)
-    );
+    assert_eq!(client.get_pending_governance_admin(), Some(proposed_admin));
 
     // Verify anchor ledger
-    assert_eq!(
-        client.get_pending_admin_proposed_at(),
-        Some(anchor_ledger)
-    );
+    assert_eq!(client.get_pending_admin_proposed_at(), Some(anchor_ledger));
 }
 
 #[test]
@@ -216,9 +207,13 @@ fn accept_governance_admin_before_delay_panics_timelock_not_elapsed() {
     let proposed_at = env.ledger().sequence();
 
     // Advance to just before the delay
-    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS - 1);
+    env.ledger()
+        .set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS - 1);
 
-    super::assert_contract_error(client.try_accept_governance_admin(), EscrowError::TimelockNotElapsed);
+    super::assert_contract_error(
+        client.try_accept_governance_admin(),
+        EscrowError::TimelockNotElapsed,
+    );
 }
 
 #[test]
@@ -231,7 +226,8 @@ fn accept_governance_admin_at_delay_succeeds() {
     let proposed_at = env.ledger().sequence();
 
     // Advance to exactly the delay
-    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
+    env.ledger()
+        .set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
 
     assert!(client.accept_governance_admin());
     assert_eq!(client.get_governance_admin(), Some(new_admin));
@@ -248,7 +244,8 @@ fn accept_governance_admin_after_delay_succeeds() {
     let proposed_at = env.ledger().sequence();
 
     // Advance way past the delay
-    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS + 1000);
+    env.ledger()
+        .set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS + 1000);
 
     assert!(client.accept_governance_admin());
     assert_eq!(client.get_governance_admin(), Some(new_admin));
@@ -260,7 +257,10 @@ fn accept_governance_admin_no_proposal_panics_invalid_state() {
     let env = Env::default();
     let (client, _admin) = setup(&env);
 
-    super::assert_contract_error(client.try_accept_governance_admin(), crate::Error::InvalidState);
+    super::assert_contract_error(
+        client.try_accept_governance_admin(),
+        crate::Error::InvalidState,
+    );
 }
 
 #[test]
@@ -271,20 +271,23 @@ fn accept_governance_admin_event_payload_is_correct() {
 
     client.propose_governance_admin(&new_admin);
     let proposed_at = env.ledger().sequence();
-    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
+    env.ledger()
+        .set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
 
     let timestamp = env.ledger().timestamp();
     assert!(client.accept_governance_admin());
 
     // Check events
     let events = env.events().all();
-    let accepted_event = events.iter().find(|(topic, _payload, _)| {
-        topic == &(&symbol_short!("admin"), &Symbol::new(&env, "accepted"))
-    }).expect("Accepted event not found");
+    let accepted_event = events
+        .iter()
+        .find(|(topic, _payload, _)| {
+            topic == &(&symbol_short!("admin"), &Symbol::new(&env, "accepted"))
+        })
+        .expect("Accepted event not found");
 
     let payload = accepted_event.1;
     assert_eq!(payload[0], old_admin.into());
     assert_eq!(payload[1], new_admin.into());
     assert_eq!(payload[2], timestamp.into());
 }
-

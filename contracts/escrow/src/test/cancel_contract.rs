@@ -691,7 +691,6 @@ fn only_client_or_freelancer_can_cancel() {
     client.cancel_contract(&contract_id, &arbiter_addr);
 }
 
-
 #[test]
 fn cancel_emits_status_changed_event() {
     let env = Env::default();
@@ -700,14 +699,13 @@ fn cancel_emits_status_changed_event() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, _) = generate_participants(&env);
 
-    let contract_id =
-        create_default_contract(&env, &client, &client_addr, &freelancer_addr, &None);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr, &None);
 
     assert!(client.cancel_contract(&contract_id, &client_addr));
 
     let events = env.events().all();
 
-    assert!(events.iter().any(|e| {
-        format!("{:?}", e).contains("status_changed")
-    }));
+    assert!(events
+        .iter()
+        .any(|e| { format!("{:?}", e).contains("status_changed") }));
 }

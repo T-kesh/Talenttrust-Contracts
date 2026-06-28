@@ -10,9 +10,12 @@ use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
 use crate::{
     types::{ContractStatus, DataKey},
-    Contract, Escrow, EscrowClient, Error,
+    Contract, Error, Escrow, EscrowClient,
 };
-use soroban_sdk::{testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, IntoVal, Symbol, TryFromVal, Val};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo,
+    Address, Env, IntoVal, Symbol, TryFromVal, Val,
+};
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
 

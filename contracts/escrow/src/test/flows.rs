@@ -1,5 +1,7 @@
-use super::{complete_contract, create_contract, default_milestones, register_client, total_milestone_amount};
-use crate::{Error, ReleaseAuthorization, types::DataKey};
+use super::{
+    complete_contract, create_contract, default_milestones, register_client, total_milestone_amount,
+};
+use crate::{types::DataKey, Error, ReleaseAuthorization};
 use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env};
 
 #[test]
@@ -24,8 +26,18 @@ fn multiple_contracts_for_same_freelancer() {
     assert!(client.release_milestone(&second_id, &client_addr, &0));
     assert!(client.release_milestone(&second_id, &client_addr, &1));
     assert!(client.release_milestone(&second_id, &client_addr, &2));
-    assert!(client.issue_reputation(&first_id, &first_client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
-    assert!(client.issue_reputation(&second_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
+    assert!(client.issue_reputation(
+        &first_id,
+        &first_client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great")
+    ));
+    assert!(client.issue_reputation(
+        &second_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great")
+    ));
 
     let record = client.get_reputation(&freelancer_addr).unwrap();
     assert_eq!(record.completed_contracts, 2);
@@ -40,7 +52,12 @@ fn scenario_reputation_invalid_rating_zero_fails() {
 
     let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::InvalidRating);
 }
 
@@ -52,7 +69,12 @@ fn scenario_reputation_invalid_rating_six_fails() {
 
     let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::InvalidRating);
 }
 
@@ -66,7 +88,9 @@ fn deposit_funds_emits_structured_deposit_event() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
 
     let events = env.events().all();
-    assert!(events.iter().any(|event| event.0 == symbol_short!("deposit")));
+    assert!(events
+        .iter()
+        .any(|event| event.0 == symbol_short!("deposit")));
 }
 
 #[test]
@@ -84,5 +108,7 @@ fn release_milestone_emits_protocol_fee_event_when_fees_active() {
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let events = env.events().all();
-    assert!(events.iter().any(|event| event.0 == symbol_short!("protocol_fee")));
+    assert!(events
+        .iter()
+        .any(|event| event.0 == symbol_short!("protocol_fee")));
 }

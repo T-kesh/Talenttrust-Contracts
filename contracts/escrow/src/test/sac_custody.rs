@@ -21,12 +21,14 @@
 
 use soroban_sdk::{
     testutils::{Address as _, RegisteredStellarAsset},
-    vec,
     token::{Client as TokenClient, StellarAssetClient},
-    Address, Env, Symbol, Vec as SorobanVec,
+    vec, Address, Env, Symbol, Vec as SorobanVec,
 };
 
-use super::{assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE};
+use super::{
+    assert_contract_error, create_contract, register_client, total_milestone_amount, MILESTONE_ONE,
+    MILESTONE_THREE, MILESTONE_TWO,
+};
 use crate::{ContractStatus, Error, ReleaseAuthorization};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -34,13 +36,10 @@ use crate::{ContractStatus, Error, ReleaseAuthorization};
 /// Register the escrow contract and an SAC, mint `mint_amount` to the client,
 /// initialize escrow, bind settlement token. Returns
 /// `(escrow_client, sac_address, admin, client_addr, freelancer_addr)`.
-fn setup_with_sac(env: &Env, mint_amount: i128) -> (
-    crate::EscrowClient<'_>,
-    Address,
-    Address,
-    Address,
-    Address,
-) {
+fn setup_with_sac(
+    env: &Env,
+    mint_amount: i128,
+) -> (crate::EscrowClient<'_>, Address, Address, Address, Address) {
     let contract_id = env.register(crate::Escrow, ());
     let client = crate::EscrowClient::new(env, &contract_id);
     let admin = Address::generate(env);
@@ -81,10 +80,7 @@ fn funded_sac_contract(
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let arbiter: Option<Address> = None;
-    let milestones = SorobanVec::from_slice(
-        env,
-        &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE],
-    );
+    let milestones = SorobanVec::from_slice(env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
     env.mock_all_auths();
     let id = escrow_client.create_contract(
         &client_addr,
@@ -169,8 +165,7 @@ fn deposit_funds_with_sac_pulls_amount_into_contract() {
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let milestones =
-        SorobanVec::from_slice(&env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
+    let milestones = SorobanVec::from_slice(&env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
@@ -235,7 +230,8 @@ fn deposit_funds_rejects_when_token_unbound() {
 fn deposit_funds_rejects_overfunding_even_with_sac_balance() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, sac, _admin, client_addr, _freelancer_addr, id) = setup_and_funded_partial(&env, 0);
+    let (client, sac, _admin, client_addr, _freelancer_addr, id) =
+        setup_and_funded_partial(&env, 0);
 
     let token = TokenClient::new(&env, &sac);
     let overpay = total_milestone_amount() + 1;
@@ -301,10 +297,7 @@ fn release_milestone_with_sac_pushes_payout_minus_fee_to_freelancer() {
     assert!(client.release_milestone(&id, &client_addr, &0));
 
     assert_eq!(token.balance(&freelancer_addr), payout);
-    assert_eq!(
-        token.balance(&client.address) as i128 - (total - payout),
-        0
-    );
+    assert_eq!(token.balance(&client.address) as i128 - (total - payout), 0);
     let contract = client.get_contract(&id);
     assert_eq!(contract.released_amount, milestone_amount);
 }
@@ -334,9 +327,7 @@ fn release_milestone_rejects_when_token_unbound() {
     let client = crate::EscrowClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin);
-    client.bind_settlement_token(
-        &env.register_stellar_asset_contract(admin.clone()),
-    );
+    client.bind_settlement_token(&env.register_stellar_asset_contract(admin.clone()));
 
     // Use shared mod helpers to create + Fund a contract.
     let sac_unused = env.register_stellar_asset_contract(admin.clone());
@@ -344,8 +335,7 @@ fn release_milestone_rejects_when_token_unbound() {
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let milestones =
-        SorobanVec::from_slice(&env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
+    let milestones = SorobanVec::from_slice(&env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
@@ -354,10 +344,16 @@ fn release_milestone_rejects_when_token_unbound() {
         &ReleaseAuthorization::ClientOnly,
     );
     let total = total_milestone_amount();
-    let token = TokenClient::new(&env, &env.storage().instance().get::<_, Address>(&super::DataKey::SettlementToken).unwrap());
+    let token = TokenClient::new(
+        &env,
+        &env.storage()
+            .instance()
+            .get::<_, Address>(&super::DataKey::SettlementToken)
+            .unwrap(),
+    );
     let _ = token; // not used here
-    // Manually Fund via mocking balance — we just want to test the
-    // release-unbound-token path. Force-fund by bypassing deposit:
+                   // Manually Fund via mocking balance — we just want to test the
+                   // release-unbound-token path. Force-fund by bypassing deposit:
     env.as_contract(&client.address, || {
         env.storage().persistent().set(
             &super::DataKey::Contract(id),
@@ -416,10 +412,7 @@ fn sac_full_lifecycle_deposit_release_balance_deltas() {
 
     // Freelancer got milestone 0's amount; escrow retained the rest.
     assert_eq!(token.balance(&freelancer_addr), MILESTONE_ONE);
-    assert_eq!(
-        token.balance(&client.address),
-        total - MILESTONE_ONE
-    );
+    assert_eq!(token.balance(&client.address), total - MILESTONE_ONE);
 
     // Audit: contract's released_amount tracks the milestone.
     let contract = client.get_contract(&id);
@@ -431,7 +424,14 @@ fn sac_full_lifecycle_deposit_release_balance_deltas() {
 fn setup_and_funded_partial(
     env: &Env,
     _initial_balance: i128,
-) -> (crate::EscrowClient<'_>, Address, Address, Address, Address, u32) {
+) -> (
+    crate::EscrowClient<'_>,
+    Address,
+    Address,
+    Address,
+    Address,
+    u32,
+) {
     let contract_id = env.register(crate::Escrow, ());
     let client = crate::EscrowClient::new(env, &contract_id);
     let admin = Address::generate(env);
@@ -442,8 +442,7 @@ fn setup_and_funded_partial(
 
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
-    let milestones =
-        SorobanVec::from_slice(env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
+    let milestones = SorobanVec::from_slice(env, &[MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]);
     let id = client.create_contract(
         &client_addr,
         &freelancer_addr,

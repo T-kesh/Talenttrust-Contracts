@@ -4,7 +4,11 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{safe_add_amounts, safe_subtract_amounts, validate_deposit_amount, validate_milestone_amounts, validate_single_amount, Escrow, EscrowClient, Error, ReleaseAuthorization, MAX_TOTAL_ESCROW_STROOPS};
+use crate::{
+    safe_add_amounts, safe_subtract_amounts, validate_deposit_amount, validate_milestone_amounts,
+    validate_single_amount, Error, Escrow, EscrowClient, ReleaseAuthorization,
+    MAX_TOTAL_ESCROW_STROOPS,
+};
 
 fn setup() -> (Env, EscrowClient, Address, Address) {
     let env = Env::default();
@@ -157,14 +161,8 @@ fn test_single_amount_validation() {
     assert!(validate_single_amount(1_000_000_0000000).is_ok()); // Max single amount
 
     // Invalid amounts
-    assert_eq!(
-        validate_single_amount(0),
-        Err(Error::AmountMustBePositive)
-    );
-    assert_eq!(
-        validate_single_amount(-1),
-        Err(Error::AmountMustBePositive)
-    );
+    assert_eq!(validate_single_amount(0), Err(Error::AmountMustBePositive));
+    assert_eq!(validate_single_amount(-1), Err(Error::AmountMustBePositive));
     assert_eq!(
         validate_single_amount(-100_0000000),
         Err(Error::AmountMustBePositive)

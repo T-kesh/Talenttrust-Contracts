@@ -44,19 +44,16 @@ pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
-    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, DisputeResolution, DisputeSplit, Error,
-    GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary, PendingAdminProposal, ReadinessChecklist,
-    ReleaseAuthorization, Reputation, SplitAmounts, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    Contract, ContractStatus, ContractSummary, DataKey, DepositMode, DisputeResolution,
+    DisputeSplit, Error, GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary,
+    PendingAdminProposal, ReadinessChecklist, ReleaseAuthorization, Reputation, SplitAmounts,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 pub type EscrowError = Error;
 
 #[contract]
 pub struct Escrow;
-
-
-
-
 
 /// Returns `Some(a + b)`, or `None` on overflow.
 pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
@@ -71,7 +68,6 @@ impl Escrow {
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
     }
-
 }
 
 impl Escrow {
@@ -82,13 +78,14 @@ impl Escrow {
 
     /// Set the settlement token address for the escrow contract.
     pub(crate) fn write_settlement_token(env: &Env, token: &Address) {
-        env.storage().instance().set(&DataKey::SettlementToken, token);
+        env.storage()
+            .instance()
+            .set(&DataKey::SettlementToken, token);
     }
 }
 
 #[contractimpl]
 impl Escrow {
-
     /// Set the settlement token for the escrow contract.
     ///
     /// # Arguments
@@ -108,12 +105,12 @@ impl Escrow {
             .persistent()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        
+
         if admin != stored_admin {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
         admin.require_auth();
-        
+
         Self::write_settlement_token(&env, &token);
         true
     }
@@ -249,12 +246,11 @@ impl Escrow {
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         // Transfer tokens from caller to contract
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&caller, &env.current_contract_address(), &amount);
-        
+
         deposit::deposit_funds_impl(&env, contract_id, caller, amount)
     }
 
@@ -521,9 +517,8 @@ impl Escrow {
         let release_amount = milestone.amount;
 
         // Transfer tokens from contract to freelancer
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -794,9 +789,8 @@ impl Escrow {
         }
 
         // Transfer tokens from contract to client
-        let token = Self::read_settlement_token(&env)
-            .expect("Settlement token not set");
-        
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -1068,7 +1062,13 @@ impl Escrow {
                 Symbol::new(&env, "emergency"),
                 Symbol::new(&env, "activated"),
             ),
-            (env.storage().persistent().get::<_, Address>(&DataKey::Admin).unwrap(), env.ledger().timestamp()),
+            (
+                env.storage()
+                    .persistent()
+                    .get::<_, Address>(&DataKey::Admin)
+                    .unwrap(),
+                env.ledger().timestamp(),
+            ),
         );
         true
     }
@@ -1117,8 +1117,6 @@ impl Escrow {
         );
         true
     }
-
-
 
     pub fn is_emergency(env: Env) -> bool {
         env.storage()
@@ -1514,7 +1512,6 @@ impl Escrow {
         if amount <= 0 {
             env.panic_with_error(EscrowError::AmountMustBePositive);
         }
-
 
         let accumulated: i128 = env
             .storage()

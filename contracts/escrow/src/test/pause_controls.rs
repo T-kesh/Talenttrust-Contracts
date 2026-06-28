@@ -14,7 +14,7 @@
 //!
 //! Run locally with `cargo test -p escrow --lib pause_controls`.
 
-use crate::{Escrow, EscrowClient, Error, ReleaseAuthorization};
+use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -104,10 +104,7 @@ fn set_emergency_only(env: &Env, client: &EscrowClient<'_>) {
 fn initialize_only_once_fails() {
     let (env, admin) = setup_initialized();
     let client = make_client(&env, &admin);
-    super::assert_contract_error(
-        client.try_initialize(&admin),
-        Error::AlreadyInitialized,
-    );
+    super::assert_contract_error(client.try_initialize(&admin), Error::AlreadyInitialized);
 }
 
 // ─── pause / unpause state ──────────────────────────────────────────────────
@@ -451,7 +448,7 @@ fn unpause_restores_issue_reputation() {
     let (client_addr, _freelancer_addr, contract_id) = setup_completed_contract(&env, &client);
     client.pause();
     client.unpause();
-    
+
     let comment = soroban_sdk::String::from_str(&env, "Good job");
     assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &comment));
 }
@@ -462,7 +459,7 @@ fn resolve_emergency_restores_issue_reputation() {
     let (client_addr, _freelancer_addr, contract_id) = setup_completed_contract(&env, &client);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
-    
+
     let comment = soroban_sdk::String::from_str(&env, "Good job");
     assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &comment));
 }

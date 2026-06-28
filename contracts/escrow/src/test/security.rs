@@ -1,4 +1,7 @@
-use super::{create_contract, default_milestones, generated_participants, register_client, total_milestone_amount};
+use super::{
+    create_contract, default_milestones, generated_participants, register_client,
+    total_milestone_amount,
+};
 use crate::{Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
 
@@ -9,8 +12,13 @@ fn create_rejects_same_participants() {
     let client = register_client(&env);
     let (addr, _) = generated_participants(&env);
 
-    let result =
-        client.try_create_contract(&addr, &addr, &None, &default_milestones(&env), &ReleaseAuthorization::ClientOnly);
+    let result = client.try_create_contract(
+        &addr,
+        &addr,
+        &None,
+        &default_milestones(&env),
+        &ReleaseAuthorization::ClientOnly,
+    );
     super::assert_contract_error(result, Error::InvalidParticipant);
 }
 
@@ -22,8 +30,13 @@ fn create_rejects_empty_milestone_list() {
     let (client_addr, freelancer_addr) = generated_participants(&env);
     let empty = Vec::<i128>::new(&env);
 
-    let result =
-        client.try_create_contract(&client_addr, &freelancer_addr, &None, &empty, &ReleaseAuthorization::ClientOnly);
+    let result = client.try_create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &empty,
+        &ReleaseAuthorization::ClientOnly,
+    );
     super::assert_contract_error(result, Error::EmptyMilestones);
 }
 
@@ -117,7 +130,12 @@ fn issue_reputation_rejects_unfinished_contract() {
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::NotCompleted);
 }
 
@@ -129,7 +147,12 @@ fn issue_reputation_rejects_invalid_rating() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::InvalidRating);
 }
 
@@ -140,8 +163,18 @@ fn issue_reputation_once_per_contract() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
-    assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    assert!(client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great")
+    ));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::ReputationAlreadyIssued);
 }
 
@@ -153,7 +186,12 @@ fn issue_reputation_rejects_freelancer_mismatch() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::FreelancerMismatch);
 }
 
@@ -166,7 +204,12 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let unauthorized = soroban_sdk::Address::generate(&env);
     let comment = soroban_sdk::String::from_str(&env, "Good job");
 
-    let result = client.try_issue_reputation(&contract_id, &unauthorized, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(
+        &contract_id,
+        &unauthorized,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great"),
+    );
     super::assert_contract_error(result, Error::UnauthorizedRole);
 }
 
@@ -199,4 +242,3 @@ fn test_error_code_stability() {
     assert_eq!(Error::TimelockNotElapsed as u32, 48);
     assert_eq!(Error::InvalidProtocolParameters as u32, 49);
 }
-
