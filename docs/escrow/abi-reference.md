@@ -178,9 +178,9 @@ The list intentionally omits planned or reserved entrypoints that are not implem
 ### get_milestone_approvals
 
 - Signature: `get_milestone_approvals(env: Env, contract_id: u32, milestone_index: u32) -> Option<MilestoneApprovals>`
-- Kind: Read-only
+- Kind: Read query (touches temporary storage)
 - Auth: None
-- Semantics: Returns the approval state for a milestone, if it exists and has not expired.
+- Semantics: Returns the approval state for a milestone, if it exists and has not expired. Successful reads renew the live temporary entry with `PENDING_APPROVAL_BUMP_THRESHOLD` / `PENDING_APPROVAL_TTL_LEDGERS`; missing or expired entries return `None` without creating state.
 - Events: None
 - Errors: None
 

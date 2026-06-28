@@ -95,7 +95,7 @@ pub struct MilestoneApprovals {
 **TTL Configuration**:
 - Initial TTL: `PENDING_APPROVAL_TTL_LEDGERS` = 120,960 ledgers (~7 days at ~5s per ledger)
 - Bump threshold: `PENDING_APPROVAL_BUMP_THRESHOLD` = 17,280 ledgers (~1 day)
-- TTL is extended to the full `PENDING_APPROVAL_TTL_LEDGERS` whenever the entry is accessed above the bump threshold
+- TTL is renewed on write and on successful `get_milestone_approvals` reads; Soroban only extends the live entry when it has fallen below the bump threshold
 
 **Error Codes**:
 - `ContractNotFound`: Contract does not exist
