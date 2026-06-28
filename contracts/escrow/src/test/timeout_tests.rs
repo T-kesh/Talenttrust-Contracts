@@ -3,7 +3,9 @@ use soroban_sdk::{
     vec, Address, Env, Vec,
 };
 
-use crate::{ContractStatus, Escrow, EscrowClient, MilestoneSchedule, ReleaseAuthorization};
+use crate::{
+    ContractStatus, Escrow, EscrowClient, MilestoneSchedule, ReleaseAuthorization,
+};
 
 fn register_client(env: &Env) -> EscrowClient<'_> {
     let contract_id = env.register(Escrow, ());

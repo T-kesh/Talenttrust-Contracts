@@ -45,7 +45,7 @@ pending at any time.
 
 ## TTL Helper API
 
-Most transient reads and writes use the helpers in `contracts/escrow/src/ttl.rs`:
+All transient reads and writes go through the helpers in `contracts/escrow/src/ttl.rs`:
 
 | Function | Description |
 |---|---|
@@ -55,12 +55,6 @@ Most transient reads and writes use the helpers in `contracts/escrow/src/ttl.rs`
 | `extend_if_below_threshold(env, key, threshold, extend_to)` | Bumps TTL; returns `false` if key absent. |
 | `remove_transient(env, key)` | Explicit removal before auto-eviction. |
 | `has_transient(env, key)` | Returns `true` if the key is currently live. |
-
-The public `get_milestone_approvals` query is the one intentional exception: it
-reads `DataKey::MilestoneApprovals(contract_id, milestone_index)` directly from
-`env.storage().temporary()`, returns `None` for absent/expired entries, and
-conditionally renews the live entry with
-`PENDING_APPROVAL_BUMP_THRESHOLD` / `PENDING_APPROVAL_TTL_LEDGERS`.
 
 ## Expiry Semantics
 
@@ -94,8 +88,6 @@ environments produce identical expiry values. This is verified by
   never shrinks).
 - If the entry is absent or already evicted, the helper returns `false` and
   performs no write.
-- `get_milestone_approvals` applies the same no-write rule at the public API
-  layer: absent/expired approval entries return `None` and are not recreated.
 
 ## Security Notes
 
@@ -137,5 +129,5 @@ auto-eviction.
 
 1. Every new transient key has an entry in the table above.
 2. Every write uses `ttl::store_with_ttl` (no direct `.temporary().set` bypass).
-3. Every transient read path either uses `ttl::read_if_live` or, for `get_milestone_approvals`, preserves the same `None` = "absent or expired" semantics while only renewing TTL for live entries.
+3. Every read path uses `ttl::read_if_live` and handles `None` as "absent or expired".
 4. A corresponding TTL test exists when a new transient key is introduced.

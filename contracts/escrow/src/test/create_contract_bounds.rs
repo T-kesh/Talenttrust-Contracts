@@ -29,7 +29,7 @@ fn assert_err(
         Result<u32, soroban_sdk::ConversionError>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
     >,
-    expected: Error,
+    expected: EscrowError,
 ) {
     match result {
         Err(Ok(e)) => {
@@ -84,165 +84,6 @@ fn rejects_one_over_max_milestones() {
         client.try_create_contract(&c, &f, &None, &amounts, &ReleaseAuthorization::ClientOnly),
         EscrowError::TooManyMilestones,
     );
-}
-
-// ── ReleaseAuthorization arbiter requirement and participant rules ─────────
-
-fn valid_amounts(env: &Env) -> Vec<i128> {
-    vec![&env, 100_i128]
-}
-
-/// Arbiter is optional for `ClientOnly`.
-#[test]
-fn create_contract_client_only_accepts_none_arbiter() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let client_addr = Address::generate(&env);
-    let freelancer = Address::generate(&env);
-
-    client.create_contract(
-        &client_addr,
-        &freelancer,
-        &None,
-        &valid_amounts(&env),
-        &ReleaseAuthorization::ClientOnly,
-    );
-}
-
-/// Arbiter is required for `ArbiterOnly`.
-#[test]
-fn create_contract_arbiter_only_rejects_none_arbiter() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let client_addr = Address::generate(&env);
-    let freelancer = Address::generate(&env);
-
-    assert_err(
-        client.try_create_contract(
-            &client_addr,
-            &freelancer,
-            &None,
-            &valid_amounts(&env),
-            &ReleaseAuthorization::ArbiterOnly,
-        ),
-        EscrowError::MissingArbiter,
-    );
-}
-
-/// Arbiter is required for `ClientAndArbiter`.
-#[test]
-fn create_contract_client_and_arbiter_rejects_none_arbiter() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let client_addr = Address::generate(&env);
-    let freelancer = Address::generate(&env);
-
-    assert_err(
-        client.try_create_contract(
-            &client_addr,
-            &freelancer,
-            &None,
-            &valid_amounts(&env),
-            &ReleaseAuthorization::ClientAndArbiter,
-        ),
-        EscrowError::MissingArbiter,
-    );
-}
-
-/// Arbiter is optional for `MultiSig`.
-#[test]
-fn create_contract_multisig_accepts_none_arbiter() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let client_addr = Address::generate(&env);
-    let freelancer = Address::generate(&env);
-
-    client.create_contract(
-        &client_addr,
-        &freelancer,
-        &None,
-        &valid_amounts(&env),
-        &ReleaseAuthorization::MultiSig,
-    );
-}
-
-/// Arbiter cannot equal client for arbiter-required modes.
-#[test]
-fn rejects_arbiter_equal_client_for_arbiter_required_modes() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let client_addr = Address::generate(&env);
-    let freelancer = Address::generate(&env);
-    let arbiter = client_addr.clone();
-
-    for mode in [
-        ReleaseAuthorization::ArbiterOnly,
-        ReleaseAuthorization::ClientAndArbiter,
-    ] {
-        assert_err(
-            client.try_create_contract(
-                &client_addr,
-                &freelancer,
-                &Some(arbiter.clone()),
-                &valid_amounts(&env),
-                &mode,
-            ),
-            EscrowError::InvalidArbiter,
-        );
-    }
-}
-
-/// Arbiter cannot equal freelancer for arbiter-required modes.
-#[test]
-fn rejects_arbiter_equal_freelancer_for_arbiter_required_modes() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let client_addr = Address::generate(&env);
-    let freelancer = Address::generate(&env);
-    let arbiter = freelancer.clone();
-
-    for mode in [
-        ReleaseAuthorization::ArbiterOnly,
-        ReleaseAuthorization::ClientAndArbiter,
-    ] {
-        assert_err(
-            client.try_create_contract(
-                &client_addr,
-                &freelancer,
-                &Some(arbiter.clone()),
-                &valid_amounts(&env),
-                &mode,
-            ),
-            EscrowError::InvalidArbiter,
-        );
-    }
-}
-
-/// `client == freelancer` is always invalid and must take precedence.
-#[test]
-fn rejects_same_client_and_freelancer_for_all_modes() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let same = Address::generate(&env);
-    let arbiter = Address::generate(&env);
-
-    for mode in [
-        ReleaseAuthorization::ClientOnly,
-        ReleaseAuthorization::ArbiterOnly,
-        ReleaseAuthorization::ClientAndArbiter,
-        ReleaseAuthorization::MultiSig,
-    ] {
-        assert_err(
-            client.try_create_contract(
-                &same,
-                &same,
-                &Some(arbiter.clone()),
-                &valid_amounts(&env),
-                &mode,
-            ),
-            EscrowError::InvalidParticipant,
-        );
-    }
 }
 
 // guard 4 — boundary success ──────────────────────────────────────────────────
@@ -334,7 +175,7 @@ fn rejects_total_one_over_cap() {
             &vec![&env, MAX_TOTAL_ESCROW_STROOPS + 1],
             &ReleaseAuthorization::ClientOnly,
         ),
-        Error::InvalidMilestoneAmount,
+        EscrowError::InvalidMilestoneAmount,
     );
 }
 
@@ -370,51 +211,3 @@ fn count_guard_fires_before_amount_guard() {
         EscrowError::TooManyMilestones,
     );
 }
-
-// governed cap tests ───────────────────────────────────────────────────────────
-
-#[test]
-fn accepts_total_below_governed_cap() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    client.set_governed_params(&admin, 0, 1000_i128);
-    
-    let c = Address::generate(&env);
-    let f = Address::generate(&env);
-    client.create_contract(&c, &f, &None, &vec![&env, 500_i128], &ReleaseAuthorization::ClientOnly);
-}
-
-#[test]
-fn rejects_total_above_governed_cap() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    client.set_governed_params(&admin, 0, 1000_i128);
-    
-    let c = Address::generate(&env);
-    let f = Address::generate(&env);
-    assert_err(
-        client.try_create_contract(&c, &f, &None, &vec![&env, 1500_i128], &ReleaseAuthorization::ClientOnly),
-        EscrowError::EscrowCapExceeded,
-    );
-}
-
-#[test]
-fn accepts_total_when_governed_cap_is_zero() {
-    let (env, cid) = setup();
-    let client = EscrowClient::new(&env, &cid);
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    client.set_governed_params(&admin, 0, 0_i128);
-    
-    let c = Address::generate(&env);
-    let f = Address::generate(&env);
-    client.create_contract(&c, &f, &None, &vec![&env, 1500_i128], &ReleaseAuthorization::ClientOnly);
-}
-

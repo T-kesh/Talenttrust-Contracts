@@ -217,9 +217,7 @@ mod released_count_parity {
         let fr = Address::generate(&env);
         let arb = Address::generate(&env);
         let id = c.create_contract(
-            &cl,
-            &fr,
-            &Some(arb.clone()),
+            &cl, &fr, &Some(arb.clone()),
             &vec![&env, 100_i128, 200_i128],
             &ReleaseAuthorization::ClientOnly,
         );
@@ -228,10 +226,7 @@ mod released_count_parity {
         c.finalize_contract(&id, &arb);
         let record = c.get_finalization_record(&id).unwrap();
         assert_eq!(record.summary.released_milestone_count, 0);
-        assert_parity(
-            record.summary.released_milestone_count,
-            &record.summary.milestones,
-        );
+        assert_parity(record.summary.released_milestone_count, &record.summary.milestones);
     }
 
     /// Partial release (2 of 3): third milestone refunded to reach Completed.
@@ -242,9 +237,7 @@ mod released_count_parity {
         let cl = Address::generate(&env);
         let fr = Address::generate(&env);
         let id = c.create_contract(
-            &cl,
-            &fr,
-            &None,
+            &cl, &fr, &None,
             &vec![&env, 100_i128, 200_i128, 300_i128],
             &ReleaseAuthorization::ClientOnly,
         );
@@ -258,10 +251,7 @@ mod released_count_parity {
         c.finalize_contract(&id, &cl);
         let record = c.get_finalization_record(&id).unwrap();
         assert_eq!(record.summary.released_milestone_count, 2);
-        assert_parity(
-            record.summary.released_milestone_count,
-            &record.summary.milestones,
-        );
+        assert_parity(record.summary.released_milestone_count, &record.summary.milestones);
     }
 
     /// Full release: all 3 milestones released.
@@ -272,9 +262,7 @@ mod released_count_parity {
         let cl = Address::generate(&env);
         let fr = Address::generate(&env);
         let id = c.create_contract(
-            &cl,
-            &fr,
-            &None,
+            &cl, &fr, &None,
             &vec![&env, 100_i128, 200_i128, 300_i128],
             &ReleaseAuthorization::ClientOnly,
         );
@@ -287,10 +275,7 @@ mod released_count_parity {
         c.finalize_contract(&id, &cl);
         let record = c.get_finalization_record(&id).unwrap();
         assert_eq!(record.summary.released_milestone_count, 3);
-        assert_parity(
-            record.summary.released_milestone_count,
-            &record.summary.milestones,
-        );
+        assert_parity(record.summary.released_milestone_count, &record.summary.milestones);
     }
 
     /// Mixed release+refund: refunded milestones must not inflate the count.
@@ -301,9 +286,7 @@ mod released_count_parity {
         let cl = Address::generate(&env);
         let fr = Address::generate(&env);
         let id = c.create_contract(
-            &cl,
-            &fr,
-            &None,
+            &cl, &fr, &None,
             &vec![&env, 100_i128, 200_i128],
             &ReleaseAuthorization::ClientOnly,
         );
@@ -316,9 +299,6 @@ mod released_count_parity {
         let record = c.get_finalization_record(&id).unwrap();
         // 1 released, 1 refunded — count must be 1, not 2.
         assert_eq!(record.summary.released_milestone_count, 1);
-        assert_parity(
-            record.summary.released_milestone_count,
-            &record.summary.milestones,
-        );
+        assert_parity(record.summary.released_milestone_count, &record.summary.milestones);
     }
 }

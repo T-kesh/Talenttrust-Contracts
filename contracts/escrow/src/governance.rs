@@ -1,6 +1,7 @@
-use crate::ttl::ADMIN_ROTATION_MIN_DELAY_LEDGERS;
-use crate::{DataKey, Error, Escrow, GovernedParameters, PendingAdminProposal, ReadinessChecklist};
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
+use crate::{
+    DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters, ReadinessChecklist,
+};
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
 impl Escrow {
     // ── Two-step admin transfer ───────────────────────────────────────────────
@@ -134,7 +135,7 @@ impl Escrow {
     }
 
     /// Retrieve the current governed parameters.
-    pub(crate) fn get_governed_parameters_impl(env: &Env) -> Option<GovernedParameters> {
+    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
         env.storage().persistent().get(&DataKey::GovernedParameters)
     }
 }

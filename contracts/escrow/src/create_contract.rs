@@ -1,9 +1,5 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
-    ReleaseAuthorization, MAX_TOTAL_ESCROW_STROOPS,
-};
-use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
-use crate::{MAX_MILESTONES, amount_validation, types::GovernedParameters};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
@@ -252,15 +248,6 @@ impl Escrow {
     id
 }
 
-/// Returns the next contract id after verifying the slot is unused and that
-/// incrementing the counter will not overflow.
-///
-/// # Overflow safety
-/// When `id == u32::MAX` there is no valid successor, so this function panics
-/// with [`Error::ContractIdOverflow`] **before** any state is written. The
-/// counter stored under [`DataKey::NextContractId`] is therefore never advanced
-/// to zero, making wrap-to-zero collisions with existing low-numbered contracts
-/// impossible.
 pub(crate) fn next_contract_id(env: &Env) -> u32 {
     let id: u32 = env
         .storage()

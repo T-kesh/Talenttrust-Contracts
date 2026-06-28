@@ -7,9 +7,7 @@ Soroban smart contracts for the TalentTrust freelancer escrow protocol on Stella
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance. **Token custody is on-chain** via a Stellar Asset Contract (SAC) bound at admin setup; `deposit_funds` and `release_milestone` perform real `token::Client::transfer` calls.
 - **Planned escrow fee model**: Configurable protocol fee is now wired into `release_milestone` (`set_protocol_fee_bps`); fee retention into `AccumulatedProtocolFees` is implemented. A separate `withdraw_protocol_fees` entrypoint remains tracked in [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
 
-Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), the live ABI reference is in [docs/escrow/abi-reference.md](docs/escrow/abi-reference.md), storage-key details are in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md), threat analysis is in [docs/escrow/SECURITY.md](docs/escrow/SECURITY.md), and release authorization modes are in [docs/escrow/authorization.md](docs/escrow/authorization.md).
-
-For an end-to-end Stellar CLI walkthrough that takes the contract from a freshly compiled WASM through deploy, initialize, funding, approving, and releasing, see the [Escrow Integrator Quickstart](docs/escrow/quickstart.md). The quickstart covers `initialize`, `create_contract`, `deposit_funds`, `approve_milestone_release`, `release_milestone`, the four `ReleaseAuthorization` modes, milestone vector encoding, and a troubleshooting matrix keyed to the live `EscrowError` codes.
+Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md), threat analysis in [docs/escrow/SECURITY.md](docs/escrow/SECURITY.md), and release authorization modes in [docs/escrow/authorization.md](docs/escrow/authorization.md).
 
 ---
 

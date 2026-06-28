@@ -353,7 +353,7 @@ fn get_contract_panics_for_unknown_id() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_contract(&999), Error::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&999), EscrowError::ContractNotFound);
 }
 
 /// `get_contract` panics with `ContractNotFound` even when probed with id zero
@@ -364,7 +364,7 @@ fn get_contract_panics_for_zero_id_when_no_zero_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_contract(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
 }
 
 // ── get_contract: success ─────────────────────────────────────────────────────
@@ -427,7 +427,6 @@ fn get_contract_observations_are_pure() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let initial = client.get_contract(&contract_id);
@@ -470,7 +469,7 @@ fn get_milestones_panics_for_zero_id_when_no_zero_contract() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    assert_contract_error(client.try_get_milestones(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
 }
 
 // ── get_milestones: success ───────────────────────────────────────────────────
@@ -507,7 +506,6 @@ fn get_milestones_observations_are_pure() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let initial = client.get_milestones(&contract_id);
@@ -585,7 +583,6 @@ fn get_refundable_balance_subtracts_released_amount() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let expected = total_milestone_amount() - MILESTONE_ONE;
@@ -613,7 +610,6 @@ fn get_refundable_balance_observations_are_pure() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let initial = client.get_refundable_balance(&contract_id);
@@ -1074,8 +1070,8 @@ fn read_getters_succeed_after_creating_contract_at_zero_index() {
     // First contract allocated by `create_contract` is at slot 1 (DataKey::NextContractId
     // starts at 1 — see create_contract.rs). Probe the zero slot to confirm
     // it remains not-found, then exercise slot 1.
-    assert_contract_error(client.try_get_contract(&0), Error::ContractNotFound);
-    assert_contract_error(client.try_get_milestones(&0), Error::ContractNotFound);
+    assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
+    assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
     assert_contract_error(
         client.try_get_refundable_balance(&0),
         Error::ContractNotFound,

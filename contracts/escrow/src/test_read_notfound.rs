@@ -1,9 +1,9 @@
 //! Tests for read API NotFound behavior.
 //!
 //! `get_contract`, `get_milestones`, and `get_checklist` panic with
-//! `Error::ContractNotFound` (error code 9) when the requested data is
+//! `EscrowError::ContractNotFound` (error code 9) when the requested data is
 //! absent.  The Soroban SDK auto-generates `try_*` client wrappers for every
-//! contract function; those wrappers return `Err(Ok(Error::...))` instead
+//! contract function; those wrappers return `Err(Ok(EscrowError::...))` instead
 //! of propagating the panic, which is what indexers and off-chain callers should
 //! use.
 
@@ -13,7 +13,7 @@ extern crate std;
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, Error};
+use crate::{Escrow, EscrowClient, EscrowError};
 
 fn setup() -> (Env, EscrowClient) {
     let env = Env::default();
@@ -30,7 +30,7 @@ fn get_contract_missing_id_returns_not_found() {
     let (_env, client) = setup();
     assert_eq!(
         client.try_get_contract(&999),
-        Err(Ok(Error::ContractNotFound))
+        Err(Ok(EscrowError::ContractNotFound))
     );
 }
 
@@ -54,7 +54,7 @@ fn get_milestones_missing_id_returns_not_found() {
     let (_env, client) = setup();
     assert_eq!(
         client.try_get_milestones(&999),
-        Err(Ok(Error::ContractNotFound))
+        Err(Ok(EscrowError::ContractNotFound))
     );
 }
 
@@ -80,6 +80,6 @@ fn get_checklist_absent_returns_not_found() {
     let (_env, client) = setup();
     assert_eq!(
         client.try_get_checklist(),
-        Err(Ok(Error::ContractNotFound))
+        Err(Ok(EscrowError::ContractNotFound))
     );
 }

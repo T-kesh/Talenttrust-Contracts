@@ -2,7 +2,7 @@
 
 use soroban_sdk::{testutils::Ledger as _, testutils::LedgerInfo, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, Error};
+use crate::{Escrow, EscrowClient, EscrowError};
 
 fn setup<'a>(env: &'a Env) -> (EscrowClient<'a>, Address, Address) {
     let contract_id = env.register(Escrow, ());

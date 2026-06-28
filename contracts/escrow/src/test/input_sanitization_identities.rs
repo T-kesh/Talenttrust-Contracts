@@ -52,12 +52,7 @@ fn accepts_distinct_client_and_freelancer() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
 
-    let id = client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None,
-        &default_milestones(&env),
-    );
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &default_milestones(&env));
     assert!(id > 0);
 
     let contract = client.get_contract(&id);
@@ -225,12 +220,7 @@ fn three_way_distinct_addresses() {
     assert_ne!(addr2, addr3);
     assert_ne!(addr1, addr3);
 
-    let id = client.create_contract(
-        &addr1,
-        &addr2,
-        &Some(addr3.clone()),
-        &default_milestones(&env),
-    );
+    let id = client.create_contract(&addr1, &addr2, &Some(addr3.clone()), &default_milestones(&env));
     assert!(id > 0);
 
     let contract = client.get_contract(&id);

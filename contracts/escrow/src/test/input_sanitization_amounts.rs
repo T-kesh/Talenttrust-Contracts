@@ -6,7 +6,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 use crate::{
     safe_add_amounts, safe_subtract_amounts, validate_deposit_amount, validate_milestone_amounts,
-    validate_single_amount, Error, Escrow, EscrowClient, ReleaseAuthorization,
+    validate_single_amount, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
     MAX_TOTAL_ESCROW_STROOPS,
 };
 
@@ -161,15 +161,21 @@ fn test_single_amount_validation() {
     assert!(validate_single_amount(1_000_000_0000000).is_ok()); // Max single amount
 
     // Invalid amounts
-    assert_eq!(validate_single_amount(0), Err(Error::AmountMustBePositive));
-    assert_eq!(validate_single_amount(-1), Err(Error::AmountMustBePositive));
+    assert_eq!(
+        validate_single_amount(0),
+        Err(EscrowError::AmountMustBePositive)
+    );
+    assert_eq!(
+        validate_single_amount(-1),
+        Err(EscrowError::AmountMustBePositive)
+    );
     assert_eq!(
         validate_single_amount(-100_0000000),
-        Err(Error::AmountMustBePositive)
+        Err(EscrowError::AmountMustBePositive)
     );
     assert_eq!(
         validate_single_amount(1_000_000_0000001),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -197,19 +203,19 @@ fn test_milestone_amounts_validation() {
     let milestones4 = vec![100_0000000, 0, 300_0000000]; // Contains zero
     assert_eq!(
         validate_milestone_amounts(&milestones4, max_total),
-        Err(Error::AmountMustBePositive)
+        Err(EscrowError::AmountMustBePositive)
     );
 
     let milestones5 = vec![100_0000000, -50_0000000, 300_0000000]; // Contains negative
     assert_eq!(
         validate_milestone_amounts(&milestones5, max_total),
-        Err(Error::AmountMustBePositive)
+        Err(EscrowError::AmountMustBePositive)
     );
 
     let milestones6 = vec![600_000_0000000, 500_000_0000000]; // Exceeds contract max
     assert_eq!(
         validate_milestone_amounts(&milestones6, max_total),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -225,23 +231,23 @@ fn test_deposit_amount_validation() {
     // Invalid deposits
     assert_eq!(
         validate_deposit_amount(0, 0, max_total),
-        Err(Error::AmountMustBePositive)
+        Err(EscrowError::AmountMustBePositive)
     );
     assert_eq!(
         validate_deposit_amount(-1, 0, max_total),
-        Err(Error::AmountMustBePositive)
+        Err(EscrowError::AmountMustBePositive)
     );
 
     // Would exceed maximum
     assert_eq!(
         validate_deposit_amount(600_000_0000000, 500_000_0000000, max_total),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 
     // Single amount exceeds maximum
     assert_eq!(
         validate_deposit_amount(1_000_000_0000001, 0, max_total),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -273,7 +279,7 @@ fn test_edge_cases() {
     assert!(validate_single_amount(1_000_000_0000000).is_ok()); // Max single amount
     assert_eq!(
         validate_single_amount(1_000_000_0000001),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 
     // Test contract boundary
@@ -283,7 +289,7 @@ fn test_edge_cases() {
     let over_boundary_milestones = vec![MAX_TOTAL_ESCROW_STROOPS + 1];
     assert_eq!(
         validate_milestone_amounts(&over_boundary_milestones, max_total),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -321,7 +327,7 @@ fn test_large_amount_arrays() {
     }
     assert_eq!(
         validate_milestone_amounts(&overflow_milestones, max_total),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -337,7 +343,7 @@ fn test_cumulative_deposit_validation() {
     // Should fail when cumulative exceeds maximum
     assert_eq!(
         validate_deposit_amount(800_000_0000000, 300_000_0000000, max_total),
-        Err(Error::InvalidMilestoneAmount)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 

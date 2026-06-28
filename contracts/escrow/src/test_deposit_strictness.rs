@@ -2,7 +2,7 @@
 
 use crate::{
     types::{ContractStatus, DepositMode},
-    EscrowClient, Error,
+    EscrowClient, EscrowError,
 };
 use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 

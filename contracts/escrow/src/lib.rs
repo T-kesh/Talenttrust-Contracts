@@ -24,6 +24,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod amount_validation;
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -35,19 +36,9 @@ mod ttl;
 mod types;
 mod utils;
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String,
-    Symbol, Vec,
-};
-use crate::utils::now_seconds;
-
-use crate::utils::now_seconds;
-
-pub use amount_validation::{
-    safe_add_amounts, safe_subtract_amounts, validate_contract_total, validate_deposit_amount,
-    validate_milestone_amounts, validate_single_amount, MAX_SINGLE_AMOUNT_STROOPS,
-    MIN_POSITIVE_AMOUNT,
-};
+pub use amount_validation::safe_add_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 // Keep shared storage keys and escrow domain types centralized in `types.rs`.
@@ -64,6 +55,57 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = MAX_SINGLE_AMOUNT_STROOPS;
 
 #[contract]
 pub struct Escrow;
+
+/// Governance-level errors for admin-gated operations.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum EscrowError {
+    InvalidParticipant = 1,
+    EmptyMilestones = 2,
+    InvalidMilestoneAmount = 3,
+    InvalidDepositAmount = 4,
+    InvalidMilestone = 5,
+    ContractNotFound = 6,
+    EmptyRefundRequest = 7,
+    DuplicateMilestoneInRefund = 8,
+    AlreadyReleased = 9,
+    AlreadyRefunded = 10,
+    InsufficientFunds = 11,
+    AlreadyInitialized = 12,
+    InsufficientAccumulatedFees = 13,
+    /// Returned by lifecycle entrypoints when `initialize` has not been called.
+    ///
+    /// All money-flow operations require initialization so the admin-controlled
+    /// safety rails (pause, emergency controls, protocol fees) are always in
+    /// scope before any funds can move.
+    NotInitialized = 14,
+    UnauthorizedRole = 15,
+    ContractPaused = 16,
+    EmergencyActive = 17,
+    InvalidState = 18,
+    InvalidRating = 19,
+    SelfRating = 20,
+    ReputationAlreadyIssued = 21,
+    NotCompleted = 22,
+    FreelancerMismatch = 23,
+    InvalidStatusTransition = 24,
+    ArbiterRequired = 25,
+    InvalidDisputeSplit = 26,
+    AccountingInvariantViolated = 27,
+    PotentialOverflow = 28,
+    AlreadyFinalized = 29,
+    AmountMustBePositive = 30,
+}
+
+/// Returns `Some(a + b)`, or `None` on overflow.
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
+}
+
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
+}
 
 #[contractimpl]
 impl Escrow {
@@ -260,7 +302,6 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
-        Self::require_not_paused(&env);
         create_contract::create_contract_impl(
             &env,
             client,
