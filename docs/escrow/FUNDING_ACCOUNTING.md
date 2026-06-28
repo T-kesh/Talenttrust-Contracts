@@ -35,6 +35,12 @@ fee + net == milestone_amount  (invariant)
 Fees are retained inside the contract and accumulated under
 `DataKey::AccumulatedProtocolFees`. The default rate is 0 bps (no fee).
 
+### Protocol Fee Balance Reader
+
+Operators and indexers can query the treasury balance with
+`get_accumulated_protocol_fees() -> i128`. The reader returns `0` before any
+fees accrue, requires no authorization, and performs no state mutation.
+
 ### Protocol Fee Withdrawal
 
 The admin can withdraw accumulated fees using `withdraw_protocol_fees(amount, to)`:

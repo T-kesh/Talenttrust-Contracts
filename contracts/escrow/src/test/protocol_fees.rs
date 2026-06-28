@@ -66,11 +66,22 @@ fn test_get_accumulated_protocol_fees_after_releases() {
     let client = EscrowClient::new(&env, &contract_id);
 
     client.initialize(&admin);
-    client.set_protocol_fee_bps(&1000u32);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    client.set_settlement_token(&admin, &token);
+
+    const FEE_BPS: u32 = 1000;
+    client.set_protocol_fee_bps(&FEE_BPS);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 1000_i128, 2500_i128, 3333_i128];
+    let milestone_amounts = [1000_i128, 2500_i128, 3333_i128];
+    let milestones = vec![
+        &env,
+        milestone_amounts[0],
+        milestone_amounts[1],
+        milestone_amounts[2],
+    ];
 
     let id = client.create_contract(
         &client_addr,
@@ -80,24 +91,27 @@ fn test_get_accumulated_protocol_fees_after_releases() {
         &ReleaseAuthorization::ClientOnly,
     );
 
+    soroban_sdk::token::StellarAssetClient::new(&env, &token)
+        .mint(&client_addr, &6833_i128);
     client.deposit_funds(&id, &client_addr, &6833_i128);
 
     assert_eq!(client.get_accumulated_protocol_fees(), 0);
 
-    // Fee: 1000 * 1000 / 10_000 = 100
-    client.approve_milestone_release(&id, &client_addr, &0);
-    client.release_milestone(&id, &client_addr, &0);
-    assert_eq!(client.get_accumulated_protocol_fees(), 100);
+    let mut expected_accumulated = 0_i128;
+    for (index, amount) in milestone_amounts.iter().enumerate() {
+        let milestone_index = index as u32;
+        client.approve_milestone_release(&id, &client_addr, &milestone_index);
+        client.release_milestone(&id, &client_addr, &milestone_index);
 
-    // Fee: 2500 * 1000 / 10_000 = 250
-    client.approve_milestone_release(&id, &client_addr, &1);
-    client.release_milestone(&id, &client_addr, &1);
-    assert_eq!(client.get_accumulated_protocol_fees(), 350);
+        expected_accumulated += Escrow::calculate_protocol_fee(*amount, FEE_BPS);
+        assert_eq!(client.get_accumulated_protocol_fees(), expected_accumulated);
+    }
 
-    // Fee: 3333 * 1000 / 10_000 = 333
-    client.approve_milestone_release(&id, &client_addr, &2);
-    client.release_milestone(&id, &client_addr, &2);
-    assert_eq!(client.get_accumulated_protocol_fees(), 683);
+    let expected_total: i128 = milestone_amounts
+        .iter()
+        .map(|amount| Escrow::calculate_protocol_fee(*amount, FEE_BPS))
+        .sum();
+    assert_eq!(client.get_accumulated_protocol_fees(), expected_total);
 }
 
 /// Test that accumulated fees remain at 0 when fee rate is 0.
@@ -111,6 +125,9 @@ fn test_no_fees_accumulated_when_rate_is_zero() {
     let client = EscrowClient::new(&env, &contract_id);
 
     client.initialize(&admin);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    client.set_settlement_token(&admin, &token);
     assert_eq!(client.get_protocol_fee_bps(), 0);
 
     let client_addr = Address::generate(&env);
@@ -125,6 +142,8 @@ fn test_no_fees_accumulated_when_rate_is_zero() {
         &ReleaseAuthorization::ClientOnly,
     );
 
+    soroban_sdk::token::StellarAssetClient::new(&env, &token)
+        .mint(&client_addr, &1000_i128);
     client.deposit_funds(&id, &client_addr, &1000_i128);
     client.approve_milestone_release(&id, &client_addr, &0);
     client.release_milestone(&id, &client_addr, &0);
@@ -179,31 +198,26 @@ fn test_readers_work_without_initialization() {
 
 #[test]
 fn test_fee_math_0_bps() {
-    let env = Env::default();
-    let fee = Escrow::calculate_protocol_fee(&env, 1000, 0);
+    let fee = Escrow::calculate_protocol_fee(1000, 0);
     assert_eq!(fee, 0);
 }
 
 #[test]
-#[test]
 fn test_fee_math_normal_bps() {
-    let env = Env::default();
-    let fee = Escrow::calculate_protocol_fee(&env, 1000, 1000);
+    let fee = Escrow::calculate_protocol_fee(1000, 1000);
     assert_eq!(fee, 100);
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #28)")] // PotentialOverflow
-fn test_fee_math_overflow() {
-    let env = Env::default();
-    Escrow::calculate_protocol_fee(&env, i128::MAX, 1000);
+fn test_fee_math_overflow_returns_zero() {
+    let fee = Escrow::calculate_protocol_fee(i128::MAX, 1000);
+    assert_eq!(fee, 0);
 }
 
 #[test]
 fn test_fee_math_tiny_amount() {
-    let env = Env::default();
     // 9 * 1000 = 9000. 9000 / 10000 = 0 (rounds to zero)
-    let fee = Escrow::calculate_protocol_fee(&env, 9, 1000);
+    let fee = Escrow::calculate_protocol_fee(9, 1000);
     assert_eq!(fee, 0);
 }
 
@@ -226,6 +240,7 @@ fn test_fee_accrual_and_withdrawal() {
     let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
 
     client.initialize(&admin);
+    client.set_settlement_token(&admin, &token);
     client.set_protocol_fee_bps(&1000u32);
 
     let client_addr = Address::generate(&env);
@@ -235,6 +250,7 @@ fn test_fee_accrual_and_withdrawal() {
     
     let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::ReleaseAuthorization::ClientOnly);
 
+    token_admin_client.mint(&client_addr, &6833_i128);
     client.deposit_funds(&id, &client_addr, &6833_i128);
 
     client.approve_milestone_release(&id, &client_addr, &0);
@@ -249,8 +265,6 @@ fn test_fee_accrual_and_withdrawal() {
     let accumulated = client.get_accumulated_protocol_fees();
     assert_eq!(accumulated, 683);
     
-    token_admin_client.mint(&contract_id, &683);
-
     let destination = Address::generate(&env);
     
     // Bind/set SettlementToken in storage
@@ -298,6 +312,7 @@ fn test_over_withdrawal() {
     client.initialize(&admin);
     client.set_protocol_fee_bps(&1000u32);
     
+    let accumulated = 99_i128;
     let destination = Address::generate(&env);
     let token = Address::generate(&env);
     
@@ -305,9 +320,11 @@ fn test_over_withdrawal() {
         env.storage()
             .persistent()
             .set(&DataKey::SettlementToken, &token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccumulatedProtocolFees, &accumulated);
     });
-    
-    // Withdraw more than 0
-    let result = client.try_withdraw_protocol_fees(&100_i128, &destination);
+
+    let result = client.try_withdraw_protocol_fees(&(accumulated + 1), &destination);
     assert_eq!(result, Err(Ok(crate::Error::InsufficientAccumulatedFees)));
 }

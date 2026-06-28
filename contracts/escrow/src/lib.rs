@@ -1473,6 +1473,12 @@ impl Escrow {
     // ── Governance ───────────────────────────────────────────────────────────
 
     /// Returns the total accumulated protocol fees in stroops.
+    ///
+    /// The balance defaults to `0` when no fees have accrued. This public
+    /// reader requires no authorization and does not mutate contract state.
+    ///
+    /// # Returns
+    /// The fees currently available for protocol withdrawal.
     pub fn get_accumulated_protocol_fees(env: Env) -> i128 {
         env.storage()
             .persistent()
