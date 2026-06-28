@@ -4,66 +4,36 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 #[soroban_sdk::contractimpl]
 impl Escrow {
-    pub fn set_protocol_fee_bps(env: Env, admin: Address, new_bps: u32) -> bool {
-        if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
-            env.panic_with_error(Error::NotInitialized);
-        }
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        if admin != stored_admin {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
+    /// Set the protocol fee in basis points.
+    ///
+    /// Admin-gated: the stored admin (under [`DataKey::Admin`]) must authorize
+    /// the call and the contract must be initialized.
+    ///
+    /// # Events
+    /// `(Symbol("protocol_fee_bps"),)` → `(old_bps, new_bps, admin, timestamp)`
+    pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
         admin.require_auth();
 
-        let old_bps: u32 = env.storage().persistent().get(&DataKey::ProtocolFeeBps).unwrap_or(0u32);
-        env.storage().persistent().set(&DataKey::ProtocolFeeBps, &new_bps);
+        let old_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeBps, &new_bps);
 
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
         );
         true
-    }
-
-    pub fn propose_governance_admin(env: Env, admin: Address, proposed: Address) -> bool {
-        if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
-            env.panic_with_error(Error::NotInitialized);
-        }
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        if admin != stored_admin {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        admin.require_auth();
-        env.storage().persistent().set(&DataKey::PendingAdmin, &proposed);
-        env.events().publish(
-            (symbol_short!("admin"), Symbol::new(&env, "proposed")),
-            (admin, proposed.clone(), env.ledger().timestamp()),
-        );
-        true
-    }
-
-    pub fn accept_governance_admin(env: Env, proposed_admin: Address) -> bool {
-        if !env.storage().persistent().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
-            env.panic_with_error(Error::NotInitialized);
-        }
-        let pending: Address = env.storage().persistent().get(&DataKey::PendingAdmin).unwrap_or_else(|| env.panic_with_error(Error::InvalidState));
-        if proposed_admin != pending {
-            env.panic_with_error(Error::UnauthorizedRole);
-        }
-        proposed_admin.require_auth();
-
-        let old_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        env.storage().persistent().set(&DataKey::Admin, &pending);
-        env.storage().persistent().remove(&DataKey::PendingAdmin);
-
-        env.events().publish(
-            (symbol_short!("admin"), Symbol::new(&env, "accepted")),
-            (old_admin, pending.clone(), env.ledger().timestamp()),
-        );
-        true
-    }
-
-    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::PendingAdmin)
     }
 
     pub fn get_governance_admin(env: Env) -> Option<Address> {
@@ -151,8 +121,47 @@ impl Escrow {
         true
     }
 
+    /// Cancel a pending governance admin proposal, aborting a two-step transfer.
+    ///
+    /// Only the current admin (the address stored under [`DataKey::Admin`]) may
+    /// cancel, and the contract must be initialized. On success the pending
+    /// proposal is removed so the previously proposed address can no longer call
+    /// [`Escrow::accept_governance_admin`] — a subsequent accept panics with
+    /// [`Error::InvalidState`].
+    ///
+    /// # Errors
+    /// * [`Error::NotInitialized`] — `initialize` has not been called.
+    /// * [`Error::InvalidState`] — there is no pending proposal to cancel.
+    ///
+    /// # Events
+    /// `(symbol_short!("admin"), Symbol("cancelled"))` → `(admin, cancelled_proposal, timestamp)`
+    pub(crate) fn cancel_governance_admin_proposal_impl(env: &Env) -> bool {
+        Self::require_initialized(env);
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        admin.require_auth();
+
+        let pending: PendingAdminProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingAdmin)
+            .unwrap_or_else(|| env.panic_with_error(Error::InvalidState));
+
+        env.storage().persistent().remove(&DataKey::PendingAdmin);
+
+        env.events().publish(
+            (symbol_short!("admin"), Symbol::new(env, "cancelled")),
+            (admin, pending.proposed, env.ledger().timestamp()),
+        );
+        true
+    }
+
     /// Internal: return the currently pending admin address, if any.
-    pub(crate) fn get_pending_governance_admin_impl(env: Env) -> Option<Address> {
+    pub(crate) fn get_pending_governance_admin_impl(env: &Env) -> Option<Address> {
         let proposal: Option<PendingAdminProposal> =
             env.storage().persistent().get(&DataKey::PendingAdmin);
         proposal.map(|p| p.proposed)

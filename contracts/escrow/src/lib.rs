@@ -1564,6 +1564,16 @@ impl Escrow {
         Self::accept_governance_admin_impl(&env)
     }
 
+    /// Cancels a pending governance admin proposal, aborting a two-step transfer.
+    ///
+    /// Admin-gated: the current admin must authorize the call. Clears the pending
+    /// proposal so the previously proposed address can no longer accept it. Panics
+    /// with `InvalidState` when there is no pending proposal to cancel, and with
+    /// `NotInitialized` before `initialize`.
+    pub fn cancel_governance_admin_proposal(env: Env) -> bool {
+        Self::cancel_governance_admin_proposal_impl(&env)
+    }
+
     /// Returns the pending governance admin address, if any.
     pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
         Self::get_pending_governance_admin_impl(&env)

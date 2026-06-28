@@ -1,6 +1,7 @@
 use super::{create_contract, default_milestones, generated_participants, register_client, total_milestone_amount};
-use crate::{Error, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
+use crate::ttl::ADMIN_ROTATION_MIN_DELAY_LEDGERS;
+use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
 #[test]
 fn create_rejects_same_participants() {
@@ -198,5 +199,185 @@ fn test_error_code_stability() {
     assert_eq!(Error::EvidenceTooLong as u32, 47);
     assert_eq!(Error::TimelockNotElapsed as u32, 48);
     assert_eq!(Error::InvalidProtocolParameters as u32, 49);
+}
+
+// ── cancel_governance_admin_proposal ──────────────────────────────────────────
+//
+// Security coverage for aborting a pending two-step admin transfer. A
+// cancellation must clear the pending proposal, block a later accept by the
+// previously proposed address, be gated on the current admin's authorization,
+// and reject when there is nothing to cancel or the contract is uninitialized.
+
+/// Register the escrow and initialize it with a freshly generated admin,
+/// returning the client and the admin address. Auths must already be mocked.
+fn init_with_admin(env: &Env) -> (EscrowClient<'_>, Address) {
+    let id = env.register(Escrow, ());
+    let client = EscrowClient::new(env, &id);
+    let admin = Address::generate(env);
+    assert!(client.initialize(&admin), "initialize must succeed");
+    (client, admin)
+}
+
+#[test]
+fn cancel_clears_pending_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = init_with_admin(&env);
+    let proposed = Address::generate(&env);
+
+    assert!(client.propose_governance_admin(&proposed));
+    assert_eq!(client.get_pending_governance_admin(), Some(proposed));
+
+    assert!(client.cancel_governance_admin_proposal());
+    assert_eq!(client.get_pending_governance_admin(), None);
+}
+
+#[test]
+fn cancel_blocks_later_accept() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = init_with_admin(&env);
+    let proposed = Address::generate(&env);
+
+    assert!(client.propose_governance_admin(&proposed));
+    assert!(client.cancel_governance_admin_proposal());
+
+    // Even after the timelock elapses, the cancelled proposal cannot be
+    // accepted — the previously proposed admin can no longer seize control.
+    let proposed_at = env.ledger().sequence();
+    env.ledger()
+        .set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS + 1);
+
+    let result = client.try_accept_governance_admin();
+    super::assert_contract_error(result, Error::InvalidState);
+
+    // The admin is unchanged.
+    assert_eq!(client.get_pending_governance_admin(), None);
+}
+
+#[test]
+fn cancel_without_proposal_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = init_with_admin(&env);
+
+    let result = client.try_cancel_governance_admin_proposal();
+    super::assert_contract_error(result, Error::InvalidState);
+}
+
+#[test]
+fn cancel_before_initialize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &id);
+
+    let result = client.try_cancel_governance_admin_proposal();
+    super::assert_contract_error(result, Error::NotInitialized);
+}
+
+#[test]
+fn cancel_then_repropose_and_accept_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = init_with_admin(&env);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+
+    assert!(client.propose_governance_admin(&first));
+    assert!(client.cancel_governance_admin_proposal());
+
+    // A fresh proposal still works after a cancellation and resets the timelock
+    // anchor to the new proposal's ledger.
+    assert!(client.propose_governance_admin(&second));
+    let proposed_at = env.ledger().sequence();
+    env.ledger()
+        .set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
+
+    assert!(client.accept_governance_admin());
+    assert_eq!(client.get_governance_admin(), Some(second));
+    assert_eq!(client.get_pending_governance_admin(), None);
+}
+
+/// Only the current admin may cancel: with auth granted to a non-admin address,
+/// `admin.require_auth()` fails and the host aborts the invocation.
+#[test]
+#[should_panic]
+fn cancel_rejects_non_admin_auth() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    let id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let proposed = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    // Authorize the admin for the setup calls.
+    env.mock_auths(&[
+        MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &id,
+                fn_name: "initialize",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &id,
+                fn_name: "propose_governance_admin",
+                args: (proposed.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
+    client.initialize(&admin);
+    client.propose_governance_admin(&proposed);
+
+    // Now grant auth only to a non-admin; cancel must abort on the admin's
+    // require_auth.
+    env.mock_auths(&[MockAuth {
+        address: &attacker,
+        invoke: &MockAuthInvoke {
+            contract: &id,
+            fn_name: "cancel_governance_admin_proposal",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.cancel_governance_admin_proposal();
+}
+
+#[test]
+fn cancel_emits_cancelled_event() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::{Symbol, TryFromVal};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = init_with_admin(&env);
+    let proposed = Address::generate(&env);
+
+    client.propose_governance_admin(&proposed);
+    client.cancel_governance_admin_proposal();
+
+    let admin_topic = soroban_sdk::symbol_short!("admin");
+    let cancelled_topic = Symbol::new(&env, "cancelled");
+    let found = env.events().all().iter().any(|event| {
+        event.1.len() >= 2
+            && Symbol::try_from_val(&env, &event.1.get(0).unwrap())
+                .ok()
+                .as_ref()
+                == Some(&admin_topic)
+            && Symbol::try_from_val(&env, &event.1.get(1).unwrap())
+                .ok()
+                .as_ref()
+                == Some(&cancelled_topic)
+    });
+    assert!(found, "cancel must emit an (admin, cancelled) event");
 }
 
