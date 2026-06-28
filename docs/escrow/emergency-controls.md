@@ -39,6 +39,7 @@ paused contract does not consume an auth cycle:
 
 - `create_contract`
 - `deposit_funds`
+- `approve_milestone_release`
 - `release_milestone`
 - `refund_unreleased_milestones`
 - `issue_reputation`
@@ -52,9 +53,8 @@ Read-only queries (`get_contract`, `get_reputation`, `get_pending_reputation_cre
 `get_admin`, `get_mainnet_readiness_info`, `is_paused`, `is_emergency`,
 `get_finalization_record`, `get_milestone_approvals`) are never blocked.
 
-Approval bookkeeping (`approve_milestone_release`) is mutation-adjacent; once
-the broader approval-entry hardening issue lands, that entrypoint will be
-added to this matrix.
+Blocking `approve_milestone_release` ensures temporary approval TTL/state cannot
+be staged while a contract is paused or in emergency mode.
 
 ## Read-only queries
 

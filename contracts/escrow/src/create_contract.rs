@@ -1,6 +1,6 @@
 use crate::{
     ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
-    ReleaseAuthorization,
+    ReleaseAuthorization, MAX_TOTAL_ESCROW_STROOPS,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -59,40 +59,38 @@ pub fn create_contract_impl(
         env.panic_with_error(EscrowError::EmptyMilestones);
     }
 
-    for amount in milestones.iter() {
+    if milestones.len() > crate::MAX_MILESTONES {
+        env.panic_with_error(EscrowError::TooManyMilestones);
+    }
+
+    let total_milestones_amount: i128 = milestones.iter().fold(0i128, |acc, amount| {
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidMilestoneAmount);
         }
-    }
 
-    // Check governed max_escrow_total_stroops cap if set
-    let total_milestones: i128 = milestones.iter().map(|m| m).sum();
-    if let Some(params) = env
-        .storage()
-        .persistent()
-        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-    {
-        if params.max_escrow_total_stroops > 0 && total_milestones > params.max_escrow_total_stroops
-        {
-            env.panic_with_error(EscrowError::EscrowCapExceeded);
-        }
-    }
-
-    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, &x| {
-        acc.checked_add(x)
+        acc.checked_add(amount)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
     });
 
-    if let Some(params) = env
+    let governed_cap = env
         .storage()
         .persistent()
         .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-    {
-        if params.max_escrow_total_stroops > 0
-            && total_milestones_amount > params.max_escrow_total_stroops
+        .map(|params| params.max_escrow_total_stroops)
+        .filter(|cap| *cap > 0)
+        .unwrap_or(MAX_TOTAL_ESCROW_STROOPS);
+
+    if total_milestones_amount > governed_cap {
+        let err = if env
+            .storage()
+            .persistent()
+            .has(&DataKey::GovernedParameters)
         {
-            env.panic_with_error(EscrowError::EscrowCapExceeded);
-        }
+            EscrowError::EscrowCapExceeded
+        } else {
+            EscrowError::InvalidMilestoneAmount
+        };
+        env.panic_with_error(err);
     }
 
     let id = next_contract_id(&env);
@@ -125,6 +123,7 @@ pub fn create_contract_impl(
             refunded: false,
             work_evidence: None,
             refunded_amount: 0,
+            deadline: None,
         });
     }
     let milestone_key = Symbol::new(&env, "milestones");

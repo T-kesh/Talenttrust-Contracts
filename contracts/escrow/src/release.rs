@@ -120,10 +120,10 @@ impl Escrow {
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
 
-        if is_initialized(&env) {
-            let fee_bps = get_protocol_fee_bps(&env);
+        if Escrow::is_initialized(&env) {
+            let fee_bps = Escrow::read_protocol_fee_bps(&env);
             if fee_bps > 0 {
-                let fee = calculate_protocol_fee(milestone.amount, fee_bps);
+                let fee = Escrow::calculate_protocol_fee(milestone.amount, fee_bps);
                 let current_accumulated: i128 = env
                     .storage()
                     .persistent()

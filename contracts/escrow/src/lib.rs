@@ -40,7 +40,13 @@ use soroban_sdk::{
     Symbol, Vec,
 };
 
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+use crate::utils::now_seconds;
+
+pub use amount_validation::{
+    safe_add_amounts, safe_subtract_amounts, validate_contract_total, validate_deposit_amount,
+    validate_milestone_amounts, validate_single_amount, MAX_SINGLE_AMOUNT_STROOPS,
+    MIN_POSITIVE_AMOUNT,
+};
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
@@ -50,18 +56,11 @@ pub use types::{
 };
 
 pub type EscrowError = Error;
+pub const MAX_MILESTONES: u32 = 10;
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = MAX_SINGLE_AMOUNT_STROOPS;
 
 #[contract]
 pub struct Escrow;
-
-
-
-
-
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
 
 #[contractimpl]
 impl Escrow {
@@ -166,6 +165,24 @@ impl Escrow {
         env.storage().persistent().get(&DataKey::Admin)
     }
 
+    /// Returns the current hard-coded bounds used by validation paths.
+    pub fn get_bounds(env: Env) -> ContractSummary {
+        ContractSummary {
+            schema_version: CONTRACT_SUMMARY_SCHEMA_VERSION,
+            client: env.current_contract_address(),
+            freelancer: env.current_contract_address(),
+            arbiter: None,
+            status: ContractStatus::Created,
+            reputation_issued: false,
+            total_amount: MAX_TOTAL_ESCROW_STROOPS,
+            funded_amount: MAX_MILESTONES as i128,
+            released_amount: 0,
+            refundable_balance: 0,
+            released_milestone_count: 0,
+            milestones: Vec::new(&env),
+        }
+    }
+
     /// Returns the current mainnet readiness checklist.
     ///
     /// The checklist tracks critical configuration steps that must be completed
@@ -213,6 +230,7 @@ impl Escrow {
     /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
     /// * `ContractIdCollision` - If the allocated id slot is already occupied
     pub fn create_contract(
+        
         env: Env,
         client: Address,
         freelancer: Address,
@@ -335,6 +353,16 @@ impl Escrow {
     /// - `ClientAndArbiter` — client or arbiter (one is enough)
     /// - `MultiSig` — both client and freelancer must approve
     ///
+    /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
+    /// * `AlreadyFinalized` - If the contract has already been finalized
+    /// * Approval/auth/state errors bubbled up from `approvals::approve_milestone`
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE finalization checks, auth, TTL extension,
+    ///   and approval staging so no approval state mutates while the contract is frozen.
+    ///
     /// See `docs/escrow/approvals-and-release.md` for the full flow.
     pub fn approve_milestone_release(
         env: Env,
@@ -342,6 +370,7 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        Self::require_not_paused(&env);
         Self::require_not_finalized(&env, contract_id);
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
@@ -1567,6 +1596,51 @@ impl Escrow {
     /// Returns the pending governance admin address, if any.
     pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
         Self::get_pending_governance_admin_impl(&env)
+    }
+
+    /// Returns the current governance admin address.
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
+        Self::get_governance_admin_impl(&env)
+    }
+
+    /// Returns the current protocol fee in basis points.
+    pub fn get_protocol_fee_bps(env: Env) -> u32 {
+        Self::read_protocol_fee_bps(&env)
+    }
+
+    /// Sets the current protocol fee in basis points.
+    pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
+        Self::require_initialized(&env);
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+        admin.require_auth();
+
+        let old_bps = Self::read_protocol_fee_bps(&env);
+        env.storage().persistent().set(&DataKey::ProtocolFeeBps, &new_bps);
+        env.events().publish(
+            (Symbol::new(&env, "protocol_fee_bps"),),
+            (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Sets governed parameters and marks readiness metadata.
+    pub fn set_governed_params(
+        env: Env,
+        admin: Address,
+        protocol_fee_bps: u32,
+        max_escrow_total_stroops: i128,
+    ) -> bool {
+        Self::set_governed_params_impl(&env, admin, protocol_fee_bps, max_escrow_total_stroops)
+    }
+
+    /// Returns the current governed parameters.
+    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
+        Self::get_governed_parameters_impl(&env)
     }
 
     /// Returns the ledger sequence at which the pending admin proposal was made.

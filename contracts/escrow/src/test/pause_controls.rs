@@ -174,6 +174,60 @@ fn emergency_blocks_create_contract() {
     );
 }
 
+// ─── approve_milestone_release blocked ───────────────────────────────────────
+
+#[test]
+fn pause_blocks_approve_milestone_release() {
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
+    let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
+    client.pause();
+
+    super::assert_contract_error(
+        client.try_approve_milestone_release(&contract_id, &client_addr, &0),
+        Error::ContractPaused,
+    );
+    assert!(client.get_milestone_approvals(&contract_id, &0).is_none());
+}
+
+#[test]
+fn emergency_blocks_approve_milestone_release() {
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
+    let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
+    set_emergency_only(&env, &client);
+
+    super::assert_contract_error(
+        client.try_approve_milestone_release(&contract_id, &client_addr, &0),
+        Error::EmergencyActive,
+    );
+    assert!(client.get_milestone_approvals(&contract_id, &0).is_none());
+}
+
+#[test]
+fn unpause_restores_approve_milestone_release() {
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
+    let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
+    client.pause();
+    client.unpause();
+
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.get_milestone_approvals(&contract_id, &0).is_some());
+}
+
+#[test]
+fn resolve_emergency_restores_approve_milestone_release() {
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
+    let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
+    set_emergency_only(&env, &client);
+    assert!(client.resolve_emergency());
+
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.get_milestone_approvals(&contract_id, &0).is_some());
+}
+
 // ─── release_milestone blocked ───────────────────────────────────────────────
 
 #[test]
@@ -582,4 +636,19 @@ fn pause_gate_runs_before_auth_on_deposit_funds() {
         client.try_deposit_funds(&contract_id, &outsider, &50_i128),
         Error::ContractPaused,
     );
+}
+
+#[test]
+fn pause_gate_runs_before_auth_on_approve_milestone_release() {
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
+    let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
+    client.pause();
+
+    let outsider = Address::generate(&env);
+    super::assert_contract_error(
+        client.try_approve_milestone_release(&contract_id, &outsider, &0),
+        Error::ContractPaused,
+    );
+    assert!(client.get_milestone_approvals(&contract_id, &0).is_none());
 }
