@@ -36,7 +36,6 @@ Read-only queries:
 - `get_milestones(contract_id) -> Vec<Milestone>`
 - `get_refundable_balance(contract_id) -> i128`
 - `get_milestone_approvals(contract_id, milestone_index) -> Option<MilestoneApprovals>`
-- `get_work_evidence(contract_id, milestone_index) -> Option<String>`
 - `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_average_rating(freelancer) -> Option<i128>` — scaled average (see [Average Rating](#average-rating))
@@ -92,11 +91,6 @@ Per-getter details:
   when the contract id is unknown. Does not extend persistent TTL because
   approvals live in temporary storage bounded by
   `PENDING_APPROVAL_TTL_LEDGERS`.
-- `get_work_evidence(contract_id, milestone_index)` returns `Some(String)`
-  if the milestone exists and work evidence was submitted via
-  `submit_work_evidence`. Returns `None` when the index is out of bounds or
-  no evidence was recorded. Panics `ContractNotFound` for an unknown id.
-  Reads persist the milestones entry's TTL, consistent with `get_milestones`.
 
 These properties are locked in by tests under
 `contracts/escrow/src/test/persistence.rs` (issue #475).
@@ -108,34 +102,6 @@ Operational controls:
 - `unpause() -> bool`
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
-
-### Initialization-enforcing entrypoints
-
-The following lifecycle entrypoints call `require_initialized` as their **first
-guard**, before the pause/emergency check, before auth, and before any storage
-read. If `initialize` has not been called, they return `NotInitialized`
-immediately.
-
-This ensures the admin-controlled safety rails (pause, emergency, protocol
-fees) are always bound before any state mutation can occur.
-
-| Entrypoint | Gate order |
-|---|---|
-| `create_contract` | `require_initialized` → `require_not_paused` → auth → validation |
-| `deposit_funds` | `require_initialized` → `require_not_paused` → auth → validation |
-| `release_milestone` | `require_initialized` (via caller path) → `require_not_paused` → auth |
-| `cancel_contract` | `require_initialized` → `require_not_paused` → auth → state |
-| `submit_work_evidence` | `require_initialized` → `require_not_paused` → auth → state |
-| `raise_dispute` | `require_initialized` → `require_not_paused` → auth → state |
-| `resolve_dispute` | `require_initialized` → `require_not_paused` → auth → state |
-| `issue_reputation` | `require_initialized` → `require_not_paused` → auth → state |
-| `finalize_contract` | `require_initialized` → `require_not_paused` → auth → state |
-| `pause` / `unpause` | `require_initialized` → admin auth |
-| `resolve_emergency` | `require_initialized` → admin auth |
-| `set_governed_params` | `require_initialized` → admin auth |
-
-Read-only queries (`get_contract`, `get_milestones`, `is_paused`, etc.) are
-never blocked by the initialization check.
 
 Governance admin transfer (two-step):
 
@@ -236,17 +202,16 @@ escrow.release_milestone(&contract_id, &client_addr, &0);
    `ReleaseAuthorization`, milestone state, balance) hold.
 2. The escrow reads the bound settlement token; if no token has been bound it
    panics with `SettlementTokenNotConfigured`.
-3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`); the
+3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`, capped at
+   `10_000` basis points / 100%); the
    payout to the freelancer is `milestone.amount - fee`, with `fee` retained
    inside the contract via `DataKey::AccumulatedProtocolFees`.
 4. `token::Client::transfer(escrow, freelancer, payout)` is invoked BEFORE
    the milestone is marked released and the contract status is updated — so
    a token-transfer failure leaves the contract untouched.
 
-Whenever a contract successfully transitions to the `Completed` status—either 
-through the final milestone release, a refund operation that leaves some 
-milestones released, or a dispute resolution—exactly one pending reputation 
-credit is granted to the freelancer.
+When the final milestone is released, status becomes `Completed` and one
+pending reputation credit is added for the freelancer.
 
 `PendingReputationCredits` is a non-negative counter that tracks completed
 contracts awaiting client-issued reputation for a freelancer. `issue_reputation`

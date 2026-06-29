@@ -30,13 +30,18 @@ pub enum AmountValidationError {
 pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
     // Check positivity
     if amount <= MIN_POSITIVE_AMOUNT - 1 {
-        return Err(crate::EscrowError::AmountMustBePositive);
+        return Err(crate::Error::AmountMustBePositive);
     }
 
     // Check maximum bounds
     if amount > MAX_SINGLE_AMOUNT_STROOPS {
-        return Err(crate::EscrowError::InvalidMilestoneAmount);
+        // No direct canonical error; map to InvalidMilestoneAmount for generic excess amount
+        return Err(crate::Error::InvalidMilestoneAmount);
     }
+
+    // Check stroop precision (must be integer, which i128 already guarantees)
+    // In Stellar, stroop is the smallest unit, so any integer is valid
+    // This check is more for documentation and future-proofing
 
     Ok(())
 }
@@ -60,7 +65,7 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowErro
         if let Some(new_total) = total.checked_add(amount) {
             total = new_total;
         } else {
-            return Err(crate::EscrowError::PotentialOverflow);
+            return Err(crate::Error::PotentialOverflow);
         }
     }
 

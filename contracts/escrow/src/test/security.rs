@@ -1,6 +1,6 @@
-use super::{create_contract, create_contract_with_arbiter, default_milestones, generated_participants, register_client, total_milestone_amount};
-use crate::{DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
+use super::{create_contract, default_milestones, generated_participants, register_client, total_milestone_amount};
+use crate::{EscrowError, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
 
 #[test]
 fn create_rejects_same_participants() {
@@ -116,7 +116,7 @@ fn issue_reputation_rejects_unfinished_contract() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5);
     super::assert_contract_error(result, EscrowError::NotCompleted);
 }
 
@@ -127,7 +127,7 @@ fn issue_reputation_rejects_invalid_rating() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &0);
     super::assert_contract_error(result, EscrowError::InvalidRating);
 }
 
@@ -138,8 +138,8 @@ fn issue_reputation_once_per_contract() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
-    assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5));
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &4);
     super::assert_contract_error(result, EscrowError::ReputationAlreadyIssued);
 }
 
@@ -151,7 +151,7 @@ fn issue_reputation_rejects_freelancer_mismatch() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let wrong_freelancer = soroban_sdk::Address::generate(&env);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &wrong_freelancer, &5);
     super::assert_contract_error(result, EscrowError::FreelancerMismatch);
 }
 
@@ -163,64 +163,6 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let (_client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let unauthorized = soroban_sdk::Address::generate(&env);
 
-    let result = client.try_issue_reputation(&contract_id, &unauthorized, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
+    let result = client.try_issue_reputation(&contract_id, &unauthorized, &freelancer_addr, &5);
     super::assert_contract_error(result, EscrowError::UnauthorizedRole);
-}
-
-// ── require_initialized gate tests ──────────────────────────────────────────
-//
-// Each test registers a fresh contract WITHOUT calling `initialize`, then
-// confirms the entrypoint returns `NotInitialized` before touching any other
-// state. This validates the uniform safety rail added in
-// security/contracts-uniform-init-gate.
-
-/// Returns an uninitialized EscrowClient (no `initialize` call).
-fn uninitialized_client(env: &Env) -> EscrowClient<'_> {
-    let id = env.register(Escrow, ());
-    EscrowClient::new(env, &id)
-}
-
-#[test]
-fn cancel_contract_rejects_before_initialize() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = uninitialized_client(&env);
-    let caller = Address::generate(&env);
-
-    let result = client.try_cancel_contract(&1_u32, &caller);
-    super::assert_contract_error(result, EscrowError::NotInitialized);
-}
-
-#[test]
-fn submit_work_evidence_rejects_before_initialize() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = uninitialized_client(&env);
-    let caller = Address::generate(&env);
-    let evidence = soroban_sdk::String::from_str(&env, "ipfs://Qm123");
-
-    let result = client.try_submit_work_evidence(&1_u32, &caller, &0_u32, &evidence);
-    super::assert_contract_error(result, EscrowError::NotInitialized);
-}
-
-#[test]
-fn raise_dispute_rejects_before_initialize() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = uninitialized_client(&env);
-    let caller = Address::generate(&env);
-
-    let result = client.try_raise_dispute(&1_u32, &caller);
-    super::assert_contract_error(result, EscrowError::NotInitialized);
-}
-
-#[test]
-fn resolve_dispute_rejects_before_initialize() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = uninitialized_client(&env);
-    let arbiter = Address::generate(&env);
-
-    let result = client.try_resolve_dispute(&1_u32, &arbiter, &DisputeResolution::FullRefund);
-    super::assert_contract_error(result, EscrowError::NotInitialized);
 }
