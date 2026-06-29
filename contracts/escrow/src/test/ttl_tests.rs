@@ -9,17 +9,16 @@
 use soroban_sdk::{symbol_short, testutils::Ledger as _, Env, Symbol};
 
 use crate::{
+    approvals,
     ttl::{
         compute_expiry, extend_if_below_threshold, has_transient, read_if_live, remove_transient,
-        store_with_ttl,
+        store_with_ttl, LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD,
+        PENDING_APPROVAL_TTL_LEDGERS, PENDING_MIGRATION_BUMP_THRESHOLD,
+        PENDING_MIGRATION_TTL_LEDGERS,
     },
-    Escrow, LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS,
-    PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
+    Error, Escrow, ReleaseAuthorization,
 };
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-/// Large enough that the contract instance never archives during any test.
 const INSTANCE_TTL: u32 = PENDING_MIGRATION_TTL_LEDGERS * 4;
 
 fn setup() -> (Env, soroban_sdk::Address) {
@@ -33,12 +32,9 @@ fn setup() -> (Env, soroban_sdk::Address) {
     (env, contract_id)
 }
 
-/// Advance the ledger sequence and keep the contract instance alive by
-/// extending its persistent TTL to `INSTANCE_TTL` after the jump.
 fn advance(env: &Env, contract_id: &soroban_sdk::Address, by: u32) {
     env.ledger()
         .with_mut(|li| li.sequence_number = li.sequence_number.saturating_add(by));
-    // Re-extend the contract instance so it is never archived.
     env.as_contract(contract_id, || {
         env.storage()
             .instance()
@@ -53,8 +49,6 @@ fn approval_key() -> Symbol {
 fn migration_key() -> Symbol {
     symbol_short!("migr")
 }
-
-// ─── compute_expiry ───────────────────────────────────────────────────────────
 
 #[test]
 fn compute_expiry_equals_sequence_plus_ttl() {
@@ -74,19 +68,13 @@ fn compute_expiry_equals_sequence_plus_ttl() {
 
 #[test]
 fn compute_expiry_saturates_on_overflow() {
-    // Verify the saturating_add contract without needing the host at u32::MAX.
-    // At sequence 1_000 (setup default), adding u32::MAX saturates to u32::MAX.
     let (env, id) = setup();
     env.as_contract(&id, || {
-        let seq = env.ledger().sequence(); // 1_000
-                                           // saturating_add(u32::MAX) from any non-zero sequence == u32::MAX
+        let seq = env.ledger().sequence();
         assert_eq!(compute_expiry(&env, u32::MAX - seq), u32::MAX);
-        // One more would overflow without saturation; with it we stay at u32::MAX.
         assert_eq!(compute_expiry(&env, u32::MAX), u32::MAX);
     });
 }
-
-// ─── LEDGERS_PER_DAY math ─────────────────────────────────────────────────────
 
 #[test]
 fn ledgers_per_day_constant_is_correct() {
@@ -97,8 +85,6 @@ fn ledgers_per_day_constant_is_correct() {
     assert_eq!(PENDING_MIGRATION_BUMP_THRESHOLD, LEDGERS_PER_DAY * 3);
 }
 
-// ─── Approval TTL: read_if_live ───────────────────────────────────────────────
-
 #[test]
 fn approval_readable_before_expiry() {
     let (env, id) = setup();
@@ -106,7 +92,6 @@ fn approval_readable_before_expiry() {
         store_with_ttl(&env, &approval_key(), &42u32, PENDING_APPROVAL_TTL_LEDGERS);
     });
 
-    // One ledger before expiry — entry must still be live.
     advance(&env, &id, PENDING_APPROVAL_TTL_LEDGERS - 1);
 
     env.as_contract(&id, || {
@@ -122,7 +107,6 @@ fn approval_evicted_after_expiry() {
         store_with_ttl(&env, &approval_key(), &99u32, PENDING_APPROVAL_TTL_LEDGERS);
     });
 
-    // One ledger past the TTL — entry must be evicted.
     advance(&env, &id, PENDING_APPROVAL_TTL_LEDGERS + 1);
 
     env.as_contract(&id, || {
@@ -130,8 +114,6 @@ fn approval_evicted_after_expiry() {
         assert!(val.is_none(), "entry must be evicted after TTL elapses");
     });
 }
-
-// ─── Migration TTL: read_if_live ─────────────────────────────────────────────
 
 #[test]
 fn migration_readable_before_expiry() {
@@ -170,8 +152,6 @@ fn migration_evicted_after_expiry() {
     });
 }
 
-// ─── extend_if_below_threshold ───────────────────────────────────────────────
-
 #[test]
 fn extend_returns_false_for_absent_key() {
     let (env, id) = setup();
@@ -193,7 +173,6 @@ fn extend_returns_true_and_entry_survives_past_original_expiry() {
         store_with_ttl(&env, &approval_key(), &1u32, PENDING_APPROVAL_TTL_LEDGERS);
     });
 
-    // Advance to within the bump threshold (TTL nearly exhausted).
     advance(
         &env,
         &id,
@@ -210,7 +189,6 @@ fn extend_returns_true_and_entry_survives_past_original_expiry() {
         assert!(bumped, "must return true for a live entry");
     });
 
-    // Advance past the *original* expiry — entry should still be live after bump.
     advance(&env, &id, PENDING_APPROVAL_BUMP_THRESHOLD + 1);
 
     env.as_contract(&id, || {
@@ -235,8 +213,6 @@ fn extend_migration_returns_false_for_absent_key() {
         assert!(!result);
     });
 }
-
-// ─── remove_transient ────────────────────────────────────────────────────────
 
 #[test]
 fn remove_transient_clears_entry_immediately() {
@@ -263,13 +239,10 @@ fn remove_transient_is_idempotent() {
     env.as_contract(&id, || {
         store_with_ttl(&env, &approval_key(), &5u32, PENDING_APPROVAL_TTL_LEDGERS);
         remove_transient(&env, &approval_key());
-        // Second remove must not panic.
         remove_transient(&env, &approval_key());
         assert!(!has_transient(&env, &approval_key()));
     });
 }
-
-// ─── has_transient ────────────────────────────────────────────────────────────
 
 #[test]
 fn has_transient_false_before_store() {
@@ -297,8 +270,6 @@ fn has_transient_true_after_store_false_after_expiry() {
     });
 }
 
-// ─── Determinism ─────────────────────────────────────────────────────────────
-
 #[test]
 fn expiry_is_deterministic_across_independent_envs() {
     let (env_a, id_a) = setup();
@@ -315,4 +286,215 @@ fn expiry_is_deterministic_across_independent_envs() {
         expiry_a, expiry_b,
         "expiry must be deterministic given the same starting sequence"
     );
+}
+
+mod approval_ttl_integration {
+    use super::*;
+    use crate::{Contract, ContractStatus, DataKey, Milestone};
+
+    fn setup_env_with_contract() -> (
+        Env,
+        soroban_sdk::Address,
+        soroban_sdk::Address,
+        soroban_sdk::Address,
+        u32,
+        soroban_sdk::Address,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|li| {
+            li.max_entry_ttl = INSTANCE_TTL;
+            li.min_persistent_entry_ttl = INSTANCE_TTL;
+            li.sequence_number = 1_000;
+        });
+
+        let escrow_id = env.register(Escrow, ());
+        let client_addr = soroban_sdk::Address::generate(&env);
+        let freelancer_addr = soroban_sdk::Address::generate(&env);
+        let arbiter_addr = soroban_sdk::Address::generate(&env);
+
+        let contract = Contract {
+            client: client_addr.clone(),
+            freelancer: freelancer_addr.clone(),
+            arbiter: None,
+            status: ContractStatus::Funded,
+            total_deposited: 6000_0000000_i128,
+            funded_amount: 6000_0000000_i128,
+            released_amount: 0,
+            refunded_amount: 0,
+            release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
+        };
+
+        env.as_contract(&escrow_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Contract(1), &contract);
+            let milestones = soroban_sdk::Vec::from_array(
+                &env,
+                [Milestone {
+                    amount: 6000_0000000_i128,
+                    funded_amount: 0,
+                    released: false,
+                    refunded: false,
+                    work_evidence: None,
+                    refunded_amount: 0,
+                    deadline: None,
+                }],
+            );
+            let milestone_key = Symbol::new(&env, "milestones");
+            env.storage()
+                .persistent()
+                .set(&(DataKey::Contract(1), milestone_key), &milestones);
+        });
+
+        (
+            env,
+            client_addr,
+            freelancer_addr,
+            arbiter_addr,
+            1,
+            escrow_id,
+        )
+    }
+
+    #[test]
+    fn check_approvals_returns_insufficient_after_ttl_elapses() {
+        let (env, client, _freelancer, _arbiter, contract_id, escrow_id) =
+            setup_env_with_contract();
+
+        env.as_contract(&escrow_id, || {
+            approvals::approve_milestone(&env, contract_id, 0, &client).unwrap();
+        });
+
+        let check_before = env.as_contract(&escrow_id, || {
+            let contract: Contract = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Contract(contract_id))
+                .unwrap();
+            approvals::check_approvals(&env, &contract, contract_id, 0)
+        });
+        assert!(check_before.is_ok(), "approval should be valid before TTL");
+
+        advance(&env, &escrow_id, PENDING_APPROVAL_TTL_LEDGERS + 1);
+
+        let check_after = env.as_contract(&escrow_id, || {
+            let contract: Contract = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Contract(contract_id))
+                .unwrap();
+            approvals::check_approvals(&env, &contract, contract_id, 0)
+        });
+        assert_eq!(
+            check_after,
+            Err(Error::InsufficientApprovals),
+            "check_approvals must return InsufficientApprovals after TTL expires"
+        );
+    }
+
+    #[test]
+    fn check_approvals_valid_within_ttl() {
+        let (env, client, _freelancer, _arbiter, contract_id, escrow_id) =
+            setup_env_with_contract();
+
+        env.as_contract(&escrow_id, || {
+            approvals::approve_milestone(&env, contract_id, 0, &client).unwrap();
+        });
+
+        advance(&env, &escrow_id, PENDING_APPROVAL_TTL_LEDGERS / 2);
+
+        let check = env.as_contract(&escrow_id, || {
+            let contract: Contract = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Contract(contract_id))
+                .unwrap();
+            approvals::check_approvals(&env, &contract, contract_id, 0)
+        });
+        assert!(check.is_ok(), "approval should be valid within TTL");
+    }
+
+    #[test]
+    fn check_approvals_multisig_both_required() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|li| {
+            li.max_entry_ttl = INSTANCE_TTL;
+            li.min_persistent_entry_ttl = INSTANCE_TTL;
+            li.sequence_number = 1_000;
+        });
+
+        let escrow_id = env.register(Escrow, ());
+        let client_addr = soroban_sdk::Address::generate(&env);
+        let freelancer_addr = soroban_sdk::Address::generate(&env);
+
+        let contract = Contract {
+            client: client_addr.clone(),
+            freelancer: freelancer_addr.clone(),
+            arbiter: None,
+            status: ContractStatus::Funded,
+            total_deposited: 6000_0000000_i128,
+            funded_amount: 6000_0000000_i128,
+            released_amount: 0,
+            refunded_amount: 0,
+            release_authorization: ReleaseAuthorization::MultiSig,
+            reputation_issued: false,
+        };
+
+        env.as_contract(&escrow_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Contract(1), &contract);
+            let milestones = soroban_sdk::Vec::from_array(
+                &env,
+                [Milestone {
+                    amount: 6000_0000000_i128,
+                    funded_amount: 0,
+                    released: false,
+                    refunded: false,
+                    work_evidence: None,
+                    refunded_amount: 0,
+                    deadline: None,
+                }],
+            );
+            let milestone_key = Symbol::new(&env, "milestones");
+            env.storage()
+                .persistent()
+                .set(&(DataKey::Contract(1), milestone_key), &milestones);
+        });
+
+        env.as_contract(&escrow_id, || {
+            approvals::approve_milestone(&env, 1, 0, &client_addr).unwrap();
+        });
+
+        let check = env.as_contract(&escrow_id, || {
+            let contract: Contract = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Contract(1))
+                .unwrap();
+            approvals::check_approvals(&env, &contract, 1, 0)
+        });
+        assert_eq!(
+            check,
+            Err(Error::InsufficientApprovals),
+            "MultiSig requires both approvals"
+        );
+
+        env.as_contract(&escrow_id, || {
+            approvals::approve_milestone(&env, 1, 0, &freelancer_addr).unwrap();
+        });
+
+        let check2 = env.as_contract(&escrow_id, || {
+            let contract: Contract = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Contract(1))
+                .unwrap();
+            approvals::check_approvals(&env, &contract, 1, 0)
+        });
+        assert!(check2.is_ok(), "MultiSig passes with both approvals");
+    }
 }
