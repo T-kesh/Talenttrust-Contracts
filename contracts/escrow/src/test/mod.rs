@@ -7,6 +7,7 @@ use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Release
 
 // --- Submodules ---
 
+mod accounting_invariants;
 mod client_migration;
 mod dispute;
 mod emergency_controls;
