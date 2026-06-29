@@ -196,6 +196,25 @@ impl Escrow {
         Self::read_settlement_token(&env)
     }
 
+    /// Returns `true` exactly when a settlement token is bound.
+    ///
+    /// This is the recommended cheap pre-flight readiness check before calling
+    /// [`deposit_funds`], which panics when no settlement token has been bound.
+    /// Integrators that only need to know *whether* the escrow can accept
+    /// deposits — without caring about the specific token address — should use
+    /// this instead of fetching and discarding the `Address` from
+    /// [`get_settlement_token`].
+    ///
+    /// Read-only and auth-free: it performs no state mutation (no TTL write is
+    /// needed for the simple binding key).
+    ///
+    /// # Returns
+    /// * `true` if a settlement token is bound
+    /// * `false` if no settlement token has been bound yet
+    pub fn is_settlement_token_bound(env: Env) -> bool {
+        Self::read_settlement_token(&env).is_some()
+    }
+
     /// Returns the stored governance admin address, or `None` if not set.
     pub fn get_governance_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
