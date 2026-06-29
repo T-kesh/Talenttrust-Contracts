@@ -1055,6 +1055,41 @@ impl Escrow {
         milestones
     }
 
+    /// Retrieves a single milestone by index for a contract.
+    ///
+    /// This is the bounds-checked single-item counterpart to
+    /// [`get_milestones`]. Off-chain callers that only need one milestone's
+    /// state (amount, funded/released/refunded flags, deadline, work evidence)
+    /// can avoid fetching and decoding the full `Vec<Milestone>`.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `milestone_index` - The zero-based index of the milestone to read
+    ///
+    /// # Returns
+    /// * `Some(Milestone)` if `milestone_index` is in bounds
+    /// * `None` if `milestone_index` is out of bounds
+    ///
+    /// # Panics
+    /// Panics with `ContractNotFound` if the contract's milestones were never
+    /// allocated (i.e. the contract id is unknown), matching
+    /// [`get_milestones`].
+    ///
+    /// # Side effects
+    /// Extends the milestones vector TTL on a successful read, consistent with
+    /// [`get_milestones`]. Auth-free and otherwise non-mutating.
+    pub fn get_milestone(env: Env, contract_id: u32, milestone_index: u32) -> Option<Milestone> {
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        ttl::extend_milestone_ttl(&env, contract_id);
+        milestones.get(milestone_index)
+    }
+
     /// Returns funded minus released minus refunded for `contract_id`.
     pub fn get_refundable_balance(env: Env, contract_id: u32) -> i128 {
         let contract: Contract = env
