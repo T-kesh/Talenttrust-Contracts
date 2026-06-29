@@ -6,7 +6,6 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // --- Submodules ---
-
 mod client_migration;
 mod dispute;
 mod emergency_controls;
@@ -14,6 +13,7 @@ mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
 mod release_authorization;
+mod security;
 
 // --- Shared constants ---
 

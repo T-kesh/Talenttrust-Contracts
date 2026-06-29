@@ -166,3 +166,102 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let result = client.try_issue_reputation(&contract_id, &unauthorized, &freelancer_addr, &5);
     super::assert_contract_error(result, EscrowError::UnauthorizedRole);
 }
+
+
+/// Finalize a completed contract and return all identifiers.
+fn finalized_contract(
+    env: &Env,
+) -> (
+    crate::EscrowClient<'_>,
+    soroban_sdk::Address,
+    soroban_sdk::Address,
+    u32,
+) {
+    let client = register_client(env);
+    let (client_addr, freelancer_addr, contract_id) =
+        super::complete_contract(env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    (client, client_addr, freelancer_addr, contract_id)
+}
+
+#[test]
+fn finalized_contract_read_operations_still_work() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, contract_id) = finalized_contract(&env);
+
+    let contract = client.get_contract(&contract_id);
+    assert_eq!(contract.status, crate::ContractStatus::Completed);
+
+    let record = client.get_finalization_record(&contract_id);
+    assert!(record.is_some());
+}
+
+
+#[test]
+fn finalize_cannot_be_called_twice() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, client_addr, _, contract_id) = finalized_contract(&env);
+
+    let result = client.try_finalize_contract(&contract_id, &client_addr);
+
+    super::assert_contract_error(
+        result,
+        EscrowError::AlreadyFinalized,
+    );
+}
+
+#[test]
+fn finalized_contract_rejects_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, client_addr, _, contract_id) = finalized_contract(&env);
+
+    let result =
+        client.try_cancel_contract(&contract_id, &client_addr);
+
+    super::assert_contract_error(
+        result,
+        EscrowError::AlreadyFinalized,
+    );
+}
+
+#[test]
+fn finalized_contract_rejects_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, contract_id) = finalized_contract(&env);
+
+    let indices = vec![&env, 0u32];
+
+    let result =
+        client.try_refund_unreleased_milestones(&contract_id, &indices);
+
+    super::assert_contract_error(
+        result,
+        EscrowError::AlreadyFinalized,
+    );
+}
+
+#[test]
+fn finalized_contract_rejects_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, client_addr, _, contract_id) = finalized_contract(&env);
+
+    let result =
+        client.try_release_milestone(&contract_id, &client_addr, &0);
+
+    super::assert_contract_error(
+        result,
+        EscrowError::AlreadyFinalized,
+    );
+}
