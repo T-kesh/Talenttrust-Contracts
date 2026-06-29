@@ -1815,10 +1815,19 @@ impl Escrow {
 
     /// Computes the protocol fee for a given `amount` at `fee_bps` basis points.
     ///
-    /// Uses integer floor division: `fee = amount * fee_bps / 10_000`.
+    /// Uses integer **floor division**: `fee = amount * fee_bps / 10_000`.
+    /// The result always rounds down — it never rounds up — so the freelancer
+    /// receives at least `amount - fee` stroops and the protocol receives at most
+    /// the floored value.  Callers must ensure `fee <= amount` holds; this is
+    /// guaranteed for any `fee_bps` in `[0, 10_000]` and a non-negative `amount`.
+    ///
+    /// # Short-circuit
+    /// Returns `0` immediately when `fee_bps == 0`, skipping the multiplication.
     ///
     /// # Panics
-    /// Panics with `PotentialOverflow` if `amount * fee_bps` overflows `i128`.
+    /// Panics with `PotentialOverflow` (error code 28) if `amount * fee_bps`
+    /// overflows `i128`.  Callers should keep `amount` well below `i128::MAX /
+    /// fee_bps` to avoid this guard.
     pub fn calculate_protocol_fee(env: &Env, amount: i128, fee_bps: u32) -> i128 {
         if fee_bps == 0 {
             return 0;
