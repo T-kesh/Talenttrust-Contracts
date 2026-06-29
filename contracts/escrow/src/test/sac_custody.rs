@@ -128,6 +128,32 @@ fn bind_settlement_token_admin_can_bind_and_query_returns_some() {
 }
 
 #[test]
+fn is_settlement_token_bound_false_before_bind_true_after() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    // Pre-flight readiness probe must report false before any token is bound.
+    assert!(
+        !client.is_settlement_token_bound(),
+        "no token bound yet: readiness must be false"
+    );
+
+    let sac = env.register_stellar_asset_contract(admin.clone());
+    assert!(client.bind_settlement_token(&sac));
+
+    // After a successful bind the escrow is ready to accept deposits.
+    assert!(
+        client.is_settlement_token_bound(),
+        "token bound: readiness must be true"
+    );
+    // The boolean reader must agree with the Address-returning reader.
+    assert_eq!(client.get_settlement_token().is_some(), client.is_settlement_token_bound());
+}
+
+#[test]
 fn bind_settlement_token_rejects_double_bind() {
     let env = Env::default();
     env.mock_all_auths();
