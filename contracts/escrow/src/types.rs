@@ -166,6 +166,8 @@ pub enum Error {
     TimelockNotElapsed = 48,
     /// The provided protocol parameters are invalid.
     InvalidProtocolParameters = 49,
+    /// The escrow cap would be exceeded by this operation.
+    EscrowCapExceeded = 51,
 }
 
 
@@ -246,44 +248,6 @@ pub enum DepositMode {
     Incremental = 1,
 }
 
-// ── Storage keys ─────────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DataKey {
-    // Admin / pause / emergency
-    Initialized,
-    Admin,
-    Paused,
-    Emergency,
-    // Contract storage
-    Contract(u32),
-    NextContractId,
-    MilestoneReleased(u32, u32),
-    MilestoneApprovals(u32, u32),
-    // Reputation
-    ReputationIssued(u32),
-    PendingReputationCredits(Address),
-    Reputation(Address),
-    ReputationComment(u32),
-    // Client migration
-    PendingClientMigration(u32),
-    // Protocol / governance
-    GovernanceAdmin,
-    PendingGovernanceAdmin,
-    ProtocolParameters,
-    ProtocolFeeBps,
-    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
-    PendingAdmin,
-    AccumulatedProtocolFees,
-    GovernedParameters,
-    ReadinessChecklist,
-    // Finalization
-    Finalization(u32),
-    // Settlement token
-    SettlementToken,
-}
-
 // ── Governance / readiness ───────────────────────────────────────────────────
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
@@ -355,56 +319,22 @@ pub enum DisputeResolution {
     Split(DisputeSplit),
 }
 
-// ── Canonical contract error type ────────────────────────────────────────────
-
-/// Canonical contract error type for all entrypoint-facing errors.
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum Error {
-    IndexOutOfBounds = 3,
-    AlreadyReleased = 4,
-    EmptyRefundRequest = 6,
-    DuplicateMilestoneInRefund = 7,
-    AlreadyRefunded = 8,
-    InsufficientFunds = 9,
-    ContractNotFound = 10,
-    UnauthorizedRole = 11,
-    MissingArbiter = 12,
-    InvalidArbiter = 13,
-    InvalidParticipants = 14,
-    AmountMustBePositive = 15,
-    InvalidState = 16,
-    MilestoneAlreadyReleased = 17,
-    AlreadyApproved = 18,
-    InsufficientApprovals = 20,
-    FreelancerMismatch = 21,
-    InvalidRating = 22,
-    ReputationAlreadyIssued = 23,
-    EmptyMilestones = 25,
-    InvalidMilestoneAmount = 26,
-    ContractIdCollision = 27,
-    ContractIdOverflow = 28,
-    EmptyComment = 29,
-    CommentTooLong = 30,
-    InvalidParticipant = 31,
-    InvalidDepositAmount = 32,
-    InvalidMilestone = 33,
-    AlreadyInitialized = 34,
-    InsufficientAccumulatedFees = 35,
-    NotInitialized = 36,
-    ContractPaused = 37,
-    EmergencyActive = 38,
-    SelfRating = 39,
-    NotCompleted = 40,
-    InvalidStatusTransition = 41,
-    ArbiterRequired = 42,
-    InvalidDisputeSplit = 43,
-    AccountingInvariantViolated = 44,
-    PotentialOverflow = 45,
-    AlreadyFinalized = 46,
-    EvidenceTooLong = 47,
-    TimelockNotElapsed = 48,
-    InvalidProtocolParameters = 49,
-    EscrowCapExceeded = 50,
+impl DisputeResolution {
+    /// Returns a short numeric code for use in event payloads.
+    ///
+    /// | Variant        | Code |
+    /// |----------------|------|
+    /// | `FullRefund`   |  0   |
+    /// | `PartialRefund`|  1   |
+    /// | `FullPayout`   |  2   |
+    /// | `Split`        |  3   |
+    pub fn code(&self) -> u32 {
+        match self {
+            DisputeResolution::FullRefund => 0,
+            DisputeResolution::PartialRefund => 1,
+            DisputeResolution::FullPayout => 2,
+            DisputeResolution::Split(_) => 3,
+        }
+    }
 }
+
