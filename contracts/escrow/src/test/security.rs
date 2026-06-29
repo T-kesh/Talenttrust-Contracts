@@ -1,6 +1,6 @@
-use super::{create_contract, default_milestones, generated_participants, register_client, total_milestone_amount};
-use crate::{EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
+use super::{create_contract, create_contract_with_arbiter, default_milestones, generated_participants, register_client, total_milestone_amount};
+use crate::{DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
 #[test]
 fn create_rejects_same_participants() {
@@ -165,4 +165,62 @@ fn issue_reputation_rejects_unauthorized_caller() {
 
     let result = client.try_issue_reputation(&contract_id, &unauthorized, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::UnauthorizedRole);
+}
+
+// ── require_initialized gate tests ──────────────────────────────────────────
+//
+// Each test registers a fresh contract WITHOUT calling `initialize`, then
+// confirms the entrypoint returns `NotInitialized` before touching any other
+// state. This validates the uniform safety rail added in
+// security/contracts-uniform-init-gate.
+
+/// Returns an uninitialized EscrowClient (no `initialize` call).
+fn uninitialized_client(env: &Env) -> EscrowClient<'_> {
+    let id = env.register(Escrow, ());
+    EscrowClient::new(env, &id)
+}
+
+#[test]
+fn cancel_contract_rejects_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialized_client(&env);
+    let caller = Address::generate(&env);
+
+    let result = client.try_cancel_contract(&1_u32, &caller);
+    super::assert_contract_error(result, EscrowError::NotInitialized);
+}
+
+#[test]
+fn submit_work_evidence_rejects_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialized_client(&env);
+    let caller = Address::generate(&env);
+    let evidence = soroban_sdk::String::from_str(&env, "ipfs://Qm123");
+
+    let result = client.try_submit_work_evidence(&1_u32, &caller, &0_u32, &evidence);
+    super::assert_contract_error(result, EscrowError::NotInitialized);
+}
+
+#[test]
+fn raise_dispute_rejects_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialized_client(&env);
+    let caller = Address::generate(&env);
+
+    let result = client.try_raise_dispute(&1_u32, &caller);
+    super::assert_contract_error(result, EscrowError::NotInitialized);
+}
+
+#[test]
+fn resolve_dispute_rejects_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = uninitialized_client(&env);
+    let arbiter = Address::generate(&env);
+
+    let result = client.try_resolve_dispute(&1_u32, &arbiter, &DisputeResolution::FullRefund);
+    super::assert_contract_error(result, EscrowError::NotInitialized);
 }

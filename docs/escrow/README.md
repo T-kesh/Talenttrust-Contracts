@@ -109,6 +109,34 @@ Operational controls:
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
 
+### Initialization-enforcing entrypoints
+
+The following lifecycle entrypoints call `require_initialized` as their **first
+guard**, before the pause/emergency check, before auth, and before any storage
+read. If `initialize` has not been called, they return `NotInitialized`
+immediately.
+
+This ensures the admin-controlled safety rails (pause, emergency, protocol
+fees) are always bound before any state mutation can occur.
+
+| Entrypoint | Gate order |
+|---|---|
+| `create_contract` | `require_initialized` → `require_not_paused` → auth → validation |
+| `deposit_funds` | `require_initialized` → `require_not_paused` → auth → validation |
+| `release_milestone` | `require_initialized` (via caller path) → `require_not_paused` → auth |
+| `cancel_contract` | `require_initialized` → `require_not_paused` → auth → state |
+| `submit_work_evidence` | `require_initialized` → `require_not_paused` → auth → state |
+| `raise_dispute` | `require_initialized` → `require_not_paused` → auth → state |
+| `resolve_dispute` | `require_initialized` → `require_not_paused` → auth → state |
+| `issue_reputation` | `require_initialized` → `require_not_paused` → auth → state |
+| `finalize_contract` | `require_initialized` → `require_not_paused` → auth → state |
+| `pause` / `unpause` | `require_initialized` → admin auth |
+| `resolve_emergency` | `require_initialized` → admin auth |
+| `set_governed_params` | `require_initialized` → admin auth |
+
+Read-only queries (`get_contract`, `get_milestones`, `is_paused`, etc.) are
+never blocked by the initialization check.
+
 Governance admin transfer (two-step):
 
 - `propose_governance_admin(proposed) -> bool`

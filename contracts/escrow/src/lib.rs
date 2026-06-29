@@ -856,9 +856,14 @@ impl Escrow {
     /// * `InvalidState` - If contract is not in Created, PartiallyFunded, or Funded state
     ///
     /// # Security
+    /// * Initialization check runs FIRST so the admin-controlled safety rails
+    ///   (pause, emergency) are always bound before any state can be mutated.
     /// * Pause/emergency gate runs BEFORE contract state read so a paused
     ///   contract cannot have its cancellation path tread on the record.
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         let mut contract: Contract = env
             .storage()
@@ -891,11 +896,19 @@ impl Escrow {
     // ── Dispute management ────────────────────────────────────────────────────
 
     /// Opens a dispute on a funded or partially funded escrow.
+    ///
+    /// # Errors
+    /// * `NotInitialized` - If `initialize` has not been called
+    /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
     pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
         Self::raise_dispute_impl(env, contract_id, caller)
     }
 
     /// Resolves an open dispute with the arbiter-selected resolution.
+    ///
+    /// # Errors
+    /// * `NotInitialized` - If `initialize` has not been called
+    /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
     pub fn resolve_dispute(
         env: Env,
         contract_id: u32,
@@ -1071,6 +1084,7 @@ impl Escrow {
     /// * `evidence`    - Deliverable reference; max 256 bytes
     ///
     /// # Errors
+    /// * `NotInitialized`     — `initialize` has not been called
     /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
     /// * `ContractNotFound`   — unknown `contract_id`
     /// * `AlreadyFinalized`   — contract has been finalized
@@ -1087,6 +1101,9 @@ impl Escrow {
         milestone_index: u32,
         evidence: String,
     ) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         caller.require_auth();
 
@@ -1397,6 +1414,7 @@ impl Escrow {
     /// `true` if the dispute was successfully opened
     ///
     /// # Errors
+    /// * `NotInitialized` - If `initialize` has not been called
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `UnauthorizedRole` - If caller is not client or freelancer
     /// * `ArbiterRequired` - If no arbiter is assigned to the contract
@@ -1410,6 +1428,9 @@ impl Escrow {
     /// - Blocks milestone releases while disputed
     /// - Respects pause and emergency controls
     pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         caller.require_auth();
 
@@ -1469,6 +1490,7 @@ impl Escrow {
     /// `true` if the dispute was successfully resolved
     ///
     /// # Errors
+    /// * `NotInitialized` - If `initialize` has not been called
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `UnauthorizedRole` - If caller is not the assigned arbiter
     /// * `InvalidStatusTransition` - If contract is not in Disputed state
@@ -1490,6 +1512,9 @@ impl Escrow {
         arbiter: Address,
         resolution: DisputeResolution,
     ) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         arbiter.require_auth();
 
