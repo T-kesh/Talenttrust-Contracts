@@ -89,10 +89,17 @@ impl Escrow {
 
 #[contractimpl]
 impl Escrow {
-    /// Set the settlement token for the escrow contract.
+    /// Bind the single Stellar Asset Contract (SAC) token this escrow instance will custody.
     ///
-    /// Writes the canonical [`DataKey::SettlementToken`] binding used by escrow
-    /// funding, releases, refunds, and protocol-fee withdrawal paths.
+    /// This is a **write-once** step: once a token is recorded under
+    /// [`DataKey::SettlementToken`] all subsequent money-flow entrypoints
+    /// (`deposit_funds`, `release_milestone`, `refund_unreleased_milestones`,
+    /// `cancel_contract`, `withdraw_protocol_fees`) read that address to execute SAC
+    /// `transfer` calls.  A second call with any token address is rejected with
+    /// `SettlementTokenAlreadyBound`.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model, accounting invariant, and lifecycle sequence diagram.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -306,7 +313,15 @@ impl Escrow {
         )
     }
 
-    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    /// Pull the settlement-token deposit from the client into the escrow contract address.
+    ///
+    /// Executes `SAC::transfer(from: client, to: escrow_address, amount)` and advances
+    /// status from `Created` to `Funded` once the full milestone sum has been deposited.
+    /// Requires `bind_settlement_token` to have been called first; panics with
+    /// `SettlementTokenNotConfigured` otherwise.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model and accounting invariant.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -318,6 +333,7 @@ impl Escrow {
     /// `true` if deposit was successful
     ///
     /// # Errors
+    /// * `SettlementTokenNotConfigured` - If `bind_settlement_token` has not been called
     /// * `AmountMustBePositive` - If amount is <= 0
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Created state
@@ -443,7 +459,15 @@ impl Escrow {
         env.storage().persistent().set(&pending_key, &(pending + 1));
     }
 
-    /// Releases a specific milestone, transferring funds to the freelancer.
+    /// Releases a specific milestone, transferring the net payout to the freelancer.
+    ///
+    /// Executes `SAC::transfer(from: escrow_address, to: freelancer, milestone.amount − fee)`.
+    /// The protocol fee is retained inside the contract under
+    /// `DataKey::AccumulatedProtocolFees` and stays commingled with the escrow balance
+    /// until `withdraw_protocol_fees` is called.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model and accounting invariant.
     ///
     /// The target milestone must be fully funded through per-milestone deposit
     /// allocation before it can be released.
@@ -1688,7 +1712,15 @@ impl Escrow {
             .unwrap_or(0)
     }
 
-    /// Withdraws accumulated protocol fees.
+    /// Drains accrued protocol fees from the escrow contract to a treasury address.
+    ///
+    /// Executes `SAC::transfer(from: escrow_address, to: treasury, amount)`.  Protocol
+    /// fees accumulate in `DataKey::AccumulatedProtocolFees` as each milestone is
+    /// released; they remain commingled with the escrow's SAC balance until this
+    /// entrypoint is called.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model, accounting invariant, and security notes on commingled fees.
     ///
     /// Requires the stored admin's authorization. Only an amount up to the
     /// currently accumulated fees can be withdrawn.

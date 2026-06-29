@@ -488,6 +488,67 @@ fn release_milestone_rejects_when_token_unbound() {
     );
 }
 
+// ─── Accounting invariant ─────────────────────────────────────────────────────
+
+/// Verify the balance invariant documented in docs/escrow/sac-custody.md:
+///   escrow_sac_balance == funded_amount − released_amount − refunded_amount + accrued_fees
+///
+/// This test exercises bind → deposit → release (with fee) → verify invariant
+/// at each step.
+#[test]
+fn sac_custody_accounting_invariant_holds_after_deposit_and_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (escrow, sac, _admin, client_addr, freelancer_addr, id) = setup_and_funded_partial(&env, 0);
+    let total = total_milestone_amount();
+    mint_to(&env, &sac, &client_addr, total);
+
+    let token = TokenClient::new(&env, &sac);
+
+    // Before deposit: escrow holds nothing.
+    assert_eq!(token.balance(&escrow.address), 0_i128);
+
+    // Deposit: escrow balance == funded_amount, released == 0, refunded == 0, fees == 0.
+    escrow.deposit_funds(&id, &client_addr, &total);
+    let contract = escrow.get_contract(&id);
+    let escrow_bal: i128 = token.balance(&escrow.address);
+    // invariant: balance == funded - released - refunded + accrued_fees
+    // accrued_fees == 0 before any release.
+    assert_eq!(
+        escrow_bal,
+        contract.funded_amount - contract.released_amount - contract.refunded_amount,
+        "invariant violated after deposit"
+    );
+
+    // Release milestone 0 with a 500 bps (5 %) fee.
+    escrow.set_protocol_fee_bps(&500u32);
+    let fee_bps: i128 = 500;
+    let m0_amount = MILESTONE_ONE;
+    let m0_fee = m0_amount * fee_bps / 10_000;
+
+    escrow.approve_milestone_release(&id, &client_addr, &0);
+    escrow.release_milestone(&id, &client_addr, &0);
+
+    let contract = escrow.get_contract(&id);
+    let accrued: i128 = escrow.get_accumulated_protocol_fees();
+    let escrow_bal: i128 = token.balance(&escrow.address);
+
+    // invariant: balance == funded - released - refunded + accrued_fees
+    assert_eq!(
+        escrow_bal,
+        contract.funded_amount - contract.released_amount - contract.refunded_amount + accrued,
+        "invariant violated after milestone release"
+    );
+
+    // Fee was retained: freelancer received gross minus fee.
+    assert_eq!(token.balance(&freelancer_addr), m0_amount - m0_fee);
+
+    // Accrued fees == fee deducted.
+    assert_eq!(accrued, m0_fee);
+    let _ = (client_addr,);
+}
+
 // ─── Compound ⛓ end-to-end ────────────────────────────────────────────────────
 
 #[test]
