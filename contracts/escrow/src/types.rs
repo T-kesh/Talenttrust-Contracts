@@ -166,6 +166,8 @@ pub enum Error {
     TimelockNotElapsed = 48,
     /// The provided protocol parameters are invalid.
     InvalidProtocolParameters = 49,
+    /// The escrow cap would be exceeded by this operation.
+    EscrowCapExceeded = 51,
 }
 
 
@@ -327,3 +329,4 @@ impl DisputeResolution {
         }
     }
 }
+

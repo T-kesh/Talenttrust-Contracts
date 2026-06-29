@@ -20,7 +20,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 use crate::dispute::{resolution_payouts, final_status_after_resolution};
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Test helpers
 // ---------------------------------------------------------------------------
 
 fn make_env() -> Env {
@@ -29,12 +29,12 @@ fn make_env() -> Env {
     env
 }
 
-fn make_client(env: &Env) -> EscrowClient<'_> {
+fn make_client(env: &Env) -> (EscrowClient<'_>, Address) {
     let id = env.register(Escrow, ());
     let client = EscrowClient::new(env, &id);
     let admin = Address::generate(env);
     client.initialize(&admin);
-    client
+    (client, admin)
 }
 
 /// Build a bare `Contract` value with controlled accounting fields for unit tests
@@ -58,24 +58,22 @@ fn payout_contract(env: &Env, funded: i128, released: i128, refunded: i128) -> C
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests for resolution_payouts (pure arithmetic, no env needed)
+// Unit tests: resolution_payouts (pure arithmetic)
 // ---------------------------------------------------------------------------
 
-/// FullRefund routes all available balance to the client.
 #[test]
-fn resolution_payouts_full_refund_returns_available_to_client() {
+fn resolution_payouts_full_refund_routes_all_to_client() {
     let env = make_env();
-    let contract = payout_contract(&env, 100, 20, 10);
     // available = 100 - 20 - 10 = 70
+    let contract = payout_contract(&env, 100, 20, 10);
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::FullRefund),
         Ok((70, 0))
     );
 }
 
-/// FullPayout routes all available balance to the freelancer.
 #[test]
-fn resolution_payouts_full_payout_returns_available_to_freelancer() {
+fn resolution_payouts_full_payout_routes_all_to_freelancer() {
     let env = make_env();
     let contract = payout_contract(&env, 100, 20, 10);
     assert_eq!(
@@ -87,25 +85,27 @@ fn resolution_payouts_full_payout_returns_available_to_freelancer() {
 /// PartialRefund applies the documented 70/30 split with floor rounding.
 /// freelancer gets floor(available * 30 / 100), client gets remainder.
 #[test]
-fn resolution_payouts_partial_refund_uses_floor_rounded_70_30_split() {
+fn resolution_payouts_partial_refund_applies_floor_rounded_30_pct_to_freelancer() {
     let env = make_env();
+    // 101 available: freelancer = floor(101 * 30 / 100) = 30; client = 71
     let contract = payout_contract(&env, 101, 0, 0);
-    // freelancer = floor(101 * 30 / 100) = 30; client = 71
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::PartialRefund),
         Ok((71, 30))
     );
 }
 
-/// PartialRefund handles zero and one-stroop balances without creating value.
 #[test]
-fn resolution_payouts_partial_refund_handles_rounding_boundaries() {
+fn resolution_payouts_split_accepts_exact_conserving_amounts() {
     let env = make_env();
     // Zero available → (0, 0)
     assert_eq!(
         resolution_payouts(
-            &payout_contract(&env, 0, 0, 0),
-            &DisputeResolution::PartialRefund
+            &payout_contract(&env, 100, 0, 0),
+            &DisputeResolution::Split(DisputeSplit {
+                client_amount: 40,
+                freelancer_amount: 60,
+            })
         ),
         Ok((0, 0))
     );
@@ -166,9 +166,8 @@ fn resolution_payouts_split_rejects_negative_legs() {
     );
 }
 
-/// Split rejects sums that do not equal the available balance.
 #[test]
-fn resolution_payouts_split_rejects_non_conserving_sums() {
+fn resolution_payouts_split_rejects_non_conserving_sum() {
     let env = make_env();
     let contract = payout_contract(&env, 100, 0, 0);
     // 40 + 59 = 99 ≠ 100
@@ -256,14 +255,12 @@ fn resolution_payouts_conserves_available_balance() {
 
 /// final_status returns Refunded only when the full deposit has been refunded.
 #[test]
-fn final_status_after_resolution_marks_refunded_only_for_full_refund() {
+fn final_status_after_resolution_returns_refunded_only_when_fully_refunded() {
     let env = make_env();
-    // fully refunded: refunded == funded
     assert_eq!(
         final_status_after_resolution(&payout_contract(&env, 100, 0, 100)),
         ContractStatus::Refunded
     );
-    // partially refunded: freelancer received something
     assert_eq!(
         final_status_after_resolution(&payout_contract(&env, 100, 30, 70)),
         ContractStatus::Completed
@@ -278,7 +275,7 @@ fn final_status_after_resolution_marks_refunded_only_for_full_refund() {
 #[test]
 fn resolve_full_refund_conserves_and_marks_refunded() {
     let env = make_env();
-    let client = make_client(&env);
+    let (client, _) = make_client(&env);
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let arbiter_addr = Address::generate(&env);

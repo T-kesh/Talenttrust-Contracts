@@ -514,7 +514,7 @@ Any documentation that describes one of these items as available should be
 treated as roadmap text, not live integration guidance.
 
 
-## Milestone Approval and Revocation
+### Milestone Approval and Revocation
 
 Participants can approve milestone items prior to fund distribution payouts. If an authorization mistake is discovered prior to complete disbursement release configurations, the approving party can rescind authority.
 

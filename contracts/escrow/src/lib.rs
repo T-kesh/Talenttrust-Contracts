@@ -27,6 +27,11 @@ mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
+/// Dispute helpers: `resolution_payouts` and `final_status_after_resolution`.
+///
+/// The canonical `raise_dispute` / `resolve_dispute` entrypoints live in the
+/// single `#[contractimpl] impl Escrow` block below (in `lib.rs`). No other
+/// module may define additional `#[contractimpl]` blocks for these entrypoints.
 mod dispute;
 mod finalize;
 mod governance;
@@ -44,6 +49,8 @@ pub use dispute::final_status_after_resolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 // Keep shared storage keys and escrow domain types centralized in `types.rs`.
+// `DisputeResolution` and `DisputeSplit` are defined once in `types.rs` and
+// re-exported here; `dispute.rs` uses them via `crate::DisputeResolution`.
 pub use types::{
     Contract, ContractStatus, ContractSummary, DataKey, DepositMode, DisputeResolution,
     DisputeSplit, Error, GovernedParameters, Milestone, MilestoneApprovals, MilestoneSummary,
@@ -127,10 +134,17 @@ impl Escrow {
 
 #[contractimpl]
 impl Escrow {
-    /// Set the settlement token for the escrow contract.
+    /// Bind the single Stellar Asset Contract (SAC) token this escrow instance will custody.
     ///
-    /// Writes the canonical [`DataKey::SettlementToken`] binding used by escrow
-    /// funding, releases, refunds, and protocol-fee withdrawal paths.
+    /// This is a **write-once** step: once a token is recorded under
+    /// [`DataKey::SettlementToken`] all subsequent money-flow entrypoints
+    /// (`deposit_funds`, `release_milestone`, `refund_unreleased_milestones`,
+    /// `cancel_contract`, `withdraw_protocol_fees`) read that address to execute SAC
+    /// `transfer` calls.  A second call with any token address is rejected with
+    /// `SettlementTokenAlreadyBound`.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model, accounting invariant, and lifecycle sequence diagram.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -141,6 +155,18 @@ impl Escrow {
     /// * `NotInitialized` if `initialize` has not been called
     /// * `UnauthorizedRole` if `admin` is not the stored admin
     /// * `SettlementTokenAlreadyBound` if a token is already bound
+    ///
+    /// # Events
+    /// On a successful, authorized bind this publishes a `settlement_token_bound`
+    /// event so off-chain indexers and monitoring dashboards can observe which
+    /// asset an escrow settles in, and when the binding happened.
+    ///
+    /// * Topics: `(Symbol "settlement_token_bound",)`
+    /// * Data: `(admin: Address, token: Address, timestamp: u64)`
+    ///
+    /// The event only fires after the write succeeds. Rejected binds
+    /// (uninitialized or unauthorized) panic before this point and therefore
+    /// publish nothing. All payload fields are public configuration.
     pub fn bind_settlement_token(env: Env, admin: Address, token: Address) -> bool {
         Self::require_initialized(&env);
         let stored_admin: Address = env
@@ -155,6 +181,13 @@ impl Escrow {
         admin.require_auth();
 
         Self::write_settlement_token(&env, &token);
+
+        // Emit after the binding write succeeds so indexers can track the bound
+        // asset. Consistent topic naming with `init` / `protocol_fee_bps` events.
+        env.events().publish(
+            (Symbol::new(&env, "settlement_token_bound"),),
+            (admin, token, env.ledger().timestamp()),
+        );
         true
     }
 
@@ -169,6 +202,25 @@ impl Escrow {
     /// Returns the bound settlement token, or `None` if no token has been bound.
     pub fn get_settlement_token(env: Env) -> Option<Address> {
         Self::read_settlement_token(&env)
+    }
+
+    /// Returns `true` exactly when a settlement token is bound.
+    ///
+    /// This is the recommended cheap pre-flight readiness check before calling
+    /// [`deposit_funds`], which panics when no settlement token has been bound.
+    /// Integrators that only need to know *whether* the escrow can accept
+    /// deposits — without caring about the specific token address — should use
+    /// this instead of fetching and discarding the `Address` from
+    /// [`get_settlement_token`].
+    ///
+    /// Read-only and auth-free: it performs no state mutation (no TTL write is
+    /// needed for the simple binding key).
+    ///
+    /// # Returns
+    /// * `true` if a settlement token is bound
+    /// * `false` if no settlement token has been bound yet
+    pub fn is_settlement_token_bound(env: Env) -> bool {
+        Self::read_settlement_token(&env).is_some()
     }
 
     /// Returns the stored governance admin address, or `None` if not set.
@@ -306,7 +358,15 @@ impl Escrow {
         )
     }
 
-    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    /// Pull the settlement-token deposit from the client into the escrow contract address.
+    ///
+    /// Executes `SAC::transfer(from: client, to: escrow_address, amount)` and advances
+    /// status from `Created` to `Funded` once the full milestone sum has been deposited.
+    /// Requires `bind_settlement_token` to have been called first; panics with
+    /// `SettlementTokenNotConfigured` otherwise.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model and accounting invariant.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -318,6 +378,7 @@ impl Escrow {
     /// `true` if deposit was successful
     ///
     /// # Errors
+    /// * `SettlementTokenNotConfigured` - If `bind_settlement_token` has not been called
     /// * `AmountMustBePositive` - If amount is <= 0
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Created state
@@ -443,7 +504,15 @@ impl Escrow {
         env.storage().persistent().set(&pending_key, &(pending + 1));
     }
 
-    /// Releases a specific milestone, transferring funds to the freelancer.
+    /// Releases a specific milestone, transferring the net payout to the freelancer.
+    ///
+    /// Executes `SAC::transfer(from: escrow_address, to: freelancer, milestone.amount − fee)`.
+    /// The protocol fee is retained inside the contract under
+    /// `DataKey::AccumulatedProtocolFees` and stays commingled with the escrow balance
+    /// until `withdraw_protocol_fees` is called.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model and accounting invariant.
     ///
     /// The target milestone must be fully funded through per-milestone deposit
     /// allocation before it can be released.
@@ -1049,6 +1118,41 @@ impl Escrow {
         milestones
     }
 
+    /// Retrieves a single milestone by index for a contract.
+    ///
+    /// This is the bounds-checked single-item counterpart to
+    /// [`get_milestones`]. Off-chain callers that only need one milestone's
+    /// state (amount, funded/released/refunded flags, deadline, work evidence)
+    /// can avoid fetching and decoding the full `Vec<Milestone>`.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `milestone_index` - The zero-based index of the milestone to read
+    ///
+    /// # Returns
+    /// * `Some(Milestone)` if `milestone_index` is in bounds
+    /// * `None` if `milestone_index` is out of bounds
+    ///
+    /// # Panics
+    /// Panics with `ContractNotFound` if the contract's milestones were never
+    /// allocated (i.e. the contract id is unknown), matching
+    /// [`get_milestones`].
+    ///
+    /// # Side effects
+    /// Extends the milestones vector TTL on a successful read, consistent with
+    /// [`get_milestones`]. Auth-free and otherwise non-mutating.
+    pub fn get_milestone(env: Env, contract_id: u32, milestone_index: u32) -> Option<Milestone> {
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        ttl::extend_milestone_ttl(&env, contract_id);
+        milestones.get(milestone_index)
+    }
+
     /// Returns funded minus released minus refunded for `contract_id`.
     pub fn get_refundable_balance(env: Env, contract_id: u32) -> i128 {
         let contract: Contract = env
@@ -1510,6 +1614,7 @@ impl Escrow {
     /// * `evidence`    - Deliverable reference; max 256 bytes
     ///
     /// # Errors
+    /// * `NotInitialized`     — `initialize` has not been called
     /// * `ContractPaused` / `EmergencyActive` — pause/emergency gate
     /// * `ContractNotFound`   — unknown `contract_id`
     /// * `AlreadyFinalized`   — contract has been finalized
@@ -1526,6 +1631,9 @@ impl Escrow {
         milestone_index: u32,
         evidence: String,
     ) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         caller.require_auth();
 
@@ -1649,7 +1757,15 @@ impl Escrow {
             .unwrap_or(0)
     }
 
-    /// Withdraws accumulated protocol fees.
+    /// Drains accrued protocol fees from the escrow contract to a treasury address.
+    ///
+    /// Executes `SAC::transfer(from: escrow_address, to: treasury, amount)`.  Protocol
+    /// fees accumulate in `DataKey::AccumulatedProtocolFees` as each milestone is
+    /// released; they remain commingled with the escrow's SAC balance until this
+    /// entrypoint is called.
+    ///
+    /// See [`docs/escrow/sac-custody.md`](../../../docs/escrow/sac-custody.md) for the
+    /// full custody model, accounting invariant, and security notes on commingled fees.
     ///
     /// Requires the stored admin's authorization. Only an amount up to the
     /// currently accumulated fees can be withdrawn.
@@ -1819,10 +1935,19 @@ impl Escrow {
 
     /// Computes the protocol fee for a given `amount` at `fee_bps` basis points.
     ///
-    /// Uses integer floor division: `fee = amount * fee_bps / 10_000`.
+    /// Uses integer **floor division**: `fee = amount * fee_bps / 10_000`.
+    /// The result always rounds down — it never rounds up — so the freelancer
+    /// receives at least `amount - fee` stroops and the protocol receives at most
+    /// the floored value.  Callers must ensure `fee <= amount` holds; this is
+    /// guaranteed for any `fee_bps` in `[0, 10_000]` and a non-negative `amount`.
+    ///
+    /// # Short-circuit
+    /// Returns `0` immediately when `fee_bps == 0`, skipping the multiplication.
     ///
     /// # Panics
-    /// Panics with `PotentialOverflow` if `amount * fee_bps` overflows `i128`.
+    /// Panics with `PotentialOverflow` (error code 28) if `amount * fee_bps`
+    /// overflows `i128`.  Callers should keep `amount` well below `i128::MAX /
+    /// fee_bps` to avoid this guard.
     pub fn calculate_protocol_fee(env: &Env, amount: i128, fee_bps: u32) -> i128 {
         if fee_bps == 0 {
             return 0;
@@ -1874,6 +1999,7 @@ impl Escrow {
     /// `true` if the dispute was successfully opened
     ///
     /// # Errors
+    /// * `NotInitialized` - If `initialize` has not been called
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `UnauthorizedRole` - If caller is not client or freelancer
     /// * `ArbiterRequired` - If no arbiter is assigned to the contract
@@ -1887,6 +2013,9 @@ impl Escrow {
     /// - Blocks milestone releases while disputed
     /// - Respects pause and emergency controls
     pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         caller.require_auth();
 
@@ -1946,6 +2075,7 @@ impl Escrow {
     /// `true` if the dispute was successfully resolved
     ///
     /// # Errors
+    /// * `NotInitialized` - If `initialize` has not been called
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `UnauthorizedRole` - If caller is not the assigned arbiter
     /// * `InvalidStatusTransition` - If contract is not in Disputed state
@@ -1967,6 +2097,9 @@ impl Escrow {
         arbiter: Address,
         resolution: DisputeResolution,
     ) -> bool {
+        /// Gate: contract must have been initialized so pause and emergency rails
+        /// are always in scope before any state mutation can occur.
+        Self::require_initialized(&env);
         Self::require_not_paused(&env);
         arbiter.require_auth();
 

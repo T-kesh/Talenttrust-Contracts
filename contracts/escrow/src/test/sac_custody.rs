@@ -128,6 +128,32 @@ fn bind_settlement_token_admin_can_bind_and_query_returns_some() {
 }
 
 #[test]
+fn is_settlement_token_bound_false_before_bind_true_after() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    // Pre-flight readiness probe must report false before any token is bound.
+    assert!(
+        !client.is_settlement_token_bound(),
+        "no token bound yet: readiness must be false"
+    );
+
+    let sac = env.register_stellar_asset_contract(admin.clone());
+    assert!(client.bind_settlement_token(&sac));
+
+    // After a successful bind the escrow is ready to accept deposits.
+    assert!(
+        client.is_settlement_token_bound(),
+        "token bound: readiness must be true"
+    );
+    // The boolean reader must agree with the Address-returning reader.
+    assert_eq!(client.get_settlement_token().is_some(), client.is_settlement_token_bound());
+}
+
+#[test]
 fn bind_settlement_token_rejects_double_bind() {
     let env = Env::default();
     env.mock_all_auths();
@@ -154,6 +180,78 @@ fn bind_settlement_token_rejects_uninit() {
     assert_contract_error(
         client.try_bind_settlement_token(&sac),
         EscrowError::NotInitialized,
+    );
+}
+
+/// Returns `true` when at least one published event carries
+/// `settlement_token_bound` as its first topic.
+fn has_settlement_token_bound_event(env: &Env) -> bool {
+    use soroban_sdk::{testutils::Events, TryFromVal};
+    let topic = Symbol::new(env, "settlement_token_bound");
+    env.events().all().iter().any(|event| {
+        event.1.len() > 0
+            && Symbol::try_from_val(env, &event.1.get(0).unwrap())
+                .ok()
+                .as_ref()
+                == Some(&topic)
+    })
+}
+
+#[test]
+fn bind_settlement_token_emits_settlement_token_bound_event() {
+    use soroban_sdk::{testutils::Events, TryFromVal};
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let sac = env.register_stellar_asset_contract(admin.clone());
+    assert!(client.bind_settlement_token(&sac));
+
+    // Topic must be present on a successful, authorized bind.
+    assert!(
+        has_settlement_token_bound_event(&env),
+        "successful bind must publish settlement_token_bound"
+    );
+
+    // Payload must carry (admin, token, timestamp): assert the bound token
+    // address is the third element of the matching event's data tuple.
+    let topic = Symbol::new(&env, "settlement_token_bound");
+    let matching = env
+        .events()
+        .all()
+        .iter()
+        .find(|event| {
+            event.1.len() > 0
+                && Symbol::try_from_val(&env, &event.1.get(0).unwrap())
+                    .ok()
+                    .as_ref()
+                    == Some(&topic)
+        })
+        .expect("event present");
+    let data: SorobanVec<soroban_sdk::Val> =
+        SorobanVec::try_from_val(&env, &matching.2).expect("data is a tuple/vec");
+    let bound_token: Address =
+        Address::try_from_val(&env, &data.get(1).unwrap()).expect("token field");
+    assert_eq!(bound_token, sac);
+}
+
+#[test]
+fn rejected_bind_does_not_emit_settlement_token_bound_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let sac = env.register_stellar_asset_contract(Address::generate(&env));
+
+    // Uninitialized bind is rejected: no event must be published.
+    assert_contract_error(
+        client.try_bind_settlement_token(&sac),
+        EscrowError::NotInitialized,
+    );
+    assert!(
+        !has_settlement_token_bound_event(&env),
+        "rejected (uninitialized) bind must not publish settlement_token_bound"
     );
 }
 
@@ -388,6 +486,67 @@ fn release_milestone_rejects_when_token_unbound() {
         client.try_release_milestone(&id, &client_addr, &0),
         EscrowError::SettlementTokenNotConfigured,
     );
+}
+
+// ─── Accounting invariant ─────────────────────────────────────────────────────
+
+/// Verify the balance invariant documented in docs/escrow/sac-custody.md:
+///   escrow_sac_balance == funded_amount − released_amount − refunded_amount + accrued_fees
+///
+/// This test exercises bind → deposit → release (with fee) → verify invariant
+/// at each step.
+#[test]
+fn sac_custody_accounting_invariant_holds_after_deposit_and_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (escrow, sac, _admin, client_addr, freelancer_addr, id) = setup_and_funded_partial(&env, 0);
+    let total = total_milestone_amount();
+    mint_to(&env, &sac, &client_addr, total);
+
+    let token = TokenClient::new(&env, &sac);
+
+    // Before deposit: escrow holds nothing.
+    assert_eq!(token.balance(&escrow.address), 0_i128);
+
+    // Deposit: escrow balance == funded_amount, released == 0, refunded == 0, fees == 0.
+    escrow.deposit_funds(&id, &client_addr, &total);
+    let contract = escrow.get_contract(&id);
+    let escrow_bal: i128 = token.balance(&escrow.address);
+    // invariant: balance == funded - released - refunded + accrued_fees
+    // accrued_fees == 0 before any release.
+    assert_eq!(
+        escrow_bal,
+        contract.funded_amount - contract.released_amount - contract.refunded_amount,
+        "invariant violated after deposit"
+    );
+
+    // Release milestone 0 with a 500 bps (5 %) fee.
+    escrow.set_protocol_fee_bps(&500u32);
+    let fee_bps: i128 = 500;
+    let m0_amount = MILESTONE_ONE;
+    let m0_fee = m0_amount * fee_bps / 10_000;
+
+    escrow.approve_milestone_release(&id, &client_addr, &0);
+    escrow.release_milestone(&id, &client_addr, &0);
+
+    let contract = escrow.get_contract(&id);
+    let accrued: i128 = escrow.get_accumulated_protocol_fees();
+    let escrow_bal: i128 = token.balance(&escrow.address);
+
+    // invariant: balance == funded - released - refunded + accrued_fees
+    assert_eq!(
+        escrow_bal,
+        contract.funded_amount - contract.released_amount - contract.refunded_amount + accrued,
+        "invariant violated after milestone release"
+    );
+
+    // Fee was retained: freelancer received gross minus fee.
+    assert_eq!(token.balance(&freelancer_addr), m0_amount - m0_fee);
+
+    // Accrued fees == fee deducted.
+    assert_eq!(accrued, m0_fee);
+    let _ = (client_addr,);
 }
 
 // ─── Compound ⛓ end-to-end ────────────────────────────────────────────────────

@@ -1,9 +1,21 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization};
+use crate::{
+    amount_validation, ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters,
+    Milestone, ReleaseAuthorization, MAX_MILESTONES,
+};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
     /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
+    ///
+    /// This is the single canonical creation path. It enforces:
+    /// - Distinct client and freelancer addresses
+    /// - Arbiter presence when required by the release authorization mode
+    /// - Arbiter distinctness from client and freelancer
+    /// - At least one milestone with all amounts strictly positive
+    /// - The `MAX_MILESTONES` cap
+    /// - The governed total-escrow cap (falls back to `i128::MAX` when unset)
+    /// - No contract-id collision or overflow
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -14,18 +26,18 @@ impl Escrow {
     /// * `release_authorization` - Authorization mode for milestone releases
     ///
     /// # Returns
-    /// The unique contract ID
+    /// The unique contract ID assigned to the new escrow.
     ///
     /// # Errors
-    /// * `InvalidParticipant` - If client and freelancer are the same address
-    /// * `EmptyMilestones` - If no milestones are provided
+    /// * `InvalidParticipant`   - If client and freelancer are the same address
+    /// * `EmptyMilestones`      - If no milestones are provided
     /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
-    /// * `MissingArbiter` - If arbiter is required but not provided
-    /// * `InvalidArbiter` - If arbiter is same as client or freelancer
-    /// * `TooManyMilestones` - If the number of milestones exceeds MAX_MILESTONES
-    /// * `TotalCapExceeded` - If the sum of milestone amounts exceeds the governed cap
-    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
-    /// * `ContractIdCollision` - If the allocated id slot is already occupied
+    /// * `MissingArbiter`       - If arbiter is required but not provided
+    /// * `InvalidArbiter`       - If arbiter is same as client or freelancer
+    /// * `TooManyMilestones`    - If the number of milestones exceeds `MAX_MILESTONES`
+    /// * `TotalCapExceeded`     - If the sum of milestone amounts exceeds the governed cap
+    /// * `ContractIdOverflow`   - If the next id would exceed `u32::MAX`
+    /// * `ContractIdCollision`  - If the allocated id slot is already occupied
     pub fn create_contract(
         env: Env,
         client: Address,
@@ -36,10 +48,12 @@ impl Escrow {
     ) -> u32 {
         client.require_auth();
 
+        // Validate that client and freelancer are distinct participants.
         if client == freelancer {
             env.panic_with_error(Error::InvalidParticipant);
         }
 
+        // Validate arbiter requirement based on release authorization mode.
         match release_authorization {
             ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
                 if arbiter.is_none() =>
@@ -49,30 +63,32 @@ impl Escrow {
             _ => {}
         }
 
+        // Validate arbiter is distinct from both client and freelancer.
         if let Some(ref arb) = arbiter {
             if arb == &client || arb == &freelancer {
                 env.panic_with_error(Error::InvalidArbiter);
             }
         }
 
+        // Validate at least one milestone is specified.
         if milestones.is_empty() {
             env.panic_with_error(Error::EmptyMilestones);
         }
 
-        // Enforce maximum number of milestones
+        // Enforce maximum number of milestones.
         if milestones.len() > MAX_MILESTONES {
             env.panic_with_error(Error::TooManyMilestones);
         }
 
-        // Retrieve governed parameters for total escrow cap
-        let max_total = if let Some(params) = env.storage().persistent().get::<_, GovernedParameters>(&DataKey::GovernedParameters) {
-            params.max_escrow_total_stroops
-        } else {
-            // If governance parameters are not set, allow any total (use max i128)
-            i128::MAX
-        };
+        // Retrieve governed parameters for total escrow cap; allow any total if unset.
+        let max_total = env
+            .storage()
+            .persistent()
+            .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+            .map(|params| params.max_escrow_total_stroops)
+            .unwrap_or(i128::MAX);
 
-        // Validate milestone amounts and total against caps
+        // Validate milestone amounts and enforce the total cap via the canonical helper.
         let mut native_milestones = [0_i128; MAX_MILESTONES as usize];
         let len = milestones.len() as usize;
         for i in 0..len {
@@ -87,25 +103,32 @@ impl Escrow {
             },
         }
 
+        // Extend TTL for the next-contract-id counter before reading it.
         ttl::extend_next_contract_id_ttl(&env);
 
         let id = next_contract_id(&env);
 
         let freelancer_addr = freelancer.clone();
+
+        // Construct the contract with all required fields, initialising accounting
+        // counters to zero and reputation_issued to false.
         let contract = Contract {
             client: client.clone(),
             freelancer: freelancer.clone(),
             arbiter,
             status: ContractStatus::Created,
+            total_deposited: 0,
             funded_amount: 0,
             released_amount: 0,
             refunded_amount: 0,
             release_authorization,
+            reputation_issued: false,
         };
         env.storage()
             .persistent()
             .set(&DataKey::Contract(id), &contract);
 
+        // Build and persist the milestone vector.
         let mut milestone_vec: Vec<Milestone> = Vec::new(&env);
         for amount in milestones.iter() {
             milestone_vec.push_back(Milestone {
@@ -123,10 +146,16 @@ impl Escrow {
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
 
+        // Advance the counter. `next_contract_id` already checked `id < u32::MAX`;
+        // the `checked_add` here is a defense-in-depth guard.
+        let next_id = id
+            .checked_add(1)
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
         env.storage()
             .persistent()
-            .set(&DataKey::NextContractId, &(id + 1));
+            .set(&DataKey::NextContractId, &next_id);
 
+        // Emit creation event for indexers and off-chain subscribers.
         env.events().publish(
             (symbol_short!("created"), id),
             (client, freelancer_addr, env.ledger().timestamp()),
@@ -134,120 +163,12 @@ impl Escrow {
 
         id
     }
-
-    if milestones.is_empty() {
-        env.panic_with_error(EscrowError::EmptyMilestones);
-    }
-
-    if milestones.len() > MAX_MILESTONES {
-        env.panic_with_error(EscrowError::TooManyMilestones);
-    }
-
-    match release_authorization {
-        ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
-            if arbiter.is_none() =>
-        {
-            env.panic_with_error(EscrowError::MissingArbiter);
-        }
-        _ => {}
-    }
-
-    if let Some(ref arb) = arbiter {
-        if arb == &client || arb == &freelancer {
-            env.panic_with_error(EscrowError::InvalidArbiter);
-        }
-    }
-
-    if milestones.is_empty() {
-        env.panic_with_error(EscrowError::EmptyMilestones);
-    }
-
-    if milestones.len() > crate::MAX_MILESTONES {
-        env.panic_with_error(EscrowError::TooManyMilestones);
-    }
-
-    let total_milestones_amount: i128 = milestones.iter().fold(0i128, |acc, amount| {
-        if amount <= 0 {
-            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
-        }
-
-        acc.checked_add(amount)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
-    });
-
-    let governed_cap = env
-        .storage()
-        .persistent()
-        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-        .map(|params| params.max_escrow_total_stroops)
-        .filter(|cap| *cap > 0)
-        .unwrap_or(MAX_TOTAL_ESCROW_STROOPS);
-
-    if total_milestones_amount > governed_cap {
-        let err = if env.storage().persistent().has(&DataKey::GovernedParameters) {
-            EscrowError::EscrowCapExceeded
-        } else {
-            EscrowError::InvalidMilestoneAmount
-        };
-        env.panic_with_error(err);
-    }
-
-    let id = next_contract_id(&env);
-
-    ttl::extend_next_contract_id_ttl(&env);
-
-    let freelancer_addr = freelancer.clone();
-    let contract = Contract {
-        client: client.clone(),
-        freelancer: freelancer.clone(),
-        arbiter,
-        status: ContractStatus::Created,
-        total_deposited: 0,
-        funded_amount: 0,
-        released_amount: 0,
-        refunded_amount: 0,
-        release_authorization,
-        reputation_issued: false,
-    };
-    env.storage()
-        .persistent()
-        .set(&DataKey::Contract(id), &contract);
-
-    let mut milestone_vec: Vec<Milestone> = Vec::new(&env);
-    for amount in milestones.iter() {
-        milestone_vec.push_back(Milestone {
-            amount,
-            funded_amount: 0,
-            released: false,
-            refunded: false,
-            work_evidence: None,
-            refunded_amount: 0,
-            deadline: None,
-        });
-    }
-    let milestone_key = Symbol::new(&env, "milestones");
-    env.storage()
-        .persistent()
-        .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
-
-    /// Safety: `next_contract_id` already checked that `id < u32::MAX`; the
-    /// `checked_add` here is a defense-in-depth guard. `None` (overflow) is
-    /// unreachable in practice but must be handled to match documented behavior.
-    let next_id = id
-        .checked_add(1)
-        .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
-    env.storage()
-        .persistent()
-        .set(&DataKey::NextContractId, &next_id);
-
-    env.events().publish(
-        (symbol_short!("created"), id),
-        (client, freelancer_addr, env.ledger().timestamp()),
-    );
-
-    id
 }
 
+/// Returns the next available contract ID and asserts it is not already occupied.
+///
+/// # Errors
+/// * `ContractIdCollision` - If the allocated id slot is already occupied
 pub(crate) fn next_contract_id(env: &Env) -> u32 {
     let id: u32 = env
         .storage()
